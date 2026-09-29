@@ -144,6 +144,94 @@
   margin-top: 8px;
 }
 
+.plexus-portal.plexus-backlinks {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-backlinks .plexus-backlink-badge {
+  position: fixed;
+  box-sizing: content-box;
+  min-width: 8px;
+  margin: -8px;
+  padding: 8px;
+  transform: translateY(calc(-100% + 16px));
+  border: 0;
+  background: transparent;
+  color: #5f6b7c;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.plexus-portal.plexus-backlinks .plexus-backlink-badge:hover {
+  color: #1c2127;
+}
+
+.plexus-portal.plexus-backlink-popover {
+  position: fixed;
+  width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px 0;
+  background: #fff;
+  color: #1c2127;
+  border: 1px solid rgba(17, 20, 24, 0.3);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.plexus-portal.plexus-backlink-popover .plexus-backlink-row {
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.plexus-portal.plexus-backlink-popover .plexus-backlink-row:hover {
+  background: rgba(17, 20, 24, 0.06);
+}
+
+.plexus-portal.plexus-backlink-popover .plexus-backlink-page {
+  margin-bottom: 2px;
+  color: #5f6b7c;
+  font-size: 11px;
+}
+
+.plexus-portal.plexus-backlink-popover .plexus-backlink-more {
+  padding: 4px 10px;
+  color: #5f6b7c;
+  font-size: 11px;
+}
+
+.plexus-portal.plexus-backlinks--dark .plexus-backlink-badge {
+  color: #abb3bf;
+}
+
+.plexus-portal.plexus-backlinks--dark .plexus-backlink-badge:hover {
+  color: #f6f7f9;
+}
+
+.plexus-portal.plexus-backlink-popover.plexus-backlinks--dark {
+  background: #252a31;
+  color: #f6f7f9;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.plexus-portal.plexus-backlink-popover.plexus-backlinks--dark .plexus-backlink-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.plexus-portal.plexus-backlink-popover.plexus-backlinks--dark .plexus-backlink-page,
+.plexus-portal.plexus-backlink-popover.plexus-backlinks--dark .plexus-backlink-more {
+  color: #abb3bf;
+}
+
 .plexus-portal .plexus-marquee {
   position: absolute;
   border: 1px solid #2d72d2;

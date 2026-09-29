@@ -4,6 +4,7 @@ import { overrideKey } from "../model/refdisplay.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const MEMO_MS = 500;
+const LINK_LABEL = "Plexus: Link caption to source blocks";
 
 const guard = (label, fn) => (...args) => {
   try {
@@ -52,6 +53,9 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     const overrides = getSettings()?.refOverrides || {};
     return { supported, mode, hasOverride: overrideKey(block, ref) in overrides };
   });
+  const candidateOf = memoize((uid) => {
+    try { return actions.regionCaptionCandidate?.(uid) ?? null; } catch { return null; }
+  });
   const blockInfo = memoize((uid) => {
     const string = pullString(uid);
     if (string == null) return {};
@@ -75,6 +79,10 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   };
 
   const refOf = (e) => ({ ref: e?.["ref-uid"], block: e?.["block-uid"] });
+  const refShowLink = (e) => {
+    const { ref, block } = refOf(e);
+    return refInfo(`${ref}|${block}`, ref, block).supported && candidateOf(ref, ref) != null;
+  };
   const refShow = (extra = () => true) => (e) => {
     const { ref, block } = refOf(e);
     const info = refInfo(`${ref}|${block}`, ref, block);
@@ -98,6 +106,12 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     regionref.refreshBlock(block);
   });
   register("blockRefContextMenu", "Plexus: Refresh crop", refShow(), (e) => regionref.refreshRegion(refOf(e).ref));
+  const relink = async (uid) => {
+    await actions.relinkRegionCaption(uid);
+    clearMemo();
+    regionref.refreshRegion?.(uid);
+  };
+  register("blockRefContextMenu", LINK_LABEL, refShowLink, (e) => relink(refOf(e).ref));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
 
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
@@ -106,6 +120,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   register("blockContextMenu", "Plexus: Mind map from outline", () => true, (e) => actions.mindMapFromOutline(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Open region", blockShow("region"), (e) => actions.openRegion(e?.["block-uid"], { sidebar: false }));
   register("blockContextMenu", "Plexus: Refresh crop", blockShow("region"), (e) => regionref.refreshRegion(e?.["block-uid"]));
+  register("blockContextMenu", LINK_LABEL, (e) => blockInfo(e?.["block-uid"], e?.["block-uid"]).region && candidateOf(e?.["block-uid"], e?.["block-uid"]) != null, (e) => relink(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Refresh crops", blockShow("drawing"), (e) => actions.refreshCropsForDrawing(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Region settings…", blockShow("drawing"), () => openSettings());
 

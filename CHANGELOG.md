@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.6.1]
+
+- Region captions link their source blocks: a region made from a mind-map node, a canvas embed, or an element with a `[[Page]]`/`((ref))` link gets `((uid))`/`[[Title]]` in its caption instead of copied text, so the source block gets a backlink and the caption follows renames. Existing regions: right-click > Extensions > "Plexus: Link caption to source blocks".
+- Canvas backlinks: regions and mind-map nodes that are referenced elsewhere show a quiet reference count at their top-right corner; clicking it lists the referencing blocks (click opens, Shift opens in the sidebar). Counts update live. Setting: "Show backlinks on canvas".
+
 ## [0.6.0]
 
 - Region refs render as tidy cards by mode (image, thumbnail, link); hovering a thumbnail shows the full crop; crops follow the dark theme.

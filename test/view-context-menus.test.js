@@ -28,6 +28,7 @@ function setup({ strings = {}, mode = "thumbnail", overrides = {}, ...rest } = {
   const actions = {
     openRegion: rec("openRegion"), createPlainImageRegion: rec("createPlainImageRegion"), presentDrawing: rec("presentDrawing"),
     mindMapFromOutline: rec("mindMapFromOutline"), refreshCropsForDrawing: rec("refreshCropsForDrawing"),
+    regionCaptionCandidate: rest.candidate || (() => null), relinkRegionCaption: async (uid) => { calls.push(["relinkRegionCaption", uid]); },
   };
   const regionref = { modeOf: () => mode, refreshBlock: rec("refreshBlock"), refreshRegion: rec("refreshRegion"), refreshAll: rec("refreshAll") };
   let t = 0;
@@ -47,11 +48,11 @@ test("every label is registered and removed on dispose", () => {
   const { api, dispose } = setup();
   assert.deepEqual([...api.commands.blockRefContextMenu.keys()], [
     "Plexus: Open region", "Plexus: Open region in sidebar", "Plexus: Show as image", "Plexus: Show as thumbnail",
-    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Refresh crop", "Plexus: Region settings…",
+    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Region settings…",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
     "Plexus: Region on image", "Plexus: Present frames", "Plexus: Mind map from outline", "Plexus: Open region",
-    "Plexus: Refresh crop", "Plexus: Refresh crops", "Plexus: Region settings…",
+    "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Refresh crops", "Plexus: Region settings…",
   ]);
   dispose();
   assert.equal(api.commands.blockRefContextMenu.size, 0);
@@ -262,4 +263,30 @@ test("canvas dispose removes the listener, pending rafs and injected nodes", () 
   c.menu();
   assert.equal(c.container.listeners.contextmenu.length, 0);
   assert.equal(c.queue.length, 0);
+});
+
+test("link caption item shows only when a different candidate exists and never throws", () => {
+  const LINK = "Plexus: Link caption to source blocks";
+  const e = { "ref-uid": "reg000001", "block-uid": "blk000001" };
+  const be = { "block-uid": "reg000001" };
+  let candidate = "((h6dynpr9M))";
+  const { api } = setup({ strings: { reg000001: REGION, plain0001: "hello" }, candidate: () => candidate });
+  assert.equal(show(api, "blockRefContextMenu", LINK, e), true);
+  assert.equal(show(api, "blockContextMenu", LINK, be), true);
+  assert.equal(show(api, "blockContextMenu", LINK, { "block-uid": "plain0001" }), false);
+  assert.equal(show(api, "blockRefContextMenu", LINK, { "ref-uid": "plain0001", "block-uid": "b" }), false);
+  const none = setup({ strings: { reg000001: REGION }, candidate: () => null });
+  assert.equal(show(none.api, "blockRefContextMenu", LINK, e), false);
+  assert.equal(show(none.api, "blockContextMenu", LINK, be), false);
+  const boom = setup({ strings: { reg000001: REGION }, candidate: () => { throw new Error("x"); } });
+  assert.equal(show(boom.api, "blockRefContextMenu", LINK, e), false);
+  assert.equal(show(boom.api, "blockContextMenu", LINK, be), false);
+});
+
+test("link caption callback relinks then refreshes the region", async () => {
+  const LINK = "Plexus: Link caption to source blocks";
+  const { api, calls } = setup({ strings: { reg000001: REGION }, candidate: () => "((x))" });
+  api.commands.blockRefContextMenu.get(LINK).callback({ "ref-uid": "reg000001", "block-uid": "b" });
+  await tick();
+  assert.deepEqual(calls, [["relinkRegionCaption", "reg000001"], ["refreshRegion", "reg000001"]]);
 });

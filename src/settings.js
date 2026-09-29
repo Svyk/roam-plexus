@@ -9,6 +9,7 @@ export const SETTING_IDS = Object.freeze({
   refOverrides: "ref-overrides",
   cacheOnDisk: "cache-on-disk",
   cacheLimitMb: "cache-limit-mb",
+  showBacklinks: "show-backlinks",
   debug: "debug",
 });
 
@@ -21,6 +22,7 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.refOverrides]: "{}",
   [SETTING_IDS.cacheOnDisk]: true,
   [SETTING_IDS.cacheLimitMb]: "100",
+  [SETTING_IDS.showBacklinks]: true,
   [SETTING_IDS.debug]: false,
 });
 
@@ -48,6 +50,7 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.darkCrops, name: "Match dark theme", description: "Invert region crops on a dark Roam theme.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cacheOnDisk, name: "Cache crops on disk", description: "Store rendered crops in IndexedDB. Ignored on encrypted graphs.", action: { type: "switch" } },
       { id: SETTING_IDS.cacheLimitMb, name: "Cache limit (MB)", description: "Maximum size of the on-disk crop cache.", action: { type: "input", placeholder: "100" } },
+      { id: SETTING_IDS.showBacklinks, name: "Show backlinks on canvas", description: "Show a reference count beside each region or mind-map node that is referenced elsewhere in Roam.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
     ],
   };
@@ -81,6 +84,7 @@ export function readSettings(extensionAPI) {
     refOverrides: memoOverrides(get(SETTING_IDS.refOverrides)),
     cacheOnDisk: !!get(SETTING_IDS.cacheOnDisk),
     cacheLimitMb: Number(get(SETTING_IDS.cacheLimitMb)) || 100,
+    showBacklinks: !!get(SETTING_IDS.showBacklinks),
     debug: !!get(SETTING_IDS.debug),
   };
 }

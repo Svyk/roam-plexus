@@ -1,4 +1,4 @@
-/* Plexus v0.6.0 | MIT | generated; edit src/ */
+/* Plexus v0.6.1 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -143,6 +143,7 @@ var SETTING_IDS = Object.freeze({
   refOverrides: "ref-overrides",
   cacheOnDisk: "cache-on-disk",
   cacheLimitMb: "cache-limit-mb",
+  showBacklinks: "show-backlinks",
   debug: "debug"
 });
 var DEFAULTS = Object.freeze({
@@ -154,6 +155,7 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.refOverrides]: "{}",
   [SETTING_IDS.cacheOnDisk]: true,
   [SETTING_IDS.cacheLimitMb]: "100",
+  [SETTING_IDS.showBacklinks]: true,
   [SETTING_IDS.debug]: false
 });
 async function initializeSettings(extensionAPI) {
@@ -183,6 +185,7 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.darkCrops, name: "Match dark theme", description: "Invert region crops on a dark Roam theme.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cacheOnDisk, name: "Cache crops on disk", description: "Store rendered crops in IndexedDB. Ignored on encrypted graphs.", action: { type: "switch" } },
       { id: SETTING_IDS.cacheLimitMb, name: "Cache limit (MB)", description: "Maximum size of the on-disk crop cache.", action: { type: "input", placeholder: "100" } },
+      { id: SETTING_IDS.showBacklinks, name: "Show backlinks on canvas", description: "Show a reference count beside each region or mind-map node that is referenced elsewhere in Roam.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } }
     ]
   };
@@ -213,6 +216,7 @@ function readSettings(extensionAPI) {
     refOverrides: memoOverrides(get(SETTING_IDS.refOverrides)),
     cacheOnDisk: !!get(SETTING_IDS.cacheOnDisk),
     cacheLimitMb: Number(get(SETTING_IDS.cacheLimitMb)) || 100,
+    showBacklinks: !!get(SETTING_IDS.showBacklinks),
     debug: !!get(SETTING_IDS.debug)
   };
 }
@@ -1123,6 +1127,15 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
     return lock.value;
   }
+  async function updateRegionString(drawingUid, regionUid, regionString) {
+    const graph = api.graph.name;
+    const lock = await withLockFn(lockName(graph, drawingUid), async () => {
+      await api.data.block.update({ block: { uid: regionUid, string: regionString } });
+      return regionUid;
+    });
+    if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
+    return lock.value;
+  }
   function pageUidByTitle(title) {
     const raw = api.data.pull("[:block/uid]", [":node/title", title]);
     return raw?.[":block/uid"] || null;
@@ -1250,6 +1263,7 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     regionsOf,
     ensureRegionContainer,
     createRegion,
+    updateRegionString,
     createDrawing,
     drawingsOn,
     resolveUidKind,
@@ -2861,6 +2875,459 @@ function createEmbedOverlay({
   };
 }
 
+// src/view/backlinks.js
+var BACKLINK_WATCH_CAP = 150;
+var BACKLINK_ROW_CAP = 20;
+var MERGE_TOLERANCE = 2;
+var REGION_REFETCH_MS = 3e3;
+var REFS_PATTERN = "[{:block/_refs [:block/uid :block/string {:block/page [:node/title :block/uid]}]}]";
+var WATCH_PATTERN = "[{:block/_refs [:block/uid]}]";
+var IMAGE_KINDS = /* @__PURE__ */ new Set(["imgrect", "imgpoly"]);
+var union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+var themed = (base3, dark) => dark ? `${base3} plexus-backlinks--dark` : base3;
+var sameBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= MERGE_TOLERANCE);
+function createCanvasBacklinks({
+  doc,
+  api = globalThis.roamAlphaAPI,
+  host,
+  app,
+  containerEl,
+  drawingUid,
+  zIndex = 1e3,
+  native = native_exports,
+  openTarget = () => {
+  },
+  raf,
+  caf,
+  now = () => Date.now()
+}) {
+  const view2 = doc.defaultView;
+  const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
+  const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
+  const layer = doc.createElement("div");
+  layer.className = "plexus-portal plexus-backlinks";
+  layer.style.zIndex = String(zIndex + 1);
+  doc.body.append(layer);
+  const badges = /* @__PURE__ */ new Map();
+  const refsByUid = /* @__PURE__ */ new Map();
+  const watches = /* @__PURE__ */ new Map();
+  let regions = [];
+  let regionsAt = -Infinity;
+  let regionSig = "";
+  let targets = [];
+  let sceneSig = null;
+  let pendingFrame = null;
+  let unsubscribe2 = null;
+  let disposed = false;
+  let capLogged = false;
+  let popover = null;
+  const warn2 = (message, error) => console.warn("[plexus]", message, error);
+  const excludedUids = () => /* @__PURE__ */ new Set([drawingUid, ...regions.map((r) => r.uid)]);
+  function loadRefs(uid) {
+    let raw;
+    try {
+      raw = api.data.pull(REFS_PATTERN, [":block/uid", uid]);
+    } catch (error) {
+      warn2("backlinks pull failed", error);
+      return [];
+    }
+    const excluded = excludedUids();
+    const rows = [];
+    for (const r of raw?.[":block/_refs"] ?? []) {
+      const refUid = r?.[":block/uid"];
+      if (!refUid || excluded.has(refUid)) continue;
+      const string = r[":block/string"] ?? "";
+      if (isContainerString(string)) continue;
+      rows.push({ uid: refUid, string, page: r[":block/page"]?.[":node/title"] ?? "" });
+    }
+    return rows;
+  }
+  function fetchRegions() {
+    try {
+      regions = host.regionsOf(drawingUid) ?? [];
+    } catch (error) {
+      warn2("backlinks regions failed", error);
+      regions = [];
+    }
+    regionsAt = now();
+    const sig = regions.map((r) => r.uid).join(",");
+    const changed = sig !== regionSig;
+    regionSig = sig;
+    return changed;
+  }
+  function nodeUidOf(el, byId) {
+    const own = el?.customData?.plexus?.mm?.uid;
+    if (own) return own;
+    const container = el?.containerId ? byId.get(el.containerId) : null;
+    return container?.customData?.plexus?.mm?.uid ?? null;
+  }
+  function regionNodeUid(region, live, byId) {
+    let members = [];
+    if (region.kind === "area") members = (region.ids ?? []).map((id) => byId.get(id)).filter(Boolean);
+    else if (region.kind === "group") {
+      const g = region.groupId ?? region.g;
+      members = live.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+    }
+    if (!members.length) return null;
+    const uids = new Set(members.map((el) => nodeUidOf(el, byId)));
+    return uids.size === 1 && !uids.has(null) ? [...uids][0] : null;
+  }
+  function collectTargets() {
+    const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const appState = app.state;
+    const live = liveElements(elements);
+    const byId = new Map(live.map((el) => [el.id, el]));
+    const byAnchor = /* @__PURE__ */ new Map();
+    const add = (anchor, uid, bbox) => {
+      const prev = byAnchor.get(anchor);
+      if (!prev) byAnchor.set(anchor, { uids: /* @__PURE__ */ new Set([uid]), bbox });
+      else {
+        prev.uids.add(uid);
+        prev.bbox = union(prev.bbox, bbox);
+      }
+    };
+    for (const { uid, region } of regions) {
+      if (!region || IMAGE_KINDS.has(region.kind)) continue;
+      try {
+        const out = regionSceneBBox({ ...region, pad: 0 }, elements, appState);
+        if (out?.bbox) add(regionNodeUid(region, live, byId) ?? uid, uid, out.bbox);
+      } catch (error) {
+        warn2("backlinks region bbox failed", error);
+      }
+    }
+    for (const el of live) {
+      const uid = el?.customData?.plexus?.mm?.uid;
+      if (!uid) continue;
+      try {
+        add(uid, uid, elementBounds(el));
+      } catch (error) {
+        warn2("backlinks node bbox failed", error);
+      }
+    }
+    return [...byAnchor.values()].map((t) => ({ uids: [...t.uids], bbox: t.bbox }));
+  }
+  function syncWatches(uids) {
+    const wanted = new Set(uids);
+    for (const [uid, entry] of [...watches]) {
+      if (wanted.has(uid)) continue;
+      removeWatch(uid, entry);
+    }
+    for (const uid of uids) {
+      if (watches.has(uid)) continue;
+      if (watches.size >= BACKLINK_WATCH_CAP) {
+        if (!capLogged) {
+          capLogged = true;
+          console.warn(`[plexus] backlinks: more than ${BACKLINK_WATCH_CAP} targets, extra badges are not live`);
+        }
+        continue;
+      }
+      const eid = `[:block/uid "${uid}"]`;
+      const cb = () => {
+        if (disposed) return;
+        try {
+          refsByUid.set(uid, loadRefs(uid));
+          render();
+          layout();
+        } catch (error) {
+          warn2("backlinks watch failed", error);
+        }
+      };
+      try {
+        api.data.addPullWatch(WATCH_PATTERN, eid, cb);
+        watches.set(uid, { eid, cb });
+      } catch (error) {
+        warn2("backlinks watch failed", error);
+      }
+    }
+  }
+  function removeWatch(uid, entry) {
+    watches.delete(uid);
+    try {
+      api.data.removePullWatch(WATCH_PATTERN, entry.eid, entry.cb);
+    } catch (error) {
+      warn2("backlinks unwatch failed", error);
+    }
+  }
+  function groups() {
+    const out = [];
+    const sorted = [...targets].sort((a, b) => a.uids[0] < b.uids[0] ? -1 : 1);
+    for (const t of sorted) {
+      const g = out.find((x) => sameBox(x.bbox, t.bbox));
+      if (g) {
+        g.uids.push(...t.uids.filter((u) => !g.uids.includes(u)));
+        g.bbox = union(g.bbox, t.bbox);
+      } else out.push({ uids: [...t.uids], bbox: [...t.bbox] });
+    }
+    for (const g of out) g.uids.sort();
+    return out;
+  }
+  function refsOf(uids) {
+    const seen = /* @__PURE__ */ new Set();
+    const rows = [];
+    for (const uid of uids) {
+      for (const row of refsByUid.get(uid) ?? []) {
+        if (seen.has(row.uid)) continue;
+        seen.add(row.uid);
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+  function makeBadge(key) {
+    const el = doc.createElement("button");
+    el.className = "plexus-backlink-badge";
+    el.type = "button";
+    const stop = (e) => e?.stopPropagation?.();
+    const onClick = (e) => {
+      e?.stopPropagation?.();
+      e?.preventDefault?.();
+      if (popover?.key === key) closePopover();
+      else openPopover(key);
+    };
+    el.addEventListener("pointerdown", stop);
+    el.addEventListener("mousedown", stop);
+    el.addEventListener("click", onClick);
+    layer.append(el);
+    return {
+      key,
+      el,
+      uids: [],
+      bbox: null,
+      refs: [],
+      x: 0,
+      y: 0,
+      hidden: false,
+      detach() {
+        el.removeEventListener("pointerdown", stop);
+        el.removeEventListener("mousedown", stop);
+        el.removeEventListener("click", onClick);
+        el.remove();
+      }
+    };
+  }
+  function render() {
+    const live = /* @__PURE__ */ new Map();
+    for (const g of groups()) {
+      const refs = refsOf(g.uids);
+      if (!refs.length) continue;
+      const key = g.uids.join("|");
+      let badge = badges.get(key);
+      if (!badge) {
+        badge = makeBadge(key);
+        badges.set(key, badge);
+      }
+      const changed = badge.refs.length !== refs.length || badge.refs.some((r, i) => r.uid !== refs[i].uid || r.string !== refs[i].string);
+      badge.uids = g.uids;
+      badge.bbox = g.bbox;
+      badge.refs = refs;
+      if (badge.count !== refs.length) {
+        badge.count = refs.length;
+        badge.el.textContent = String(refs.length);
+        badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
+      }
+      live.set(key, badge);
+      if (changed && popover?.key === key) repaintPopover();
+    }
+    for (const [key, badge] of [...badges]) {
+      if (live.has(key)) continue;
+      badges.delete(key);
+      if (popover?.key === key) closePopover();
+      badge.detach();
+    }
+  }
+  function layout() {
+    if (disposed || !badges.size) return;
+    const dark = app.state?.theme === "dark";
+    layer.className = themed("plexus-portal plexus-backlinks", dark);
+    if (popover) popover.el.className = themed("plexus-portal plexus-backlink-popover", dark);
+    const box = containerEl?.getBoundingClientRect?.() ?? { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
+    for (const badge of badges.values()) {
+      const rect = native.viewportRectOf(app, badge.bbox);
+      const cx = rect.left + rect.width;
+      const cy = rect.top;
+      const hidden = !(cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom);
+      badge.x = cx + 3;
+      badge.y = cy + 3;
+      badge.hidden = hidden;
+      badge.el.style.left = `${badge.x}px`;
+      badge.el.style.top = `${badge.y}px`;
+      badge.el.style.display = hidden ? "none" : "";
+      if (hidden && popover?.key === badge.key) closePopover();
+    }
+    if (popover) placePopover();
+  }
+  function update() {
+    if (disposed) return;
+    let regionsChanged = false;
+    if (now() - regionsAt > REGION_REFETCH_MS) regionsChanged = fetchRegions();
+    const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
+    let sum = elements.length;
+    for (const el of elements) sum += Number(el?.version) || 0;
+    const sig = `${sum}:${elements.length}`;
+    if (regionsChanged || sig !== sceneSig) {
+      sceneSig = sig;
+      targets = collectTargets();
+      const uids = targets.flatMap((t) => t.uids);
+      syncWatches(uids);
+      for (const uid of uids) if (!refsByUid.has(uid) || regionsChanged) refsByUid.set(uid, loadRefs(uid));
+      for (const uid of [...refsByUid.keys()]) if (!uids.includes(uid)) refsByUid.delete(uid);
+      render();
+    }
+    layout();
+  }
+  function schedule() {
+    if (disposed || pendingFrame != null) return;
+    pendingFrame = requestFrame(() => {
+      pendingFrame = null;
+      try {
+        update();
+      } catch (error) {
+        warn2("backlinks update failed", error);
+      }
+    });
+  }
+  function placePopover() {
+    const badge = badges.get(popover?.key);
+    if (!badge) return;
+    const width = view2?.innerWidth;
+    const left = Number.isFinite(width) ? Math.max(0, Math.min(badge.x, width - 340)) : badge.x;
+    popover.el.style.left = `${left}px`;
+    popover.el.style.top = `${badge.y + 24}px`;
+  }
+  function onKey(e) {
+    if (e?.key === "Escape") closePopover();
+  }
+  const inside = (target) => {
+    for (let n = target; n; n = n.parentNode ?? n.parentElement) {
+      if (n === popover?.el) return true;
+      if (n?.classList?.contains?.("plexus-backlink-badge") || n?.className === "plexus-backlink-badge") return true;
+    }
+    return false;
+  };
+  const onOutside = (e) => {
+    if (!inside(e?.target)) closePopover();
+  };
+  function openPopover(key) {
+    closePopover();
+    const badge = badges.get(key);
+    if (!badge) return;
+    const el = doc.createElement("div");
+    el.className = themed("plexus-portal plexus-backlink-popover", app.state?.theme === "dark");
+    el.style.zIndex = String(zIndex + 3);
+    const stop = (e) => e?.stopPropagation?.();
+    el.addEventListener("mousedown", stop);
+    el.addEventListener("pointerdown", stop);
+    const hosts = [];
+    const rowHandlers = [];
+    for (const ref of badge.refs.slice(0, BACKLINK_ROW_CAP)) {
+      const row = doc.createElement("div");
+      row.className = "plexus-backlink-row";
+      const page = doc.createElement("div");
+      page.className = "plexus-backlink-page";
+      page.textContent = ref.page;
+      const body = doc.createElement("div");
+      body.className = "plexus-backlink-block";
+      row.append(page, body);
+      el.append(row);
+      hosts.push(body);
+      try {
+        api.ui.components.renderString({ el: body, string: ref.string });
+      } catch (error) {
+        warn2("backlinks render failed", error);
+        body.textContent = ref.string;
+      }
+      const onClick = (e) => {
+        e?.stopPropagation?.();
+        e?.preventDefault?.();
+        closePopover();
+        try {
+          openTarget({ type: "block", uid: ref.uid }, { sidebar: !!e?.shiftKey });
+        } catch (error) {
+          warn2("backlinks open failed", error);
+        }
+      };
+      row.addEventListener("click", onClick);
+      rowHandlers.push([row, onClick]);
+    }
+    if (badge.refs.length > BACKLINK_ROW_CAP) {
+      const more = doc.createElement("div");
+      more.className = "plexus-backlink-more";
+      more.textContent = `+${badge.refs.length - BACKLINK_ROW_CAP} more`;
+      el.append(more);
+    }
+    doc.body.append(el);
+    popover = { key, el, hosts, stop, rowHandlers };
+    doc.addEventListener("keydown", onKey, true);
+    doc.addEventListener("mousedown", onOutside, true);
+    doc.addEventListener("wheel", onOutside, true);
+    doc.addEventListener("scroll", onOutside, true);
+    placePopover();
+  }
+  function closePopover() {
+    const p = popover;
+    if (!p) return;
+    popover = null;
+    doc.removeEventListener("keydown", onKey, true);
+    doc.removeEventListener("mousedown", onOutside, true);
+    doc.removeEventListener("wheel", onOutside, true);
+    doc.removeEventListener("scroll", onOutside, true);
+    for (const host_ of p.hosts) {
+      try {
+        api.ui.components.unmountNode({ el: host_ });
+      } catch (error) {
+        warn2("backlinks unmount failed", error);
+      }
+    }
+    for (const [row, fn] of p.rowHandlers) row.removeEventListener("click", fn);
+    p.el.removeEventListener("mousedown", p.stop);
+    p.el.removeEventListener("pointerdown", p.stop);
+    p.el.remove();
+  }
+  function repaintPopover() {
+    const key = popover?.key;
+    if (key) openPopover(key);
+  }
+  function refresh() {
+    if (disposed) return;
+    try {
+      fetchRegions();
+      sceneSig = null;
+      targets = [];
+      for (const uid of [...refsByUid.keys()]) refsByUid.delete(uid);
+      update();
+    } catch (error) {
+      warn2("backlinks refresh failed", error);
+    }
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (pendingFrame != null) {
+      cancelFrame(pendingFrame);
+      pendingFrame = null;
+    }
+    try {
+      unsubscribe2?.();
+    } catch (error) {
+      warn2("backlinks unsubscribe failed", error);
+    }
+    unsubscribe2 = null;
+    closePopover();
+    for (const [uid, entry] of [...watches]) removeWatch(uid, entry);
+    for (const badge of badges.values()) badge.detach();
+    badges.clear();
+    refsByUid.clear();
+    layer.remove();
+  }
+  try {
+    unsubscribe2 = native.subscribeViewport(app, schedule);
+  } catch (error) {
+    warn2("backlinks subscribe failed", error);
+  }
+  refresh();
+  return { refresh, dispose };
+}
+
 // src/view/present.js
 var NEXT_KEYS = /* @__PURE__ */ new Set(["ArrowRight", "PageDown", " ", "Spacebar", "Enter"]);
 var PREV_KEYS = /* @__PURE__ */ new Set(["ArrowLeft", "PageUp", "Backspace"]);
@@ -3151,8 +3618,8 @@ var FAIL_TTL_MS = 6e4;
 var PRUNE_FLOOR = 64;
 var IMAGE_SETTLE_MS = 1200;
 var PLAIN_SETTLE_MS = 150;
-var IMAGE_KINDS = /* @__PURE__ */ new Set(["imgrect", "imgpoly"]);
-var isImageKind = (kind) => IMAGE_KINDS.has(kind);
+var IMAGE_KINDS2 = /* @__PURE__ */ new Set(["imgrect", "imgpoly"]);
+var isImageKind = (kind) => IMAGE_KINDS2.has(kind);
 var pt = (v) => Array.isArray(v) ? v : [v.x, v.y];
 function displayedRect(el, f) {
   if (!el?.crop) return f;
@@ -3718,6 +4185,31 @@ function clearLinkTooltip(doc) {
     el.classList.remove("excalidraw-tooltip--visible");
   }
 }
+function pageUidOf(api, title) {
+  return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
+}
+function sidebarWindow(api, target) {
+  return target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(api, target.title) } : { type: "block", "block-uid": target.uid };
+}
+function navigate(api, containerEl, target, sidebar, window) {
+  if (sidebar) {
+    api.ui.rightSidebar.addWindow({ window });
+    return;
+  }
+  containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
+  if (target.type === "page") {
+    const uid = target.uid ?? pageUidOf(api, target.title);
+    if (uid) api.ui.mainWindow.openPage({ page: { uid } });
+    else api.ui.mainWindow.openPage({ page: { title: target.title } });
+  } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+  clearLinkTooltip(containerEl.ownerDocument);
+}
+function navigateToTarget({ api, containerEl, target, sidebar = false }) {
+  const window = sidebar ? sidebarWindow(api, target) : null;
+  if (sidebar && !window["block-uid"]) return false;
+  navigate(api, containerEl, target, sidebar, window);
+  return true;
+}
 function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {
   };
@@ -3744,23 +4236,6 @@ function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaA
     }
     return null;
   }
-  const sidebarWindow = (target) => target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) } : { type: "block", "block-uid": target.uid };
-  function navigate(target, sidebar, window) {
-    if (sidebar) {
-      api.ui.rightSidebar.addWindow({ window });
-      return;
-    }
-    containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
-    if (target.type === "page") {
-      const uid = target.uid ?? pageUidOf(target.title);
-      if (uid) api.ui.mainWindow.openPage({ page: { uid } });
-      else api.ui.mainWindow.openPage({ page: { title: target.title } });
-    } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
-    clearLinkTooltip(containerEl.ownerDocument);
-  }
-  function pageUidOf(title) {
-    return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
-  }
   const onDown = (e) => {
     down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
   };
@@ -3775,11 +4250,11 @@ function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaA
       const target = resolve(e);
       if (!target) return;
       const sidebar = !!e.shiftKey;
-      const window = sidebar ? sidebarWindow(target) : null;
+      const window = sidebar ? sidebarWindow(api, target) : null;
       if (sidebar && !window["block-uid"]) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      navigate(target, sidebar, window);
+      navigate(api, containerEl, target, sidebar, window);
       onNavigate?.({ target, sidebar });
     } catch (error) {
       console.warn("[plexus] link interception failed", error);
@@ -6641,21 +7116,60 @@ function orderFrames(elements) {
 
 // src/model/caption.js
 var MAX_CAPTION = 200;
+var UID_RE2 = /^[A-Za-z0-9_-]+$/;
 function cleanText(text) {
   return String(text ?? "").replace(/[{}`]/g, "").replace(/\s+/g, " ").trim();
 }
-function captionFromElements(elements, ids) {
-  if (!Array.isArray(elements) || !ids) return "";
-  const wanted = new Set(Array.isArray(ids) ? ids : [...ids]);
-  const parts = [];
-  for (const el of elements) {
-    if (!el || el.isDeleted || el.type !== "text") continue;
-    if (!wanted.has(el.id) && !(el.containerId && wanted.has(el.containerId))) continue;
-    const text = cleanText(el.originalText ?? el.text);
-    if (text) parts.push(text);
-  }
-  return parts.join(" ; ").slice(0, MAX_CAPTION).trim();
+function refFromLink(value) {
+  const parsed = parseRoamLink(value);
+  if (!parsed) return null;
+  if (parsed.type === "block" && parsed.uid) return `((${parsed.uid}))`;
+  if (parsed.type === "page" && parsed.title) return `[[${parsed.title}]]`;
+  return null;
 }
+function sourceRefOf(el) {
+  const plexus = el?.customData?.plexus;
+  const uid = plexus?.mm?.uid;
+  if (typeof uid === "string" && UID_RE2.test(uid)) return `((${uid}))`;
+  return refFromLink(plexus?.embed) || refFromLink(el?.link);
+}
+function captionRefsInfo(elements, ids) {
+  if (!Array.isArray(elements) || !ids) return { caption: "", hasRef: false };
+  const wanted = new Set(Array.isArray(ids) ? ids : [...ids]);
+  const byId = /* @__PURE__ */ new Map();
+  for (const el of elements) if (el && el.id) byId.set(el.id, el);
+  const parts = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (value, isRef) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    parts.push({ value, isRef });
+  };
+  for (const el of elements) {
+    if (!el || el.isDeleted) continue;
+    const isText = el.type === "text";
+    if (!wanted.has(el.id) && !(isText && el.containerId && wanted.has(el.containerId))) continue;
+    const container = isText && el.containerId ? byId.get(el.containerId) : null;
+    const ref = container && !container.isDeleted && sourceRefOf(container) || sourceRefOf(el);
+    if (ref) {
+      push(ref, true);
+      continue;
+    }
+    if (isText) push(cleanText(el.originalText ?? el.text), false);
+  }
+  let caption = "";
+  for (const part of parts) {
+    const next = caption ? `${caption} ; ${part.value}` : part.value;
+    if (next.length <= MAX_CAPTION) {
+      caption = next;
+      continue;
+    }
+    if (!part.isRef) caption = next.slice(0, MAX_CAPTION).trim();
+    break;
+  }
+  return { caption, hasRef: parts.some((p) => p.isRef) };
+}
+var captionRefsFromElements = (elements, ids) => captionRefsInfo(elements, ids).caption;
 
 // src/view/image-region-tool.js
 var LASSO_STEP_PX = 4;
@@ -7074,6 +7588,28 @@ function createActions({
       return null;
     }
   }
+  const captionIds = (region, elements) => {
+    const live = elements.filter((el) => el && !el.isDeleted);
+    if (region.kind === "area") return region.ids;
+    if (region.kind === "group") return live.filter((el) => el.groupIds?.includes(region.groupId)).map((el) => el.id);
+    return live.filter((el) => el.frameId === region.frameId).map((el) => el.id);
+  };
+  const RELINK_KINDS = /* @__PURE__ */ new Set(["area", "group", "frame", "cframe"]);
+  function relinkPlan(regionUid) {
+    try {
+      const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
+      const region = block ? parseRegion(block.string) : null;
+      if (!region || !region.supported || !RELINK_KINDS.has(region.kind)) return null;
+      const elements = host.drawing(region.drawingUid)?.elements;
+      if (!Array.isArray(elements)) return null;
+      const { caption, hasRef } = captionRefsInfo(elements, captionIds(region, elements));
+      if (!hasRef || !caption) return null;
+      return { region, caption, current: region.caption, block };
+    } catch (error) {
+      console.warn("[plexus] caption plan failed", error);
+      return null;
+    }
+  }
   const croppedImage = (app) => {
     const ids = native.selectedElementIds(app);
     if (ids.length !== 1) return null;
@@ -7117,16 +7653,53 @@ function createActions({
       let region;
       if (detected.kind === "cframe") {
         const { frame: frame2, children } = detected;
-        const caption = captionFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
+        const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
         region = { kind: "cframe", drawingUid, frameId: frame2.id, caption };
       } else if (detected.kind === "group") {
-        const caption = captionFromElements(elements, detected.members.map((el) => el.id)) || "Region";
+        const caption = captionRefsFromElements(elements, detected.members.map((el) => el.id)) || "Region";
         region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD, caption };
       } else {
-        const caption = captionFromElements(elements, ids) || "Region";
+        const caption = captionRefsFromElements(elements, ids) || "Region";
         region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD, caption };
       }
       return finishCreate(region, await hotSvg(app, region));
+    }),
+    regionCaptionCandidate(regionUid) {
+      const plan = relinkPlan(regionUid);
+      return plan && plan.caption !== plan.current ? plan.caption : null;
+    },
+    relinkRegionCaption: (regionUid) => once(`relink:${regionUid}`, async () => {
+      const plan = relinkPlan(regionUid);
+      if (!plan) {
+        toaster.show("No source blocks to link", { kind: "error" });
+        return { changed: false, caption: null };
+      }
+      if (plan.caption === plan.region.caption) {
+        toaster.show("Caption already linked");
+        return { changed: false, caption: plan.caption };
+      }
+      const next = serializeRegion({ ...plan.region, caption: plan.caption });
+      const check = parseRegion(next);
+      const head = (str) => str.replace(/\}\}[\s\S]*$/, "}}");
+      if (!check?.supported || check.caption !== plan.caption || head(next) !== head(plan.block.string)) {
+        console.warn("[plexus] relink round-trip mismatch", regionUid);
+        toaster.show("Could not link caption", { kind: "error" });
+        return { changed: false, caption: plan.region.caption };
+      }
+      try {
+        await host.updateRegionString(plan.region.drawingUid, regionUid, next);
+      } catch (error) {
+        console.warn("[plexus] relink caption failed", error);
+        toaster.show("Could not link caption, try again", { kind: "error" });
+        return { changed: false, caption: plan.region.caption };
+      }
+      try {
+        emit({ uid: regionUid, kind: "region" });
+      } catch (error) {
+        console.warn("[plexus] change emit failed", error);
+      }
+      toaster.show("Caption linked");
+      return { changed: true, caption: plan.caption };
     }),
     isFrameSelected() {
       const editor = native.activeEditor(doc);
@@ -7150,7 +7723,7 @@ function createActions({
       }
       if (badTarget(drawingUid, [detected.frame.id])) return null;
       const { frame: frame2, children } = detected;
-      const caption = captionFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
+      const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
       const region = { kind: "frame", drawingUid, frameId: frame2.id, pad: DEFAULT_PAD, caption };
       return finishCreate(region, await hotSvg(app, region));
     }),
@@ -8534,6 +9107,7 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
 // src/view/context-menus.js
 var DRAWING_START2 = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 var MEMO_MS2 = 500;
+var LINK_LABEL = "Plexus: Link caption to source blocks";
 var guard = (label, fn) => (...args) => {
   try {
     const out = fn(...args);
@@ -8587,6 +9161,13 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     const overrides = getSettings()?.refOverrides || {};
     return { supported, mode, hasOverride: overrideKey(block, ref) in overrides };
   });
+  const candidateOf = memoize((uid) => {
+    try {
+      return actions.regionCaptionCandidate?.(uid) ?? null;
+    } catch {
+      return null;
+    }
+  });
   const blockInfo = memoize((uid) => {
     const string = pullString(uid);
     if (string == null) return {};
@@ -8609,6 +9190,10 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     }
   };
   const refOf = (e) => ({ ref: e?.["ref-uid"], block: e?.["block-uid"] });
+  const refShowLink = (e) => {
+    const { ref, block } = refOf(e);
+    return refInfo(`${ref}|${block}`, ref, block).supported && candidateOf(ref, ref) != null;
+  };
   const refShow = (extra = () => true) => (e) => {
     const { ref, block } = refOf(e);
     const info = refInfo(`${ref}|${block}`, ref, block);
@@ -8631,6 +9216,12 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     regionref.refreshBlock(block);
   });
   register("blockRefContextMenu", "Plexus: Refresh crop", refShow(), (e) => regionref.refreshRegion(refOf(e).ref));
+  const relink = async (uid) => {
+    await actions.relinkRegionCaption(uid);
+    clearMemo();
+    regionref.refreshRegion?.(uid);
+  };
+  register("blockRefContextMenu", LINK_LABEL, refShowLink, (e) => relink(refOf(e).ref));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
@@ -8638,6 +9229,7 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
   register("blockContextMenu", "Plexus: Mind map from outline", () => true, (e) => actions.mindMapFromOutline(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Open region", blockShow("region"), (e) => actions.openRegion(e?.["block-uid"], { sidebar: false }));
   register("blockContextMenu", "Plexus: Refresh crop", blockShow("region"), (e) => regionref.refreshRegion(e?.["block-uid"]));
+  register("blockContextMenu", LINK_LABEL, (e) => blockInfo(e?.["block-uid"], e?.["block-uid"]).region && candidateOf(e?.["block-uid"], e?.["block-uid"]) != null, (e) => relink(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Refresh crops", blockShow("drawing"), (e) => actions.refreshCropsForDrawing(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Region settings…", blockShow("drawing"), () => openSettings());
   return function dispose() {
@@ -8758,7 +9350,8 @@ var FIELDS = [
   { id: SETTING_IDS.thumbHeight, label: "Thumbnail height (px)", type: "number", fallback: 72, min: 24, max: 400 },
   { id: SETTING_IDS.inlineDisplay, label: "Region refs inside text", type: "select", options: [["thumbnail", "Thumbnail"], ["link", "Link"]] },
   { id: SETTING_IDS.darkCrops, label: "Match dark theme", type: "checkbox", fallback: true },
-  { id: SETTING_IDS.openInSidebar, label: "Open regions in sidebar", type: "checkbox", fallback: false }
+  { id: SETTING_IDS.openInSidebar, label: "Open regions in sidebar", type: "checkbox", fallback: false },
+  { id: SETTING_IDS.showBacklinks, label: "Show backlinks on canvas", type: "checkbox", fallback: true }
 ];
 function openSettingsDialog({ doc, get = () => void 0, set = () => {
 }, onChanged = () => {
@@ -9175,6 +9768,25 @@ async function onload({ extensionAPI, extension }) {
               ];
             }
           }));
+          if (mounted.uid && getSettings().showBacklinks) {
+            const backlinks = createCanvasBacklinks({
+              doc,
+              api,
+              host,
+              app,
+              containerEl: el,
+              drawingUid: mounted.uid,
+              zIndex: outer ? baseZIndex(doc, outer) : 1e3,
+              native: native_exports,
+              openTarget: (target, { sidebar } = {}) => {
+                if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
+                if (!sidebar) navigatedAt = Date.now();
+                hover.hide();
+                if (sidebar) toaster.show("Opened in sidebar");
+              }
+            });
+            mounted.disposers.push(() => backlinks.dispose());
+          }
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();

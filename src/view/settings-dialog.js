@@ -15,6 +15,7 @@ const FIELDS = [
   { id: SETTING_IDS.inlineDisplay, label: "Region refs inside text", type: "select", options: [["thumbnail", "Thumbnail"], ["link", "Link"]] },
   { id: SETTING_IDS.darkCrops, label: "Match dark theme", type: "checkbox", fallback: true },
   { id: SETTING_IDS.openInSidebar, label: "Open regions in sidebar", type: "checkbox", fallback: false },
+  { id: SETTING_IDS.showBacklinks, label: "Show backlinks on canvas", type: "checkbox", fallback: true },
 ];
 
 export function openSettingsDialog({ doc, get = () => undefined, set = () => {}, onChanged = () => {}, zIndex = 100000, dark = false } = {}) {

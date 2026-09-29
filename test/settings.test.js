@@ -66,3 +66,12 @@ test("panel onChange wrapper", () => {
   try { boom.settings[0].action.onChange(); } finally { console.warn = warn; }
   assert.ok(createSettingsPanel().settings.length > 0);
 });
+
+test("showBacklinks defaults on, follows the stored value, and has a panel switch", () => {
+  assert.equal(SETTING_IDS.showBacklinks, "show-backlinks");
+  assert.equal(readSettings(fakeApi()).showBacklinks, true);
+  assert.equal(readSettings(fakeApi({ [SETTING_IDS.showBacklinks]: false })).showBacklinks, false);
+  const item = createSettingsPanel().settings.find((x) => x.id === "show-backlinks");
+  assert.equal(item.name, "Show backlinks on canvas");
+  assert.equal(item.action.type, "switch");
+});

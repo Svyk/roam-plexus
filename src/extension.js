@@ -7,12 +7,13 @@ import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
 import { baseZIndex, createEditorToolbar } from "./view/toolbar.js";
 import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
+import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
 import { createHoverPreview } from "./view/hover-preview.js";
-import { clearLinkTooltip, installLinkInterception } from "./host/links.js";
+import { clearLinkTooltip, installLinkInterception, navigateToTarget } from "./host/links.js";
 import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createMindMap } from "./view/mindmap.js";
 import { createMmWriter } from "./host/mmwrites.js";
@@ -276,6 +277,18 @@ export async function onload({ extensionAPI, extension }) {
               ];
             },
           }));
+          if (mounted.uid && getSettings().showBacklinks) {
+            const backlinks = createCanvasBacklinks({
+              doc, api, host, app, containerEl: el, drawingUid: mounted.uid, zIndex: outer ? baseZIndex(doc, outer) : 1000, native,
+              openTarget: (target, { sidebar } = {}) => {
+                if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
+                if (!sidebar) navigatedAt = Date.now();
+                hover.hide();
+                if (sidebar) toaster.show("Opened in sidebar");
+              },
+            });
+            mounted.disposers.push(() => backlinks.dispose());
+          }
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();

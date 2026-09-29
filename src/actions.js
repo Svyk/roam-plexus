@@ -3,7 +3,7 @@ import { commonBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, vie
 import { embedAnchors, embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
 import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
 import { orderFrames } from "./model/slides.js";
-import { captionFromElements } from "./model/caption.js";
+import { captionRefsFromElements, captionRefsInfo } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { isExcludedString } from "./model/mindmap.js";
 import { fnv1a } from "./model/hash.js";
@@ -235,6 +235,33 @@ export function createActions({
     }
   }
 
+  // Element ids whose captions describe a drawing region (same sets the creators use).
+  const captionIds = (region, elements) => {
+    const live = elements.filter((el) => el && !el.isDeleted);
+    if (region.kind === "area") return region.ids;
+    if (region.kind === "group") return live.filter((el) => el.groupIds?.includes(region.groupId)).map((el) => el.id);
+    return live.filter((el) => el.frameId === region.frameId).map((el) => el.id);
+  };
+
+  const RELINK_KINDS = new Set(["area", "group", "frame", "cframe"]);
+
+  // { region, caption } when the region's caption would change by linking source refs, else null. Never throws.
+  function relinkPlan(regionUid) {
+    try {
+      const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
+      const region = block ? parseRegion(block.string) : null;
+      if (!region || !region.supported || !RELINK_KINDS.has(region.kind)) return null;
+      const elements = host.drawing(region.drawingUid)?.elements;
+      if (!Array.isArray(elements)) return null;
+      const { caption, hasRef } = captionRefsInfo(elements, captionIds(region, elements));
+      if (!hasRef || !caption) return null;
+      return { region, caption, current: region.caption, block };
+    } catch (error) {
+      console.warn("[plexus] caption plan failed", error);
+      return null;
+    }
+  }
+
   const croppedImage = (app) => {
     const ids = native.selectedElementIds(app);
     if (ids.length !== 1) return null;
@@ -282,16 +309,55 @@ export function createActions({
       let region;
       if (detected.kind === "cframe") {
         const { frame, children } = detected;
-        const caption = captionFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
+        const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
         region = { kind: "cframe", drawingUid, frameId: frame.id, caption };
       } else if (detected.kind === "group") {
-        const caption = captionFromElements(elements, detected.members.map((el) => el.id)) || "Region";
+        const caption = captionRefsFromElements(elements, detected.members.map((el) => el.id)) || "Region";
         region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD, caption };
       } else {
-        const caption = captionFromElements(elements, ids) || "Region";
+        const caption = captionRefsFromElements(elements, ids) || "Region";
         region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD, caption };
       }
       return finishCreate(region, await hotSvg(app, region));
+    }),
+
+    regionCaptionCandidate(regionUid) {
+      const plan = relinkPlan(regionUid);
+      return plan && plan.caption !== plan.current ? plan.caption : null;
+    },
+
+    relinkRegionCaption: (regionUid) => once(`relink:${regionUid}`, async () => {
+      const plan = relinkPlan(regionUid);
+      if (!plan) {
+        toaster.show("No source blocks to link", { kind: "error" });
+        return { changed: false, caption: null };
+      }
+      if (plan.caption === plan.region.caption) {
+        toaster.show("Caption already linked");
+        return { changed: false, caption: plan.caption };
+      }
+      const next = serializeRegion({ ...plan.region, caption: plan.caption });
+      const check = parseRegion(next);
+      const head = (str) => str.replace(/\}\}[\s\S]*$/, "}}");
+      if (!check?.supported || check.caption !== plan.caption || head(next) !== head(plan.block.string)) {
+        console.warn("[plexus] relink round-trip mismatch", regionUid);
+        toaster.show("Could not link caption", { kind: "error" });
+        return { changed: false, caption: plan.region.caption };
+      }
+      try {
+        await host.updateRegionString(plan.region.drawingUid, regionUid, next);
+      } catch (error) {
+        console.warn("[plexus] relink caption failed", error);
+        toaster.show("Could not link caption, try again", { kind: "error" });
+        return { changed: false, caption: plan.region.caption };
+      }
+      try {
+        emit({ uid: regionUid, kind: "region" });
+      } catch (error) {
+        console.warn("[plexus] change emit failed", error);
+      }
+      toaster.show("Caption linked");
+      return { changed: true, caption: plan.caption };
     }),
 
     isFrameSelected() {
@@ -317,7 +383,7 @@ export function createActions({
       }
       if (badTarget(drawingUid, [detected.frame.id])) return null;
       const { frame, children } = detected;
-      const caption = captionFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
+      const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
       const region = { kind: "frame", drawingUid, frameId: frame.id, pad: DEFAULT_PAD, caption };
       return finishCreate(region, await hotSvg(app, region));
     }),

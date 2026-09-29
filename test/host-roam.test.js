@@ -165,3 +165,16 @@ test("a tab with a stale replica reuses the container instead of creating a seco
   assert.equal(second, first);
   assert.equal(blocks.d.children.length, 1);
 });
+
+test("updateRegionString rewrites only the string under the drawing lock", async () => {
+  const api = makeApi({ d: { string: "x", children: [] } });
+  const updates = [];
+  api.data.block.update = async (a) => { updates.push(a); };
+  const names = [];
+  const host = createRoamHost({ api, withLockFn: async (name, fn) => { names.push(name); return passLock(name, fn); } });
+  assert.equal(await host.updateRegionString("d", "reg000001", "s"), "reg000001");
+  assert.deepEqual(updates, [{ block: { uid: "reg000001", string: "s" } }]);
+  assert.deepEqual(names, ["plexus:g:d"]);
+  const denied = createRoamHost({ api, withLockFn: async () => ({ acquired: false, fallback: false }) });
+  await assert.rejects(denied.updateRegionString("d", "r", "s"), /lock/);
+});

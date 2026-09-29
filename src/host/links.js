@@ -23,6 +23,38 @@ export function clearLinkTooltip(doc) {
   }
 }
 
+function pageUidOf(api, title) {
+  return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
+}
+
+function sidebarWindow(api, target) {
+  return target.type === "page"
+    ? { type: "outline", "block-uid": target.uid ?? pageUidOf(api, target.title) }
+    : { type: "block", "block-uid": target.uid };
+}
+
+function navigate(api, containerEl, target, sidebar, window) {
+  if (sidebar) {
+    api.ui.rightSidebar.addWindow({ window });
+    return;
+  }
+  containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
+  if (target.type === "page") {
+    const uid = target.uid ?? pageUidOf(api, target.title);
+    if (uid) api.ui.mainWindow.openPage({ page: { uid } });
+    else api.ui.mainWindow.openPage({ page: { title: target.title } });
+  } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+  clearLinkTooltip(containerEl.ownerDocument);
+}
+
+// Same navigation as link interception: minimize the full-screen editor, then open; sidebar opens a window instead.
+export function navigateToTarget({ api, containerEl, target, sidebar = false }) {
+  const window = sidebar ? sidebarWindow(api, target) : null;
+  if (sidebar && !window["block-uid"]) return false;
+  navigate(api, containerEl, target, sidebar, window);
+  return true;
+}
+
 // Capture-phase pointerdown/up on the editor container. Only trusted, short, still clicks on an element whose
 // link is a Roam link are taken over; everything else falls through to Excalidraw.
 export function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
@@ -53,28 +85,6 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
     return null;
   }
 
-  const sidebarWindow = (target) => (target.type === "page"
-    ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) }
-    : { type: "block", "block-uid": target.uid });
-
-  function navigate(target, sidebar, window) {
-    if (sidebar) {
-      api.ui.rightSidebar.addWindow({ window });
-      return;
-    }
-    containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
-    if (target.type === "page") {
-      const uid = target.uid ?? pageUidOf(target.title);
-      if (uid) api.ui.mainWindow.openPage({ page: { uid } });
-      else api.ui.mainWindow.openPage({ page: { title: target.title } });
-    } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
-    clearLinkTooltip(containerEl.ownerDocument);
-  }
-
-  function pageUidOf(title) {
-    return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
-  }
-
   const onDown = (e) => {
     down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
   };
@@ -90,12 +100,12 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
       const target = resolve(e);
       if (!target) return;
       const sidebar = !!e.shiftKey;
-      const window = sidebar ? sidebarWindow(target) : null;
+      const window = sidebar ? sidebarWindow(api, target) : null;
       // Nothing to open in the sidebar (page does not exist): leave the click to Excalidraw, no false toast.
       if (sidebar && !window["block-uid"]) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      navigate(target, sidebar, window);
+      navigate(api, containerEl, target, sidebar, window);
       onNavigate?.({ target, sidebar });
     } catch (error) {
       console.warn("[plexus] link interception failed", error);

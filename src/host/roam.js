@@ -119,6 +119,16 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return lock.value;
   }
 
+  async function updateRegionString(drawingUid, regionUid, regionString) {
+    const graph = api.graph.name;
+    const lock = await withLockFn(lockName(graph, drawingUid), async () => {
+      await api.data.block.update({ block: { uid: regionUid, string: regionString } });
+      return regionUid;
+    });
+    if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
+    return lock.value;
+  }
+
   function pageUidByTitle(title) {
     const raw = api.data.pull("[:block/uid]", [":node/title", title]);
     return raw?.[":block/uid"] || null;
@@ -249,6 +259,7 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     regionsOf,
     ensureRegionContainer,
     createRegion,
+    updateRegionString,
     createDrawing,
     drawingsOn,
     resolveUidKind,

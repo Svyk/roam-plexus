@@ -147,3 +147,15 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
   await tick();
   assert.deepEqual(writes, [["figure-height", "1200"]]);
 });
+
+test("show backlinks checkbox defaults on and saves a boolean", async () => {
+  const { dlg, writes } = setup();
+  const all = inputs(dlg);
+  assert.equal(all.length, 6);
+  const box = all[5];
+  assert.equal(box.checked, true);
+  box.checked = false; box.fire("change");
+  await tick();
+  assert.deepEqual(writes, [["show-backlinks", false]]);
+  assert.equal(setup({ "show-backlinks": false }).dlg && inputs(setup({ "show-backlinks": false }).dlg)[5].checked, false);
+});

@@ -416,3 +416,69 @@ test("detectRegionKind: cframe, group and area", () => {
   assert.equal(detectRegionKind({ elements: [g1, g2, out], ids: ["g1"], selectedGroupIds: { G: true } }).kind, "area");
   assert.equal(detectRegionKind({ elements: all, ids: ["a"], selectedGroupIds: {} }).kind, "area");
 });
+
+
+// ---- ref captions and relink ----
+const MM_ELS = [
+  { id: "pmm-A-h6dynpr9M", type: "rectangle", customData: { plexus: { mm: { uid: "h6dynpr9M" } } } },
+  { id: "pmm-A-h6dynpr9M-t", type: "text", text: "Child two", containerId: "pmm-A-h6dynpr9M" },
+];
+
+test("createAreaRegion uses the source ref as caption", async () => {
+  const { actions, created } = make({ elements: MM_ELS, ids: ["pmm-A-h6dynpr9M"] });
+  await actions.createAreaRegion();
+  assert.equal(created[0][1], "{{[[plexus-region]]: k=area d=drw000001 ids=pmm-A-h6dynpr9M pad=10}} ((h6dynpr9M))");
+});
+
+function relinkActions(string, elements = MM_ELS, over = {}) {
+  const writes = [];
+  const toasts = [];
+  const emitted = [];
+  const actions = createActions({
+    host: {
+      pullBlock: () => ({ string }),
+      drawing: () => ({ elements, hash: "h" }),
+      updateRegionString: over.update || (async (d, uid, s) => { writes.push([d, uid, s]); }),
+    },
+    native: {}, cache: {}, cold: {}, toaster: { show: (m, o) => toasts.push([m, o]) }, spotlight() {}, getSettings: () => ({}),
+    doc: {}, clipboard: {}, emit: (e) => emitted.push(e),
+  });
+  return { actions, writes, toasts, emitted };
+}
+
+test("relinkRegionCaption rewrites only the caption and is a no-op afterwards", async () => {
+  const before = "{{[[plexus-region]]: k=area d=drw000001 ids=pmm-A-h6dynpr9M pad=10}} Child two";
+  const a = relinkActions(before);
+  assert.equal(a.actions.regionCaptionCandidate("reg000001"), "((h6dynpr9M))");
+  const out = await a.actions.relinkRegionCaption("reg000001");
+  assert.deepEqual(out, { changed: true, caption: "((h6dynpr9M))" });
+  assert.deepEqual(a.writes, [["drw000001", "reg000001", "{{[[plexus-region]]: k=area d=drw000001 ids=pmm-A-h6dynpr9M pad=10}} ((h6dynpr9M))"]]);
+  assert.equal(a.toasts.at(-1)[0], "Caption linked");
+
+  const after = "{{[[plexus-region]]: k=area d=drw000001 ids=pmm-A-h6dynpr9M pad=10}} ((h6dynpr9M))";
+  const b = relinkActions(after);
+  assert.equal(b.actions.regionCaptionCandidate("reg000001"), null);
+  assert.deepEqual(await b.actions.relinkRegionCaption("reg000001"), { changed: false, caption: "((h6dynpr9M))" });
+  assert.equal(b.writes.length, 0);
+  assert.equal(b.toasts.at(-1)[0], "Caption already linked");
+});
+
+test("relink skips image kinds, missing drawings and refless regions; write failure toasts", async () => {
+  const img = relinkActions("{{[[plexus-region]]: k=imgrect d=drw000001 i=0 f=0,0,1,1}} x");
+  assert.equal(img.actions.regionCaptionCandidate("reg000001"), null);
+  const plain = relinkActions("{{[[plexus-region]]: k=area d=drw000001 ids=t1 pad=10}} Hello", [{ id: "t1", type: "text", text: "Hello" }]);
+  assert.equal(plain.actions.regionCaptionCandidate("reg000001"), null);
+  assert.equal((await plain.actions.relinkRegionCaption("reg000001")).changed, false);
+  const fail = relinkActions("{{[[plexus-region]]: k=area d=drw000001 ids=pmm-A-h6dynpr9M pad=10}} Child two", MM_ELS, { update: async () => { throw new Error("x"); } });
+  const warn = console.warn; console.warn = () => {};
+  try { assert.equal((await fail.actions.relinkRegionCaption("reg000001")).changed, false); } finally { console.warn = warn; }
+  assert.equal(fail.toasts.at(-1)[1].kind, "error");
+});
+
+test("relink uses children for frames and members for groups", async () => {
+  const els = [{ id: "f1", type: "frame" }, { ...MM_ELS[0], frameId: "f1" }, { ...MM_ELS[1], frameId: "f1" }, { id: "g1", type: "rectangle", groupIds: ["grp1"], link: "((linkUid01))" }];
+  const fr = relinkActions("{{[[plexus-region]]: k=cframe d=drw000001 fr=f1}} old", els);
+  assert.equal(fr.actions.regionCaptionCandidate("reg000001"), "((h6dynpr9M))");
+  const gr = relinkActions("{{[[plexus-region]]: k=group d=drw000001 g=grp1 pad=10}} old", els);
+  assert.equal(gr.actions.regionCaptionCandidate("reg000001"), "((linkUid01))");
+});
