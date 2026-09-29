@@ -1,0 +1,4 @@
+/* Roam injects this stylesheet on load and removes it on unload. */
+.plexus-hidden {
+  display: none !important;
+}
