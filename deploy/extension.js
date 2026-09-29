@@ -1,4 +1,4 @@
-/* Plexus v0.4.0 | MIT | generated; edit src/ */
+/* Plexus v0.5.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -232,20 +232,20 @@ function parseRegion(blockString) {
   const kind = args.get("k") ?? "";
   const drawingUid = args.get("d") ?? "";
   const region = { kind, drawingUid, caption, extra, supported: false };
-  const fail = (error) => {
+  const fail2 = (error) => {
     region.error = error;
     return region;
   };
-  if (bad.length) return fail(`bad token ${bad[0]}`);
-  if (!kind) return fail("missing k");
+  if (bad.length) return fail2(`bad token ${bad[0]}`);
+  if (!kind) return fail2("missing k");
   if (RESERVED_KINDS.includes(kind)) {
     for (const key of ["f", "el", "pad", "ids"]) if (args.has(key)) extra.unshift([key, args.get(key)]);
-    if (drawingUid && !ID_RE.test(drawingUid)) return fail("bad d");
+    if (drawingUid && !ID_RE.test(drawingUid)) return fail2("bad d");
     return region;
   }
-  if (!SUPPORTED_KINDS.includes(kind)) return fail(`unknown kind ${kind}`);
-  if (!drawingUid) return fail("missing d");
-  if (!ID_RE.test(drawingUid)) return fail("bad d");
+  if (!SUPPORTED_KINDS.includes(kind)) return fail2(`unknown kind ${kind}`);
+  if (!drawingUid) return fail2("missing d");
+  if (!ID_RE.test(drawingUid)) return fail2("bad d");
   const parsePad = () => {
     if (!args.has("pad")) return DEFAULT_PAD;
     const raw = args.get("pad");
@@ -284,11 +284,11 @@ function parseRegion(blockString) {
   };
   let err = null;
   if (kind === "area") {
-    if (!args.has("ids")) return fail("missing ids");
+    if (!args.has("ids")) return fail2("missing ids");
     const ids = args.get("ids").split(",");
-    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail("bad ids");
+    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail2("bad ids");
     const pad = parsePad();
-    if (pad === null) return fail("bad pad");
+    if (pad === null) return fail2("bad pad");
     region.ids = ids;
     region.pad = pad;
   } else if (kind === "rect") {
@@ -319,7 +319,7 @@ function parseRegion(blockString) {
   } else if (kind === "imgpoly") {
     err = parseIndex() || parsePoly();
   }
-  if (err) return fail(err);
+  if (err) return fail2(err);
   region.supported = true;
   return region;
 }
@@ -1163,6 +1163,7 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
 var native_exports = {};
 __export(native_exports, {
   activeEditor: () => activeEditor,
+  addViaPaste: () => addViaPaste,
   captureSelectionSvg: () => captureSelectionSvg,
   findApp: () => findApp,
   insertElements: () => insertElements,
@@ -1171,6 +1172,7 @@ __export(native_exports, {
   selectedElementIds: () => selectedElementIds,
   subscribeViewport: () => subscribeViewport,
   viewportRectOf: () => viewportRectOf,
+  waitNotLoading: () => waitNotLoading,
   withClipboard: () => withClipboard,
   zoomTo: () => zoomTo
 });
@@ -1315,6 +1317,24 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
       console.warn("[plexus] could not restore selection", error);
     }
   }
+}
+function addViaPaste(app, elements, { position = "center" } = {}) {
+  const before = new Set((app.getSceneElementsIncludingDeleted?.() || []).map((e) => e.id));
+  app.addElementsFromPasteOrLibrary({ elements, files: {}, position });
+  return (app.getSceneElementsIncludingDeleted?.() || []).filter((e) => !before.has(e.id) && !e.isDeleted).map((e) => e.id);
+}
+function waitNotLoading(app, timeoutMs, { doc = globalThis.document, raf = globalThis.requestAnimationFrame, now = () => Date.now() } = {}) {
+  const tick = typeof raf === "function" ? (fn) => raf(fn) : (fn) => setTimeout(fn, 16);
+  const end = now() + timeoutMs;
+  return new Promise((resolve) => {
+    const step = () => {
+      if (activeEditor(doc)?.app !== app) return resolve(false);
+      if (!app.state?.isLoading) return resolve(true);
+      if (now() >= end) return resolve(false);
+      tick(step);
+    };
+    step();
+  });
 }
 function zoomTo(app, bbox, opts = {}) {
   const result = fitZoom({ bbox, viewportWidth: app.state.width, viewportHeight: app.state.height, ...opts });
@@ -1829,7 +1849,7 @@ function baseZIndex(doc, outerEl) {
   }
   return 1e3;
 }
-function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap }) {
+function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed }) {
   const view2 = doc.defaultView;
   let bar = null;
   let outer = null;
@@ -1895,7 +1915,13 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
       const cropButton = button("Region from crop", onCropRegion);
       const presentButton = button("Present", onPresent);
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
-      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton];
+      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed)];
+      if (onEditEmbed) {
+        const editButton = button("Edit embed", onEditEmbed);
+        gated.push([editButton, canEditEmbed]);
+        controls.push(editButton);
+      }
+      controls.push(presentButton);
       if (onMindMap) controls.push(button("Mind map", onMindMap));
       bar.append(...controls);
       doc.body.append(bar);
@@ -1928,6 +1954,11 @@ function parseEmbedRef(text) {
 function embedLabel(text, max = 80) {
   const plain = String(text ?? "").replace(/[{}`]/g, "").replace(/\[\[|\]\]/g, "").replace(/\s+/g, " ").trim();
   return plain.slice(0, max);
+}
+function mergePlexusData(customData, patch) {
+  const base3 = customData && typeof customData === "object" ? customData : {};
+  const plexus = base3.plexus && typeof base3.plexus === "object" ? base3.plexus : {};
+  return { ...base3, plexus: { ...plexus, ...patch } };
 }
 var rnd = () => Math.floor(Math.random() * 2 ** 31);
 var rid = (prefix) => `${prefix}${Math.random().toString(36).slice(2, 12)}`;
@@ -2025,6 +2056,42 @@ function embedAnchors(elements) {
 // src/view/embeds.js
 var EMBED_BLOCK_CAP = 30;
 var CHILD_DEPTH = 2;
+var LEAVE_WAIT_MS = 300;
+var QUIET_CAP_MS = 900;
+var FOCUS_WAIT_MS = 300;
+var REFOCUS_WINDOW_MS = 1200;
+var ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open";
+var POPUP_HOST_SELECTOR = ".bp3-portal";
+var KEY_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];
+var POINTER_ALWAYS = ["pointerdown", "mousedown", "dblclick", "wheel"];
+var POINTER_GATED = ["pointerup", "mouseup", "click"];
+function within(node, root) {
+  for (let n = node; n; n = n.parentNode ?? n.parentElement) if (n === root) return true;
+  return false;
+}
+var swallow = (e) => {
+  e.preventDefault?.();
+  e.stopImmediatePropagation?.();
+};
+function installEmbedF2({ containerEl, app, canEdit, onEdit }) {
+  const handler = (e) => {
+    if (e.key !== "F2" || e.repeat || e.isComposing || e.keyCode === 229) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.target !== containerEl) return;
+    const st = app?.state || {};
+    if (st.editingTextElement || st.openDialog || st.openMenu || st.openPopup || st.contextMenu) return;
+    let ok = false;
+    try {
+      ok = !!canEdit();
+    } catch {
+      ok = false;
+    }
+    if (!ok) return;
+    swallow(e);
+    Promise.resolve().then(onEdit).catch((error) => console.warn("[plexus] edit embed failed", error));
+  };
+  containerEl.addEventListener("keydown", handler, true);
+  return () => containerEl.removeEventListener("keydown", handler, true);
+}
 function embedPlacement(el, appState, containerRect) {
   const zoom = appState?.zoom?.value || 1;
   const angle = Number(el.angle) || 0;
@@ -2066,7 +2133,14 @@ function createEmbedOverlay({
   app,
   containerEl,
   zIndex = 1e3,
-  subscribe: subscribe2 = subscribeViewport
+  subscribe: subscribe2 = subscribeViewport,
+  sleep: sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  waitQuiet = null,
+  toast = () => {
+  },
+  onStateChange = () => {
+  },
+  menuSelector = ROAM_MENU_SELECTOR
 }) {
   const view2 = doc.defaultView;
   const portals = /* @__PURE__ */ new Map();
@@ -2075,6 +2149,8 @@ function createEmbedOverlay({
   let raf = null;
   let disposed = false;
   let unsubscribe2 = null;
+  let session = null;
+  let disposePromise = null;
   const requestFrame = (cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16);
   const cancelFrame = (id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id);
   const unmountHosts = (portal) => {
@@ -2155,6 +2231,10 @@ function createEmbedOverlay({
     }
   }
   const load = async (portal) => {
+    if (portal.editing) {
+      portal.stale = true;
+      return;
+    }
     const gen = ++portal.gen;
     let content = null;
     try {
@@ -2184,7 +2264,7 @@ function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null };
+    const portal = { root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null };
     applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
@@ -2193,6 +2273,14 @@ function createEmbedOverlay({
   const remove = (id) => {
     const portal = portals.get(id);
     if (!portal) return;
+    if (portal.session) {
+      if (portal.removing) return;
+      portal.removing = true;
+      void leave("removed").then(() => {
+        if (portals.get(id) === portal) remove(id);
+      });
+      return;
+    }
     portals.delete(id);
     portal.dead = true;
     dirty.delete(portal);
@@ -2202,9 +2290,9 @@ function createEmbedOverlay({
   };
   let lastNonce;
   const sync = () => {
-    const nonce = app.scene?.getSceneNonce?.();
-    if (!portals.size && nonce !== void 0 && nonce === lastNonce) return;
-    lastNonce = nonce;
+    const nonce2 = app.scene?.getSceneNonce?.();
+    if (!portals.size && nonce2 !== void 0 && nonce2 === lastNonce) return;
+    lastNonce = nonce2;
     const anchors = embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []);
     const ids = new Set(anchors.map((el) => el.id));
     for (const id of [...portals.keys()]) if (!ids.has(id)) remove(id);
@@ -2215,11 +2303,20 @@ function createEmbedOverlay({
       const ref = el.customData.plexus.embed;
       if (portal && portal.ref !== ref) {
         portal.ref = ref;
-        releaseWatch(portal);
+        if (!portal.editing) releaseWatch(portal);
         void load(portal);
       }
       if (!portal) portal = create(el);
       const place = embedPlacement(el, app.state, containerRect);
+      if (portal.editing) {
+        const s2 = portal.session;
+        if (s2 && s2.phase !== "leaving") {
+          if (place.hidden) void leave("hidden");
+          else placeEditing(portal, el);
+        }
+        applyTheme(portal);
+        continue;
+      }
       const s = portal.root.style;
       s.width = `${place.width}px`;
       s.height = `${place.height}px`;
@@ -2237,7 +2334,8 @@ function createEmbedOverlay({
       try {
         for (const portal of [...dirty]) {
           dirty.delete(portal);
-          if (!portal.dead) void load(portal);
+          if (portal.editing) portal.stale = true;
+          else if (!portal.dead) void load(portal);
         }
         sync();
       } catch (error) {
@@ -2245,12 +2343,342 @@ function createEmbedOverlay({
       }
     });
   }
+  const notify = () => {
+    try {
+      onStateChange();
+    } catch (error) {
+      console.warn("[plexus] state listener failed", error);
+    }
+  };
+  const anchorOf = (id) => embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []).find((el) => el.id === id) ?? null;
+  const updateSelection = (ids, groups) => {
+    try {
+      app.updateScene({ appState: { selectedElementIds: ids, selectedGroupIds: groups } });
+    } catch (error) {
+      console.warn("[plexus] selection update failed", error);
+    }
+  };
+  function placeEditing(portal, el) {
+    const p = sceneToViewport({ x: el.x, y: el.y, appState: app.state });
+    portal.root.style.left = `${p.x}px`;
+    portal.root.style.top = `${p.y}px`;
+  }
+  function applyEditGeometry(portal, el) {
+    const zoom = app.state?.zoom?.value || 1;
+    const rect = containerEl.getBoundingClientRect();
+    const cw = rect.width ?? rect.right - rect.left;
+    const s = portal.root.style;
+    s.transform = "";
+    s.clipPath = "";
+    s.display = "";
+    s.width = `${Math.min(Math.max(el.width * zoom, 320), cw > 0 ? cw : Infinity)}px`;
+    s.height = "auto";
+    s.minHeight = `${el.height * zoom}px`;
+    s.pointerEvents = "auto";
+    s.zIndex = String(zIndex + 2);
+    placeEditing(portal, el);
+  }
+  const defaultQuiet = (el) => new Promise((resolve) => {
+    const MO = view2?.MutationObserver ?? globalThis.MutationObserver;
+    let frames = 0;
+    let done = false;
+    let mo = null;
+    let cap = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try {
+        mo?.disconnect();
+      } catch {
+      }
+      clearTimeout(cap);
+      resolve();
+    };
+    cap = setTimeout(finish, QUIET_CAP_MS);
+    if (typeof MO === "function") {
+      mo = new MO(() => {
+        frames = 0;
+      });
+      mo.observe(el, { childList: true, subtree: true, attributes: true, characterData: true });
+    }
+    const tick = () => {
+      if (done) return;
+      frames += 1;
+      if (frames >= 2) finish();
+      else requestFrame(tick);
+    };
+    requestFrame(tick);
+  });
+  const rootInputOf = (s) => {
+    const list = s.inner.querySelectorAll?.(".rm-block__input");
+    if (!list) return null;
+    return [...list].find((n) => String(n.id ?? "").endsWith(s.uid)) ?? null;
+  };
+  const isRootTextarea = (s, t) => !!t && t.tagName === "TEXTAREA" && within(t, s.inner) && String(t.id ?? "").endsWith(s.uid);
+  const rootTextarea = (s) => {
+    const list = s.inner.querySelectorAll?.("textarea");
+    return list ? [...list].find((t) => isRootTextarea(s, t)) ?? null : null;
+  };
+  const caretToEnd = (ta) => {
+    const n = String(ta.value ?? "").length;
+    if (typeof ta.setSelectionRange === "function") ta.setSelectionRange(n, n);
+    else {
+      ta.selectionStart = n;
+      ta.selectionEnd = n;
+    }
+  };
+  function clickRoot(s) {
+    const input = rootInputOf(s);
+    if (!input) return false;
+    const Mouse = view2?.MouseEvent ?? globalThis.MouseEvent;
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      input.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, view: view2 }));
+    }
+    return true;
+  }
+  const focusedRoot = (s) => isRootTextarea(s, doc.activeElement) ? doc.activeElement : null;
+  async function focusRoot(s) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (s.phase !== "entering") return false;
+      clickRoot(s);
+      const end = Date.now() + FOCUS_WAIT_MS;
+      for (; ; ) {
+        const ta = focusedRoot(s);
+        if (ta) {
+          caretToEnd(ta);
+          return true;
+        }
+        if (Date.now() >= end) break;
+        await sleep2(25);
+        if (s.phase !== "entering") return false;
+      }
+    }
+    return false;
+  }
+  function installGlobals(s) {
+    const { portal } = s;
+    const onKey = (e) => {
+      if (s.phase !== "active" || e.isComposing || e.keyCode === 229) return;
+      const t = e.target;
+      if (!within(t, portal.root)) {
+        if (t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
+        swallow(e);
+        const ta = rootTextarea(s);
+        if (ta) {
+          try {
+            ta.focus?.({ preventScroll: true });
+            caretToEnd(ta);
+          } catch (error) {
+            console.warn("[plexus] refocus failed", error);
+          }
+        } else if (Date.now() - s.clickedAt > REFOCUS_WINDOW_MS) void leave("keyboard");
+        else clickRoot(s);
+        return;
+      }
+      const menuOpen = !!doc.querySelector?.(menuSelector);
+      if (e.key === "Escape") {
+        if (menuOpen) return;
+        swallow(e);
+        void leave("keyboard");
+        return;
+      }
+      if (!t || t.tagName !== "TEXTAREA") return;
+      const start = t.selectionStart;
+      const end = t.selectionEnd;
+      const len = String(t.value ?? "").length;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && !e.shiftKey && (e.code === "KeyA" || String(e.key).toLowerCase() === "a") && start === 0 && end === len) {
+        swallow(e);
+        return;
+      }
+      if (menuOpen || !isRootTextarea(s, t)) return;
+      const key = e.key;
+      if (key === "Enter" && !e.shiftKey && !mod && !e.altKey) {
+        swallow(e);
+        void leave("keyboard");
+        return;
+      }
+      const arrow = key === "ArrowUp" || key === "ArrowDown";
+      if (key === "Tab" || key === "Backspace" && start === 0 && end === 0 || key === "Delete" && start === len && end === len || arrow && e.shiftKey && (e.altKey || mod) || key === "ArrowUp" && e.shiftKey && start === 0 || key === "ArrowDown" && e.shiftKey && end === len) swallow(e);
+    };
+    const onDown = (e) => {
+      if (s.phase !== "active") return;
+      const t = e.target;
+      if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
+      void leave("pointer");
+    };
+    const onUp = () => {
+      s.downInside = false;
+    };
+    view2.addEventListener("keydown", onKey, true);
+    doc.addEventListener("pointerdown", onDown, true);
+    doc.addEventListener("pointerup", onUp);
+    s.globalOffs.push(
+      () => view2.removeEventListener("keydown", onKey, true),
+      () => doc.removeEventListener("pointerdown", onDown, true),
+      () => doc.removeEventListener("pointerup", onUp)
+    );
+  }
+  function installStoppers(s) {
+    const root = s.portal.root;
+    const stop = (e) => e.stopPropagation();
+    const on = (list, type, fn) => {
+      root.addEventListener(type, fn);
+      list.push(() => root.removeEventListener(type, fn));
+    };
+    for (const type of KEY_EVENTS) on(s.keyOffs, type, stop);
+    for (const type of POINTER_ALWAYS) {
+      on(s.pointerOffs, type, (e) => {
+        if (type === "pointerdown" || type === "mousedown") s.downInside = true;
+        e.stopPropagation();
+      });
+    }
+    for (const type of POINTER_GATED) {
+      on(s.pointerOffs, type, (e) => {
+        if (s.downInside) e.stopPropagation();
+        if (type === "click") s.downInside = false;
+      });
+    }
+  }
+  async function edit(id) {
+    if (disposed) return false;
+    if (session) {
+      if (session.phase !== "leaving") return false;
+      await session.leavePromise;
+      if (disposed || session) return false;
+    }
+    const portal = portals.get(id);
+    const target = portal && !portal.dead ? parseEmbedRef(portal.ref) : null;
+    const anchor = target?.kind === "block" ? anchorOf(id) : null;
+    if (!anchor) return false;
+    const s = {
+      id,
+      portal,
+      uid: target.uid,
+      inner: doc.createElement("div"),
+      phase: "entering",
+      clickedAt: 0,
+      leavePromise: null,
+      keyOffs: [],
+      pointerOffs: [],
+      globalOffs: [],
+      downInside: false,
+      prev: null
+    };
+    session = s;
+    portal.session = s;
+    portal.editing = true;
+    portal.gen += 1;
+    dirty.delete(portal);
+    notify();
+    installStoppers(s);
+    s.prev = { ids: { ...app.state?.selectedElementIds || {} }, groups: { ...app.state?.selectedGroupIds || {} } };
+    updateSelection({}, {});
+    unmountHosts(portal);
+    portal.body.textContent = "";
+    s.inner.className = "plexus-embed-editor";
+    portal.body.append(s.inner);
+    portal.root.className = "plexus-portal plexus-embed plexus-embed--editing";
+    portal.root.removeAttribute?.("aria-hidden");
+    applyEditGeometry(portal, anchor);
+    try {
+      api.ui.components.renderBlock({ uid: s.uid, el: s.inner });
+    } catch (error) {
+      console.warn("[plexus] editable embed render failed", error);
+      toast("Could not open the block editor");
+      await leave("error");
+      return false;
+    }
+    await (waitQuiet ?? defaultQuiet)(s.inner);
+    if (s.phase !== "entering") return false;
+    if (!await focusRoot(s)) {
+      if (s.phase === "entering") {
+        toast("Could not open the block editor");
+        await leave("error");
+      }
+      return false;
+    }
+    s.clickedAt = Date.now();
+    s.phase = "active";
+    installGlobals(s);
+    notify();
+    return true;
+  }
+  function leave(trigger = "api") {
+    const s = session;
+    if (!s) return Promise.resolve();
+    if (s.leavePromise) return s.leavePromise;
+    s.phase = "leaving";
+    s.leavePromise = runLeave(s, trigger);
+    return s.leavePromise;
+  }
+  async function runLeave(s, trigger) {
+    const { portal, inner } = s;
+    for (const off of s.globalOffs.splice(0)) off();
+    for (const off of s.pointerOffs.splice(0)) off();
+    portal.root.style.pointerEvents = "none";
+    notify();
+    const active = doc.activeElement;
+    if (active && within(active, inner)) {
+      try {
+        active.blur?.();
+      } catch (error) {
+        console.warn("[plexus] blur failed", error);
+      }
+    }
+    const keyboard = trigger === "keyboard";
+    if (keyboard) {
+      try {
+        containerEl.focus?.({ preventScroll: true });
+      } catch (error) {
+        console.warn("[plexus] container focus failed", error);
+      }
+    }
+    await sleep2(LEAVE_WAIT_MS);
+    try {
+      api?.ui?.components?.unmountNode?.({ el: inner });
+    } catch (error) {
+      console.warn("[plexus] unmount failed", error);
+    }
+    inner.remove?.();
+    for (const off of s.keyOffs.splice(0)) off();
+    portal.root.className = "plexus-portal plexus-embed";
+    portal.root.setAttribute?.("aria-hidden", "true");
+    const st = portal.root.style;
+    st.pointerEvents = "";
+    st.zIndex = String(zIndex);
+    st.left = "";
+    st.top = "";
+    st.minHeight = "";
+    portal.editing = false;
+    portal.stale = false;
+    portal.session = null;
+    session = null;
+    if (!disposed && !portal.dead && !portal.removing) {
+      void load(portal);
+      try {
+        sync();
+      } catch (error) {
+        console.warn("[plexus] embed reposition failed", error);
+      }
+    }
+    if (keyboard && !disposed && s.prev) {
+      const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
+      if (Object.keys(s.prev.ids).every((id) => live.has(id))) updateSelection(s.prev.ids, s.prev.groups);
+    }
+    notify();
+  }
   unsubscribe2 = subscribe2(app, schedule);
   schedule();
   return {
     portalCount: () => portals.size,
+    isEditing: () => !!session,
+    editState: () => session?.phase ?? "idle",
+    editingId: () => session?.id ?? null,
+    edit,
+    leave,
     dispose() {
-      if (disposed) return;
+      if (disposed) return disposePromise;
       disposed = true;
       if (raf != null) cancelFrame(raf);
       raf = null;
@@ -2260,16 +2688,28 @@ function createEmbedOverlay({
         console.warn("[plexus] unsubscribe failed", error);
       }
       unsubscribe2 = null;
-      for (const id of [...portals.keys()]) remove(id);
-      for (const entry of [...watches.values()]) {
-        try {
-          entry.dispose?.();
-        } catch (error) {
-          console.warn("[plexus] unwatch failed", error);
+      const finish = () => {
+        for (const id of [...portals.keys()]) remove(id);
+        for (const entry of [...watches.values()]) {
+          try {
+            entry.dispose?.();
+          } catch (error) {
+            console.warn("[plexus] unwatch failed", error);
+          }
         }
+        watches.clear();
+        dirty.clear();
+      };
+      if (session) {
+        disposePromise = leave("unload").then(finish, (error) => {
+          console.warn("[plexus] leave failed", error);
+          finish();
+        });
+      } else {
+        finish();
+        disposePromise = Promise.resolve();
       }
-      watches.clear();
-      dirty.clear();
+      return disposePromise;
     }
   };
 }
@@ -3016,7 +3456,238 @@ function createHoverPreview({
 }
 
 // src/api.js
-var API_VERSION = 1;
+var API_VERSION = 2;
+var GONE = "Scene is no longer open";
+var FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
+var DRAWING_RE = /^\s*\{\{(\[\[excalidraw\]\]|excalidraw)\}\}/;
+var isPlain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+var nonce = () => Math.floor(Math.random() * 2 ** 31);
+var bump = (el, extra = {}) => ({ ...el, ...extra, version: (el.version || 0) + 1, versionNonce: nonce(), updated: Date.now() });
+function invisible(el) {
+  if (["line", "arrow", "draw", "freedraw"].includes(el.type)) return !Array.isArray(el.points) || el.points.length < 2;
+  if (el.type === "text") return !el.text;
+  return el.width === 0 && el.height === 0;
+}
+function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame } = {}) {
+  let disposed = false;
+  const scenes = /* @__PURE__ */ new WeakMap();
+  const subs = /* @__PURE__ */ new Map();
+  const disposeHooks = /* @__PURE__ */ new Set();
+  const frame = typeof raf === "function" ? (fn) => raf(fn) : (fn) => setTimeout(fn, 16);
+  function build(app, uid) {
+    let released = false;
+    const live = () => !released && !disposed && native.activeEditor(doc)?.app === app && native.activeEditor(doc)?.drawingUid === uid;
+    const guard = () => {
+      if (!live()) throw new Error(GONE);
+    };
+    const all = () => app.getSceneElementsIncludingDeleted?.() || [];
+    const write = (elements, appState) => {
+      const u = { elements };
+      if (appState) u.appState = appState;
+      app.updateScene({ ...u, captureUpdate: "IMMEDIATELY" });
+    };
+    const scene = {
+      uid,
+      elements() {
+        guard();
+        return structuredClone(liveElements(all()));
+      },
+      appState() {
+        guard();
+        const s = app.state || {};
+        return { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom?.value ?? s.zoom, selectedElementIds: { ...s.selectedElementIds || {} }, theme: s.theme, width: s.width, height: s.height };
+      },
+      add(elements, { select = true, at = "keep" } = {}) {
+        guard();
+        if (!Array.isArray(elements) || !elements.length) throw new Error("add needs a non-empty array");
+        if (elements.some((e) => e?.type === "image")) throw new Error("image elements are not supported");
+        const inputs = elements.map((e) => structuredClone(e));
+        const kept = [];
+        const copies = [];
+        inputs.forEach((el, i) => {
+          if (invisible(el)) return;
+          const cd = isPlain(el.customData) ? el.customData : {};
+          copies.push({ ...el, customData: { ...cd, plexus: { ...isPlain(cd.plexus) ? cd.plexus : {}, addKey: i } } });
+          kept.push(i);
+        });
+        const ids = inputs.map(() => null);
+        if (!copies.length) return ids;
+        const prevSel = { ...app.state?.selectedElementIds || {} };
+        const prevGroups = { ...app.state?.selectedGroupIds || {} };
+        let position = "center";
+        if (at === "keep") {
+          const [x1, y1, x2, y2] = commonBounds(copies);
+          const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
+          position = { clientX: p.x, clientY: p.y };
+        }
+        native.addViaPaste(app, copies, { position });
+        const byKey = /* @__PURE__ */ new Map();
+        for (const el of all()) {
+          const k = el.customData?.plexus?.addKey;
+          if (!el.isDeleted && Number.isInteger(k) && kept.includes(k) && !byKey.has(k)) byKey.set(k, el.id);
+        }
+        const keyOf = new Map([...byKey].map(([k, id]) => [id, k]));
+        const next = all().map((el) => {
+          const k = keyOf.get(el.id);
+          if (k === void 0) return el;
+          const orig = elements[k];
+          const out = { ...el };
+          if (orig.customData === void 0) delete out.customData;
+          else out.customData = structuredClone(orig.customData);
+          if (orig.frameId == null) out.frameId = null;
+          return bump(out);
+        });
+        let selection = prevSel;
+        let groups = prevGroups;
+        if (select) {
+          selection = {};
+          groups = {};
+          for (const el of next) if (keyOf.has(el.id) && !el.containerId) selection[el.id] = true;
+        }
+        app.updateScene({ elements: next, appState: { selectedElementIds: selection, selectedGroupIds: groups } });
+        for (const [k, id] of byKey) ids[k] = id;
+        return ids;
+      },
+      update(id, patch) {
+        guard();
+        if (!isPlain(patch)) throw new Error("patch must be an object");
+        for (const key of FORBIDDEN_PATCH_KEYS) if (key in patch) throw new Error(`Cannot patch ${key}`);
+        const el = all().find((e) => e.id === id);
+        if (!el) throw new Error(`No element ${id}`);
+        const extra = { ...patch };
+        if (patch.customData !== void 0) extra.customData = { ...el.customData || {}, ...patch.customData };
+        if (typeof patch.text === "string" && patch.originalText === void 0) extra.originalText = patch.text;
+        const updated = bump(el, extra);
+        write(all().map((e) => e.id === id ? updated : e));
+        return structuredClone(updated);
+      },
+      remove(ids) {
+        guard();
+        const set = new Set(Array.isArray(ids) ? ids : [ids]);
+        const els = all();
+        const hit = new Set(els.filter((e) => set.has(e.id)).map((e) => e.id));
+        const doomed = /* @__PURE__ */ new Set([...hit, ...els.filter((e) => e.containerId && hit.has(e.containerId)).map((e) => e.id)]);
+        if (!doomed.size) return 0;
+        write(els.map((e) => doomed.has(e.id) && !e.isDeleted ? bump(e, { isDeleted: true }) : e));
+        return hit.size;
+      },
+      select(ids) {
+        guard();
+        const selection = {};
+        for (const id of ids || []) selection[id] = true;
+        app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {} } });
+      },
+      zoomTo(ids) {
+        guard();
+        const set = new Set(ids || []);
+        const els = liveElements(all()).filter((e) => set.has(e.id));
+        if (!els.length) throw new Error("No elements to zoom to");
+        native.zoomTo(app, commonBounds(els));
+      },
+      async exportSvg(ids) {
+        guard();
+        const list = ids?.length ? ids : liveElements(all()).map((e) => e.id);
+        const svg = await native.captureSelectionSvg(app, list);
+        guard();
+        return normalizeSvgSize(svg);
+      },
+      onChange(cb) {
+        guard();
+        if (typeof cb !== "function") throw new Error("callback required");
+        const emitter = app.onChangeEmitter;
+        let pending = false;
+        let off = null;
+        let closed = false;
+        const close2 = () => {
+          if (closed) return;
+          closed = true;
+          try {
+            off?.();
+          } catch (error) {
+            console.warn("[plexus] unsubscribe failed", error);
+          }
+          subs.get(app)?.delete(close2);
+        };
+        off = emitter?.on?.(() => {
+          if (pending || closed) return;
+          pending = true;
+          frame(() => {
+            pending = false;
+            if (closed || !live()) return;
+            try {
+              cb({ uid });
+            } catch (error) {
+              console.error("[plexus] onChange failed", error);
+            }
+          });
+        });
+        if (!subs.has(app)) subs.set(app, /* @__PURE__ */ new Set());
+        subs.get(app).add(close2);
+        return close2;
+      }
+    };
+    const frozen = Object.freeze(scene);
+    return { scene: frozen, release() {
+      released = true;
+    } };
+  }
+  const registry = {
+    sceneFor(app, uid) {
+      if (disposed || !app || !uid) return null;
+      const cur = scenes.get(app);
+      if (cur && cur.uid === uid && !cur.released) return cur.scene;
+      cur?.release();
+      const made = build(app, uid);
+      const entry = { uid, scene: made.scene, release: made.release, released: false };
+      const rel = made.release;
+      entry.release = () => {
+        entry.released = true;
+        rel();
+      };
+      scenes.set(app, entry);
+      return entry.scene;
+    },
+    sceneOf(uid) {
+      if (disposed) return null;
+      const ed = native.activeEditor(doc);
+      return ed?.app && ed.drawingUid === uid ? registry.sceneFor(ed.app, uid) : null;
+    },
+    activeApp() {
+      return native.activeEditor(doc)?.app ?? null;
+    },
+    activeUid() {
+      return native.activeEditor(doc)?.drawingUid ?? null;
+    },
+    ready(app, timeoutMs) {
+      return native.waitNotLoading(app, timeoutMs, { doc });
+    },
+    release(app) {
+      scenes.get(app)?.release();
+      scenes.delete(app);
+      for (const close2 of [...subs.get(app) || []]) close2();
+      subs.delete(app);
+    },
+    onDispose(cb) {
+      disposeHooks.add(cb);
+      return () => disposeHooks.delete(cb);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const set of subs.values()) for (const close2 of [...set]) close2();
+      subs.clear();
+      for (const cb of [...disposeHooks]) {
+        try {
+          cb();
+        } catch (error) {
+          console.warn("[plexus] dispose hook failed", error);
+        }
+      }
+      disposeHooks.clear();
+    }
+  };
+  return registry;
+}
 function subscribe(emitter, type, cb) {
   if (typeof emitter?.on === "function") return emitter.on(type, cb);
   if (typeof emitter?.addEventListener === "function") return emitter.addEventListener(type, cb);
@@ -3027,8 +3698,9 @@ function unsubscribe(emitter, type, cb) {
   if (typeof emitter?.removeEventListener === "function") return emitter.removeEventListener(type, cb);
   return void 0;
 }
-function createPublicApi({ host, actions, emitter, version } = {}) {
+function createPublicApi({ host, actions, emitter, version, scenes, openDrawing } = {}) {
   const listeners = /* @__PURE__ */ new Map();
+  const opening = /* @__PURE__ */ new Map();
   const api = {
     apiVersion: API_VERSION,
     version: String(version ?? ""),
@@ -3061,6 +3733,45 @@ function createPublicApi({ host, actions, emitter, version } = {}) {
     },
     drawingsOn(pageUid) {
       return host.drawingsOn(pageUid);
+    },
+    scene(uid) {
+      return scenes?.sceneOf?.(uid) ?? null;
+    },
+    whenOpen(uid, { timeoutMs = 1e4, sidebar = false } = {}) {
+      if (opening.has(uid)) return opening.get(uid).promise;
+      if (opening.size) return Promise.reject(new Error(`Busy opening ${[...opening.keys()][0]}`));
+      let timer = null;
+      let offDispose = null;
+      const promise = new Promise((resolve, reject) => {
+        const fail2 = (message) => reject(new Error(message));
+        timer = setTimeout(() => fail2("Timed out"), timeoutMs);
+        offDispose = scenes?.onDispose?.(() => fail2("Plexus unloaded"));
+        (async () => {
+          if (!scenes) throw new Error("Scenes unavailable");
+          if (!DRAWING_RE.test(String(host.pullBlock?.(uid)?.string ?? ""))) throw new Error("Not a drawing");
+          let app = scenes.sceneOf(uid) ? scenes.activeApp() : null;
+          if (!app) {
+            const active = scenes.activeUid?.();
+            if (active && active !== uid) throw new Error("Another drawing is open");
+            const opened = await openDrawing?.(uid, { sidebar });
+            if (!opened?.app) throw new Error("Could not open drawing");
+            app = opened.app;
+          }
+          if (!await scenes.ready(app, timeoutMs)) throw new Error("Timed out");
+          const scene = scenes.sceneFor(app, uid);
+          if (!scene) throw new Error("Plexus unloaded");
+          return scene;
+        })().then(resolve, reject);
+      });
+      const entry = { promise };
+      opening.set(uid, entry);
+      const done = () => {
+        clearTimeout(timer);
+        offDispose?.();
+        if (opening.get(uid) === entry) opening.delete(uid);
+      };
+      promise.then(done, done);
+      return promise;
     },
     addEventListener(type, cb) {
       if (type !== "change" || typeof cb !== "function" || listeners.has(cb)) return;
@@ -3475,13 +4186,13 @@ function withoutMM(customData) {
   else delete cd.plexus;
   return Object.keys(cd).length ? cd : null;
 }
-function bump(el, patch) {
+function bump2(el, patch) {
   return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd2(), updated: Date.now() };
 }
 function patchMarker(el, mmPatch) {
   const next = { ...mmOf(el) || {}, ...mmPatch };
   for (const k of Object.keys(next)) if (next[k] === void 0) delete next[k];
-  return bump(el, { customData: withMM(el.customData, next) });
+  return bump2(el, { customData: withMM(el.customData, next) });
 }
 function base2(id, type, x, y, width, height, extra) {
   return {
@@ -3831,9 +4542,9 @@ function applyOps(elements, ops) {
   const upd = new Map(ops.update.map((u) => [u.id, u.patch]));
   const rem = new Set(ops.remove);
   const out = elements.map((el) => {
-    if (rem.has(el.id)) return bump(el, { isDeleted: true });
+    if (rem.has(el.id)) return bump2(el, { isDeleted: true });
     const p = upd.get(el.id);
-    return p ? bump(el, p) : el;
+    return p ? bump2(el, p) : el;
   });
   const have = new Set(out.map((e) => e.id));
   for (const a of ops.add) if (!have.has(a.id)) out.push(a);
@@ -4012,7 +4723,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       fontSig.delete(root);
       pendingRefresh.delete(root);
       if (ids.size && guard()) {
-        app.updateScene({ elements: els().map((el) => ids.has(el.id) ? bump(el, { isDeleted: true }) : el), captureUpdate: "NEVER" });
+        app.updateScene({ elements: els().map((el) => ids.has(el.id) ? bump2(el, { isDeleted: true }) : el), captureUpdate: "NEVER" });
         takeSnapshot();
       }
     }
@@ -4123,8 +4834,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const editingId = st.editingTextElement?.id ?? null;
       if (prevEditingId && !editingId) pendingFinished.add(prevEditingId);
       prevEditingId = editingId;
-      const nonce = app.scene?.getSceneNonce?.();
-      if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce !== void 0 && nonce === lastNonce) {
+      const nonce2 = app.scene?.getSceneNonce?.();
+      if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce2 !== void 0 && nonce2 === lastNonce) {
         if (input) placeInput();
         return;
       }
@@ -4134,7 +4845,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         return;
       }
       dirty = false;
-      lastNonce = nonce;
+      lastNonce = nonce2;
       const finishedIds = [...pendingFinished];
       pendingFinished.clear();
       const refreshRoots = [...pendingRefresh];
@@ -4365,17 +5076,17 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (st.openDialog || st.openMenu || st.openPopup || st.contextMenu) return;
       const sel = selectedNode();
       if (!sel) return;
-      const swallow = () => {
+      const swallow2 = () => {
         e.preventDefault();
         e.stopImmediatePropagation();
       };
       if (e.metaKey || e.ctrlKey) {
         if (e.altKey) return;
         if (e.key in ARROWS) {
-          swallow();
+          swallow2();
           toast(GROW_HINT);
         } else if (e.code === "KeyZ") {
-          swallow();
+          swallow2();
           toast("Undo mind-map edits in the outline");
         }
         return;
@@ -4392,7 +5103,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         repeatSafe = false;
       } else if (plain && e.key === "F2") action = () => editSelected(sel);
       else if (alt && e.key in ARROWS) {
-        swallow();
+        swallow2();
         moveSelection(sel, ARROWS[e.key]);
         return;
       } else if (alt && e.key === "Backspace") {
@@ -4404,7 +5115,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         repeatSafe = letter !== "V";
       }
       if (!action) return;
-      swallow();
+      swallow2();
       if (e.repeat && !repeatSafe) return;
       if (e.altKey && e.key !== "Backspace") pendingDelete = null;
       else if (!(e.key === "Backspace")) pendingDelete = null;
@@ -5026,6 +5737,380 @@ function createMeasurer({ doc = globalThis.document } = {}) {
   return { measure, ensureFonts, clear: () => memo2.clear(), size: () => memo2.size };
 }
 
+// src/model/edn.js
+var MAX_DEPTH = 512;
+var NUMBER_RE = /^[+-]?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+var NUMERIC_START_RE = /^[+-]?\d/;
+var HEX4_RE = /^[0-9a-fA-F]{4}$/;
+var CLOSERS = { "[": "]", "(": ")", "{": "}", "#{": "}" };
+function fail(message, position) {
+  const e = new SyntaxError(`${message} at ${position}`);
+  e.position = position;
+  return e;
+}
+function isWs(c) {
+  return c === 32 || c === 44 || c === 10 || c === 9 || c === 13 || c === 12 || c === 11;
+}
+function isDelim(c) {
+  return isWs(c) || c === 40 || c === 41 || c === 91 || c === 93 || c === 123 || c === 125 || c === 34 || c === 59;
+}
+function skipWs(text, pos) {
+  const n = text.length;
+  while (pos < n) {
+    const c = text.charCodeAt(pos);
+    if (isWs(c)) pos++;
+    else if (c === 59) {
+      while (pos < n && text.charCodeAt(pos) !== 10) pos++;
+    } else break;
+  }
+  return pos;
+}
+function readToken(text, pos) {
+  let end = pos;
+  while (end < text.length && !isDelim(text.charCodeAt(end))) end++;
+  return end;
+}
+function readString(text, start) {
+  const n = text.length;
+  let pos = start + 1;
+  let out = "";
+  let chunk = pos;
+  while (pos < n) {
+    const c = text[pos];
+    if (c === '"') return { value: out + text.slice(chunk, pos), end: pos + 1 };
+    if (c === "\\") {
+      out += text.slice(chunk, pos);
+      const e = text[pos + 1];
+      switch (e) {
+        case '"':
+          out += '"';
+          break;
+        case "\\":
+          out += "\\";
+          break;
+        case "n":
+          out += "\n";
+          break;
+        case "t":
+          out += "	";
+          break;
+        case "r":
+          out += "\r";
+          break;
+        case "b":
+          out += "\b";
+          break;
+        case "f":
+          out += "\f";
+          break;
+        case "u": {
+          const hex = text.slice(pos + 2, pos + 6);
+          if (!HEX4_RE.test(hex)) throw fail("Bad \\u escape", pos);
+          out += String.fromCharCode(parseInt(hex, 16));
+          pos += 4;
+          break;
+        }
+        default:
+          throw fail("Bad escape", pos);
+      }
+      pos += 2;
+      chunk = pos;
+      continue;
+    }
+    pos++;
+  }
+  throw fail("Unterminated string", start);
+}
+function atom(token, start) {
+  if (token === "nil") return null;
+  if (token === "true") return true;
+  if (token === "false") return false;
+  if (token.charCodeAt(0) === 58) {
+    if (token.length === 1) throw fail("Empty keyword", start);
+    return token.slice(1);
+  }
+  if (NUMBER_RE.test(token)) return Number(token);
+  if (NUMERIC_START_RE.test(token)) throw fail(`Invalid number "${token}"`, start);
+  if (token === "NaN") return NaN;
+  if (token === "Infinity") return Infinity;
+  if (token === "-Infinity") return -Infinity;
+  return token;
+}
+function finishMap(items, opener) {
+  if (items.length % 2 !== 0) throw fail("Odd number of forms in map", opener);
+  const obj = {};
+  for (let i = 0; i < items.length; i += 2) {
+    const k = items[i];
+    if (k !== null && typeof k === "object") throw fail("Collection used as map key", opener);
+    Object.defineProperty(obj, String(k), { value: items[i + 1], enumerable: true, writable: true, configurable: true });
+  }
+  return obj;
+}
+function readEdn(text, start = 0) {
+  if (typeof text !== "string") throw fail("EDN input must be a string", 0);
+  const n = text.length;
+  const stack = [];
+  let pos = start;
+  const push = (frame) => {
+    if (stack.length >= MAX_DEPTH) throw fail("Nesting too deep", frame.opener);
+    stack.push(frame);
+  };
+  const deliver = (value) => {
+    for (; ; ) {
+      const top = stack[stack.length - 1];
+      if (!top) {
+        result = value;
+        return true;
+      }
+      if (top.kind === "discard") {
+        stack.pop();
+        return false;
+      }
+      if (top.kind === "tag") {
+        stack.pop();
+        continue;
+      }
+      top.items.push(value);
+      return false;
+    }
+  };
+  let result;
+  for (; ; ) {
+    pos = skipWs(text, pos);
+    if (pos >= n) {
+      const top = stack[stack.length - 1];
+      if (!top) throw fail("Unexpected end of input", pos);
+      throw fail(top.kind === "discard" ? "Discard without a form" : top.kind === "tag" ? "Tag without a form" : top.kind === "map" ? "Unterminated map" : top.kind === "set" ? "Unterminated set" : "Unterminated collection", top.opener);
+    }
+    const ch = text[pos];
+    if (ch === ")" || ch === "]" || ch === "}") {
+      const top = stack[stack.length - 1];
+      if (!top || top.close !== ch) throw fail(`Unexpected "${ch}"`, pos);
+      stack.pop();
+      pos++;
+      const value = top.kind === "map" ? finishMap(top.items, top.opener) : top.items;
+      if (deliver(value)) return { value: result, end: pos };
+      continue;
+    }
+    if (ch === "[" || ch === "(") {
+      push({ kind: "vec", close: CLOSERS[ch], items: [], opener: pos });
+      pos++;
+      continue;
+    }
+    if (ch === "{") {
+      push({ kind: "map", close: "}", items: [], opener: pos });
+      pos++;
+      continue;
+    }
+    if (ch === '"') {
+      const s = readString(text, pos);
+      pos = s.end;
+      if (deliver(s.value)) return { value: result, end: pos };
+      continue;
+    }
+    if (ch === "#") {
+      const next = text[pos + 1];
+      if (next === "{") {
+        push({ kind: "set", close: "}", items: [], opener: pos });
+        pos += 2;
+        continue;
+      }
+      if (next === "_") {
+        push({ kind: "discard", opener: pos });
+        pos += 2;
+        continue;
+      }
+      if (next === "#") {
+        const end3 = readToken(text, pos + 2);
+        const name2 = text.slice(pos + 2, end3);
+        const v2 = name2 === "NaN" ? NaN : name2 === "Inf" ? Infinity : name2 === "-Inf" ? -Infinity : void 0;
+        if (v2 === void 0) throw fail(`Unknown special value "##${name2}"`, pos);
+        pos = end3;
+        if (deliver(v2)) return { value: result, end: pos };
+        continue;
+      }
+      const end2 = readToken(text, pos + 1);
+      const name = text.slice(pos + 1, end2);
+      if (!/^[A-Za-z][^\s]*$/.test(name)) throw fail("Invalid # dispatch", pos);
+      push({ kind: "tag", opener: pos });
+      pos = end2;
+      continue;
+    }
+    const end = readToken(text, pos);
+    const v = atom(text.slice(pos, end), pos);
+    pos = end;
+    if (deliver(v)) return { value: result, end: pos };
+  }
+}
+
+// src/model/legacy.js
+var MACRO_RE = /^\{\{\s*(?:\[\[roam\/render\]\]|roam\/render)\s*:\s*\(\(ExcalDATA\)\)\s*/;
+var START_RE = /^\{\{\s*(?:\[\[roam\/render\]\]|roam\/render)\s*:\s*\(\(ExcalDATA\)\)\s*(?:\{|\}\})/;
+var COMPONENT_PAGE = "roam/excalidraw";
+var LINEAR = /* @__PURE__ */ new Set(["line", "arrow", "draw", "freedraw"]);
+var LINK_RE = /(?<!\S)#\[\[[^\[\]]+\]\]|\[\[[^\[\]]+\]\]|\(\([A-Za-z0-9_-]{9}\)\)|(?<!\S)#[^\s\[\]()\{\},;:!?"'`#]+/g;
+var encoder2 = new TextEncoder();
+var LEGACY_QUERY = '[:find ?u ?s ?t :where [?b :block/string ?s] [(clojure.string/includes? ?s "((ExcalDATA))")] [?b :block/uid ?u] [?b :block/page ?p] [?p :node/title ?t]]';
+var cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var finite = (v) => typeof v === "number" && Number.isFinite(v);
+function rowsFromQuery(results) {
+  const out = [];
+  for (const r of Array.isArray(results) ? results : []) {
+    if (Array.isArray(r) && typeof r[0] === "string" && typeof r[1] === "string") {
+      out.push({ uid: r[0], string: r[1], page: typeof r[2] === "string" ? r[2] : "" });
+    }
+  }
+  return out;
+}
+var normRow = (r) => Array.isArray(r) ? { uid: r[0], string: r[1], page: r[2] ?? "" } : r;
+function mentionsExcalData(s) {
+  return typeof s === "string" && s.includes("((ExcalDATA))");
+}
+function isLegacyDrawingString(s) {
+  return typeof s === "string" && START_RE.test(s.trim());
+}
+function parseLegacyDrawing(s) {
+  if (!isLegacyDrawingString(s)) return { error: "not a legacy drawing" };
+  const t = s.trim();
+  const at = MACRO_RE.exec(t)[0].length;
+  if (t.startsWith("}}", at)) {
+    const out2 = { elements: [], appState: null, version: null };
+    if (t.slice(at + 2).trim()) out2.trailing = true;
+    return out2;
+  }
+  let read;
+  try {
+    read = readEdn(t, at);
+  } catch (e) {
+    if (e instanceof SyntaxError) return { error: `invalid EDN: ${e.message}` };
+    throw e;
+  }
+  let pos = read.end;
+  while (pos < t.length && /\s/.test(t[pos])) pos++;
+  if (!t.startsWith("}}", pos)) return { error: "unterminated macro" };
+  const map = read.value;
+  if (!isObj(map) || !Array.isArray(map.elements)) return { error: "no elements" };
+  const out = {
+    elements: map.elements.filter((el) => !(isObj(el) && el.isDeleted === true)),
+    appState: isObj(map.appState) ? map.appState : null,
+    version: isObj(map.roamExcalidraw) && map.roamExcalidraw.version !== void 0 ? map.roamExcalidraw.version : null
+  };
+  if (t.slice(pos + 2).trim()) out.trailing = true;
+  return out;
+}
+function coercePoints(points) {
+  if (!Array.isArray(points)) return null;
+  const out = [];
+  for (const p of points) {
+    if (!Array.isArray(p) || p.length < 2 || !finite(p[0]) || !finite(p[1])) return null;
+    out.push([p[0], p[1]]);
+  }
+  return out;
+}
+function legacyToElements(ednElements, { migratedFrom } = {}) {
+  const elements = [];
+  let invalid = 0;
+  let invisible2 = 0;
+  for (const src of Array.isArray(ednElements) ? ednElements : []) {
+    if (isObj(src) && src.isDeleted === true) continue;
+    if (!isObj(src) || typeof src.type !== "string" || !finite(src.x) || !finite(src.y) || !finite(src.width) || !finite(src.height) || src.angle !== void 0 && src.angle !== null && !finite(src.angle)) {
+      invalid++;
+      continue;
+    }
+    let points;
+    if (src.points !== void 0 && src.points !== null) {
+      points = coercePoints(src.points);
+      if (!points) {
+        invalid++;
+        continue;
+      }
+    }
+    const linear = LINEAR.has(src.type);
+    if (linear && (!points || points.length < 2) || !linear && src.type !== "text" && src.width === 0 && src.height === 0 || src.type === "text" && (typeof src.text !== "string" || src.text === "")) {
+      invisible2++;
+      continue;
+    }
+    const el = structuredClone(src);
+    if (points) el.points = points;
+    if (el.version === null) delete el.version;
+    if (el.versionNonce === null) delete el.versionNonce;
+    if (migratedFrom !== void 0) el.customData = mergePlexusData(el.customData, { migratedFrom });
+    elements.push(el);
+  }
+  return { elements, invalid, invisible: invisible2 };
+}
+function extractLinks(elements) {
+  const set = /* @__PURE__ */ new Set();
+  for (const el of elements) {
+    if (el.type !== "text" || typeof el.text !== "string") continue;
+    for (const m of el.text.matchAll(LINK_RE)) {
+      const tok = m[0].startsWith("#") && !m[0].startsWith("#[[") ? m[0].replace(/\.+$/, "") : m[0];
+      if (tok.length > 1) set.add(tok);
+    }
+  }
+  return [...set].sort(cmp);
+}
+function isDrawingRow(r) {
+  return !!r && r.page !== COMPONENT_PAGE && isLegacyDrawingString(r.string);
+}
+function legacyReport(rows) {
+  const out = [];
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    const r = normRow(raw);
+    if (!isDrawingRow(r)) continue;
+    const row = {
+      uid: r.uid,
+      page: r.page ?? "",
+      elementCount: 0,
+      types: {},
+      empty: true,
+      bytes: encoder2.encode(r.string).length,
+      invalid: 0,
+      invisible: 0,
+      links: [],
+      macroText: 0,
+      trailing: false
+    };
+    const parsed = parseLegacyDrawing(r.string);
+    if (parsed.error) {
+      row.error = parsed.error;
+      out.push(row);
+      continue;
+    }
+    const conv = legacyToElements(parsed.elements);
+    const types = {};
+    for (const el of conv.elements) types[el.type] = (types[el.type] || 0) + 1;
+    row.elementCount = conv.elements.length;
+    row.types = Object.fromEntries(Object.keys(types).sort(cmp).map((k) => [k, types[k]]));
+    row.empty = conv.elements.length === 0;
+    row.invalid = conv.invalid;
+    row.invisible = conv.invisible;
+    row.links = extractLinks(conv.elements);
+    row.macroText = conv.elements.filter((el) => el.type === "text" && /\{\{|\}\}/.test(el.text)).length;
+    row.trailing = parsed.trailing === true;
+    out.push(row);
+  }
+  return out.sort((a, b) => cmp(a.page, b.page) || cmp(a.uid, b.uid));
+}
+function legacySummary(queryRows) {
+  const rows = (Array.isArray(queryRows) ? queryRows : []).map(normRow).filter((r) => r && mentionsExcalData(r.string));
+  const excluded = [];
+  const drawings = [];
+  for (const r of rows) {
+    if (r.page === COMPONENT_PAGE) excluded.push({ uid: r.uid, page: r.page, reason: "component-code" });
+    else if (!isLegacyDrawingString(r.string)) excluded.push({ uid: r.uid, page: r.page ?? "", reason: "not-a-drawing" });
+    else drawings.push(r);
+  }
+  excluded.sort((a, b) => cmp(a.page, b.page) || cmp(a.uid, b.uid));
+  return {
+    mentions: rows.length,
+    excluded,
+    drawings: drawings.length,
+    empty: legacyReport(drawings).filter((r) => r.empty).length
+  };
+}
+
 // src/model/slides.js
 var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 var orderOf = (el) => {
@@ -5190,8 +6275,105 @@ function lassoToFraction(points, imageRect) {
   return { p };
 }
 
+// src/view/legacy-dialog.js
+function createLegacyDialog({ doc, onMigrate = () => {
+}, onCopy = () => {
+} } = {}) {
+  let dialog = null;
+  const el = (tag, className, text) => {
+    const node = doc.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = String(text);
+    return node;
+  };
+  const button = (label, handler, disabled = false) => {
+    const b = el("button", "plexus-toolbar-button", label);
+    b.type = "button";
+    b.disabled = disabled;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation?.();
+      try {
+        const out = handler();
+        if (out && typeof out.catch === "function") out.catch((error) => console.warn("[plexus] legacy dialog action failed", error));
+      } catch (error) {
+        console.warn("[plexus] legacy dialog action failed", error);
+      }
+    });
+    return b;
+  };
+  const typesText = (types) => Object.entries(types || {}).map(([k, n]) => `${k} ${n}`).join(", ");
+  const rowNode = (row) => {
+    const node = el("div", "plexus-legacy-row");
+    node.append(
+      el("span", "plexus-legacy-page", row.page),
+      el("span", "plexus-legacy-uid", row.uid),
+      el("span", "plexus-legacy-count", row.error ? `error: ${row.error}` : `${row.elementCount} elements`),
+      el("span", "plexus-legacy-types", typesText(row.types))
+    );
+    const flags = [];
+    if (row.empty) flags.push("empty");
+    if (row.invalid) flags.push(`${row.invalid} invalid`);
+    if (row.invisible) flags.push(`${row.invisible} invisible`);
+    if (row.macroText) flags.push(`${row.macroText} text with braces`);
+    if (row.trailing) flags.push("trailing text");
+    if (flags.length) node.append(el("span", "plexus-legacy-flags", flags.join(", ")));
+    if (row.links?.length) node.append(el("span", "plexus-legacy-links", `links: ${row.links.join(" ")}`));
+    node.append(button("Migrate", () => onMigrate(row.uid), !!row.empty || !!row.error));
+    return node;
+  };
+  const close2 = () => {
+    const d = dialog;
+    if (!d) return;
+    dialog = null;
+    try {
+      if (typeof d.close === "function") d.close();
+    } catch (error) {
+      console.warn("[plexus] legacy dialog close failed", error);
+    }
+    d.remove?.();
+  };
+  return {
+    // A second call replaces the first: only one legacy dialog exists.
+    show({ summary, rows }) {
+      close2();
+      const d = el("dialog", "plexus-portal plexus-legacy");
+      const excluded = (summary?.excluded || []).map((x) => `${x.page}/${x.uid} (${x.reason})`).join("; ");
+      d.append(
+        el("div", "plexus-legacy-title", "Legacy drawings (dry run)"),
+        el(
+          "div",
+          "plexus-legacy-summary",
+          `${summary?.mentions ?? 0} mentions, ${summary?.drawings ?? 0} drawings, ${summary?.empty ?? 0} empty, ${summary?.excluded?.length ?? 0} excluded`
+        )
+      );
+      if (excluded) d.append(el("div", "plexus-legacy-excluded", `Excluded: ${excluded}`));
+      const list = el("div", "plexus-legacy-rows");
+      for (const row of rows || []) list.append(rowNode(row));
+      const actions = el("div", "plexus-legacy-actions");
+      actions.append(button("Copy report", () => onCopy({ summary, rows })), button("Close", close2));
+      d.append(list, actions);
+      d.addEventListener("close", () => {
+        if (dialog !== d) return;
+        dialog = null;
+        d.remove?.();
+      });
+      doc.body.append(d);
+      dialog = d;
+      if (typeof d.showModal === "function") d.showModal();
+      else d.setAttribute?.("open", "");
+      return d;
+    },
+    close: close2,
+    isOpen: () => !!dialog,
+    dispose: close2
+  };
+}
+
 // src/actions.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var DRAWING_BLOCK_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
+var NOT_EDITABLE_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw|\[\[roam\/render\]\]|roam\/render)/;
+var liveTagged = (drawing, uid) => (drawing?.elements || []).filter((e) => !e.isDeleted && e.customData?.plexus?.migratedFrom === uid).length;
 async function waitFor(fn, timeoutMs, stepMs = 50, aborted = () => false) {
   const end = Date.now() + timeoutMs;
   for (; ; ) {
@@ -5275,7 +6457,14 @@ function createActions({
   createBitmap = globalThis.createImageBitmap?.bind(globalThis),
   startTool = startImageRegionTool,
   presenter = null,
-  mindmap = null
+  mindmap = null,
+  getEmbedOverlay = () => null,
+  createDialog = createLegacyDialog,
+  confirm = (message) => globalThis.confirm?.(message),
+  withLockFn = withLock,
+  frame = () => new Promise((resolve) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(() => resolve()) : setTimeout(resolve, 16)),
+  verifyPollMs = 100,
+  verifyTimeoutMs = 3e3
 }) {
   let disposed = false;
   let activeTool = null;
@@ -5285,6 +6474,8 @@ function createActions({
   let presentOwner = null;
   const thumbPending = /* @__PURE__ */ new Map();
   const aborted = () => disposed;
+  let legacyDialog = null;
+  let migrating = false;
   async function once(name, fn) {
     if (busy.has(name)) return null;
     busy.add(name);
@@ -5392,6 +6583,8 @@ function createActions({
       activeTool = null;
       stopSpotlight?.();
       stopSpotlight = null;
+      legacyDialog?.dispose();
+      legacyDialog = null;
     },
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
     cancelDrawingTool() {
@@ -5414,9 +6607,9 @@ function createActions({
       const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
       let region;
       if (detected.kind === "cframe") {
-        const { frame, children } = detected;
-        const caption = captionFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
-        region = { kind: "cframe", drawingUid, frameId: frame.id, caption };
+        const { frame: frame2, children } = detected;
+        const caption = captionFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
+        region = { kind: "cframe", drawingUid, frameId: frame2.id, caption };
       } else if (detected.kind === "group") {
         const caption = captionFromElements(elements, detected.members.map((el) => el.id)) || "Region";
         region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD, caption };
@@ -5447,9 +6640,9 @@ function createActions({
         return null;
       }
       if (badTarget(drawingUid, [detected.frame.id])) return null;
-      const { frame, children } = detected;
-      const caption = captionFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
-      const region = { kind: "frame", drawingUid, frameId: frame.id, pad: DEFAULT_PAD, caption };
+      const { frame: frame2, children } = detected;
+      const caption = captionFromElements(elements, children.map((el) => el.id)) || frame2.name || "Frame";
+      const region = { kind: "frame", drawingUid, frameId: frame2.id, pad: DEFAULT_PAD, caption };
       return finishCreate(region, await hotSvg(app, region));
     }),
     createImageRegion: () => once("image", async () => {
@@ -5635,6 +6828,17 @@ function createActions({
       }
       return mindmap.startRoot({ app: editor.app, drawingUid: editor.drawingUid });
     },
+    legacyDryRun: () => once("legacy-dry-run", legacyDryRunOnce),
+    migrateLegacy: (uid) => migrateLegacyOnce(uid),
+    // Exactly one live, non-bound-text element selected, and it is an embed anchor.
+    canEditEmbed() {
+      const overlay = getEmbedOverlay();
+      if (!overlay || overlay.editState?.() !== "idle") return false;
+      const editor = native.activeEditor(doc);
+      return !!(editor && selectedAnchor(editor.app));
+    },
+    editEmbed: () => once("edit-embed", editEmbedOnce),
+    openDrawing: (uid, { sidebar = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true })),
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
     async refreshCropsForOpenDrawing() {
@@ -5685,16 +6889,16 @@ function createActions({
       return null;
     }
     const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
-    const slides = frames.map((frame) => {
-      const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "Frame" };
+    const slides = frames.map((frame2) => {
+      const region = { kind: "cframe", drawingUid: uid, frameId: frame2.id, caption: frame2.name || "Frame" };
       const gk = geometryKey(region);
       return {
-        frame,
+        frame: frame2,
         region,
-        name: frame.name || `Frame ${frames.indexOf(frame) + 1}`,
+        name: frame2.name || `Frame ${frames.indexOf(frame2) + 1}`,
         url: null,
-        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
-        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" })
+        svgKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
+        pngKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" })
       };
     });
     for (const slide of slides) {
@@ -5704,7 +6908,7 @@ function createActions({
     const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0, onClose: release });
     const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
     if (!missing.length) return uid;
-    const fail = (i) => {
+    const fail2 = (i) => {
       if (handle.isOpen()) handle.setSlide(i, { error: true });
     };
     const fill = (i, entry) => {
@@ -5725,7 +6929,7 @@ function createActions({
         const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
         if (!rendered || disposed || !handle.isOpen()) {
           if (!rendered && !disposed && handle.isOpen()) {
-            for (const [, i] of missing) fail(i);
+            for (const [, i] of missing) fail2(i);
             toaster.show("Could not render this drawing", { kind: "error" });
           }
           return uid;
@@ -5734,7 +6938,7 @@ function createActions({
           if (disposed || !handle.isOpen()) break;
           const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
           if (box.error) {
-            fail(i);
+            fail2(i);
             continue;
           }
           const crop = viewPngCropRect({
@@ -5745,7 +6949,7 @@ function createActions({
             naturalHeight: rendered.naturalHeight
           });
           if (crop.error) {
-            fail(i);
+            fail2(i);
             continue;
           }
           const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
@@ -5755,7 +6959,7 @@ function createActions({
       }
     } catch (error) {
       console.warn("[plexus] present fill failed", error);
-      for (const [slide, i] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail(i);
+      for (const [slide, i] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail2(i);
     }
     return uid;
   }
@@ -5882,7 +7086,231 @@ function createActions({
     if (!ok && !disposed) toaster.show("Could not build the mind map", { kind: "error" });
     return ok ? drawingUid : null;
   }
-  async function openDrawingOnce(uid) {
+  function selectedAnchor(app) {
+    const all = sceneElements(app);
+    const ids = native.selectedElementIds(app);
+    const picked = ids.map((id) => all.find((e) => e.id === id)).filter((e) => e && !(e.type === "text" && e.containerId));
+    if (picked.length !== 1) return null;
+    return embedAnchors(picked)[0] ?? null;
+  }
+  async function editEmbedOnce() {
+    const overlay = getEmbedOverlay();
+    const editor = native.activeEditor(doc);
+    if (!overlay || !editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return false;
+    }
+    if (overlay.editState?.() !== "idle") return false;
+    const anchor = selectedAnchor(editor.app);
+    if (!anchor) {
+      toaster.show("Select one embedded block first", { kind: "error" });
+      return false;
+    }
+    const ref = parseEmbedRef(anchor.customData.plexus.embed);
+    if (!ref || ref.kind === "page") {
+      toaster.show("Page embeds are read-only for now");
+      return false;
+    }
+    const block = host.pullBlock(ref.uid);
+    let ancestor = false;
+    if (block && editor.drawingUid) {
+      try {
+        const raw = api.data.pull("[{:block/parents [:block/uid]}]", [":block/uid", editor.drawingUid]);
+        ancestor = (raw?.[":block/parents"] || []).some((p) => p[":block/uid"] === ref.uid);
+      } catch (error) {
+        console.warn("[plexus] ancestor check failed", error);
+      }
+    }
+    if (!block || ref.uid === editor.drawingUid || ancestor || NOT_EDITABLE_RE.test(block.string)) {
+      toaster.show("This block cannot be edited on the canvas", { kind: "error" });
+      return false;
+    }
+    return overlay.edit(anchor.id);
+  }
+  async function legacyDryRunOnce() {
+    let rows;
+    try {
+      rows = rowsFromQuery(api.data.q(LEGACY_QUERY));
+    } catch (error) {
+      console.warn("[plexus] legacy query failed", error);
+      toaster.show("Could not scan for legacy drawings", { kind: "error" });
+      return null;
+    }
+    const summary = legacySummary(rows);
+    const report = legacyReport(rows);
+    if (!legacyDialog) {
+      legacyDialog = createDialog({
+        doc,
+        onMigrate: (uid) => migrateLegacyOnce(uid),
+        onCopy: async ({ summary: sum, rows: list }) => {
+          const write = () => clipboard.writeText(JSON.stringify({ summary: sum, rows: list }, null, 2));
+          try {
+            await (native.withClipboard ? native.withClipboard(write) : write());
+            toaster.show("Report copied");
+          } catch (error) {
+            console.warn("[plexus] clipboard failed", error);
+            toaster.show("Clipboard access was blocked", { kind: "error" });
+          }
+        }
+      });
+    }
+    legacyDialog.show({ summary, rows: report });
+    return { summary, rows: report };
+  }
+  function legacySnapshot(uid) {
+    const b = host.pullBlock(uid);
+    return b ? { string: b.string, editTime: b.editTime } : null;
+  }
+  async function migrateLegacyOnce(legacyUid) {
+    if (!isId(legacyUid)) return null;
+    if (native.activeEditor(doc)) {
+      toaster.show("Close the open drawing first", { kind: "error" });
+      return null;
+    }
+    if (migrating) {
+      toaster.show("A migration is already running", { kind: "error" });
+      return null;
+    }
+    const block = host.pullBlock(legacyUid);
+    if (!block || !isLegacyDrawingString(block.string)) {
+      toaster.show("Not a legacy drawing", { kind: "error" });
+      return null;
+    }
+    const parsed = parseLegacyDrawing(block.string);
+    if (parsed.error) {
+      toaster.show(`Cannot migrate: ${parsed.error}`, { kind: "error" });
+      return null;
+    }
+    const conv = legacyToElements(parsed.elements, { migratedFrom: legacyUid });
+    if (!conv.elements.length) {
+      toaster.show("Nothing to migrate", { kind: "error" });
+      return null;
+    }
+    let ok = false;
+    try {
+      ok = confirm("Create a new native drawing right below this legacy block? The legacy block is not changed.") === true;
+    } catch {
+      ok = false;
+    }
+    if (!ok) return null;
+    migrating = true;
+    try {
+      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv), { ifAvailable: true });
+      if (!lock.acquired) {
+        toaster.show("Migration already running in another window", { kind: "error" });
+        return null;
+      }
+      return lock.value ?? null;
+    } catch (error) {
+      console.warn("[plexus] migration failed", error);
+      if (!disposed) toaster.show("Migration failed; the legacy block is unchanged", { kind: "error" });
+      return null;
+    } finally {
+      migrating = false;
+    }
+  }
+  async function migrateBody(legacyUid, parsed, conv) {
+    const before = legacySnapshot(legacyUid);
+    const target = `m${fnv1a(legacyUid)}`;
+    const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", legacyUid]);
+    const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
+    if (!parent) {
+      toaster.show("Could not find the legacy block's parent", { kind: "error" });
+      return null;
+    }
+    const already = () => {
+      toaster.show("Already migrated");
+      return null;
+    };
+    const existing = host.pullBlock(target);
+    let targetUid = target;
+    let reuse = false;
+    if (existing) {
+      if (!DRAWING_BLOCK_RE.test(existing.string)) {
+        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        return null;
+      }
+      const d = host.drawing(target);
+      if (liveTagged(d, legacyUid) > 0) return already();
+      if ((d?.elements || []).some((e) => !e.isDeleted)) {
+        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        return null;
+      }
+      reuse = true;
+    }
+    for (const sib of host.pullBlock(parent)?.children || []) {
+      if (sib.uid === legacyUid || sib.uid === target || !DRAWING_BLOCK_RE.test(sib.string)) continue;
+      if (liveTagged(host.drawing(sib.uid), legacyUid) > 0) return already();
+    }
+    legacyDialog?.close();
+    if (!reuse) {
+      const create = (uid) => api.data.block.create({
+        location: { "parent-uid": parent, order: (at[":block/order"] ?? 0) + 1 },
+        block: { uid, string: "{{[[excalidraw]]}}" }
+      });
+      try {
+        await create(target);
+      } catch (error) {
+        if (!host.pullBlock(target)) {
+          targetUid = api.util.generateUID();
+          await create(targetUid);
+        }
+      }
+    }
+    if (disposed) return null;
+    const editor = await openDrawingOnce(targetUid, {});
+    if (!editor || disposed) return null;
+    const app = editor.app;
+    const stillHere = () => {
+      const now = native.activeEditor(doc);
+      return !!now && now.app === app && now.drawingUid === targetUid && app.state?.width > 0 && app.state?.height > 0;
+    };
+    await native.waitNotLoading(app, 5e3, { doc });
+    await frame();
+    await frame();
+    if (disposed) return null;
+    if (!stillHere()) {
+      toaster.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
+      return null;
+    }
+    const ids = native.addViaPaste(app, conv.elements);
+    const N = ids.length;
+    if (!N) {
+      toaster.show("Migration pasted no elements", { kind: "error" });
+      return null;
+    }
+    try {
+      const all = sceneElements(app);
+      const pasted = all.filter((e) => ids.includes(e.id));
+      const bbox = commonBounds(pasted);
+      if (bbox) native.zoomTo(app, bbox);
+    } catch (error) {
+      console.warn("[plexus] zoom to migrated drawing failed", error);
+    }
+    const M = parsed.elements.length;
+    const end = Date.now() + verifyTimeoutMs;
+    let confirmed = false;
+    for (; ; ) {
+      if (disposed) return null;
+      if (liveTagged(host.drawing(targetUid), legacyUid) === N) {
+        confirmed = true;
+        break;
+      }
+      if (Date.now() >= end) break;
+      await sleep(verifyPollMs);
+    }
+    if (!confirmed) {
+      toaster.show("Migration not confirmed yet. Reopen the drawing before running Migrate again", { kind: "error" });
+      return null;
+    }
+    const after = legacySnapshot(legacyUid);
+    const unchanged = !!before && !!after && before.string === after.string && before.editTime === after.editTime;
+    const skipped2 = conv.invalid + conv.invisible;
+    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped2} invalid or invisible skipped).`;
+    toaster.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
+    return targetUid;
+  }
+  async function openDrawingOnce(uid, { sidebar = false, reuseIcon = false } = {}) {
     const matches = () => {
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
@@ -5895,12 +7323,14 @@ function createActions({
       }
       return null;
     };
-    try {
-      await host.openBlock(uid, {});
-    } catch (error) {
-      console.warn("[plexus] open block failed", error);
-      toaster.show("Could not open drawing", { kind: "error" });
-      return null;
+    if (!(reuseIcon && (matches() || findIcon()))) {
+      try {
+        await host.openBlock(uid, sidebar ? { sidebar } : {});
+      } catch (error) {
+        console.warn("[plexus] open block failed", error);
+        toaster.show("Could not open drawing", { kind: "error" });
+        return null;
+      }
     }
     const View = doc.defaultView;
     const deadline = Date.now() + 1e4;
@@ -6095,9 +7525,14 @@ async function onload({ extensionAPI, extension }) {
         onEmbed: () => actions.insertEmbedFromClipboard(),
         onPresent: () => actions.presentDrawing(),
         canPresent: () => actions.hasFrames(),
-        onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error))
+        onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
+        onEditEmbed: () => actions.editEmbed(),
+        canEditEmbed: () => actions.canEditEmbed()
       });
       lifecycle.add(() => toolbar.dispose());
+      const scenes = createSceneRegistry({ native: native_exports, doc });
+      lifecycle.add(() => scenes.dispose());
+      let mounted = null;
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
@@ -6117,10 +7552,11 @@ async function onload({ extensionAPI, extension }) {
         emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
         presenter,
-        mindmap
+        mindmap,
+        getEmbedOverlay: () => mounted?.overlay ?? null
       });
       lifecycle.add(() => actions.dispose());
-      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development" });
+      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
       if (api.ui?.blockContextMenu?.addCommand) {
@@ -6175,25 +7611,28 @@ async function onload({ extensionAPI, extension }) {
         }, THUMB_WARM_DELAY_MS);
         thumbTimers.add(timer);
       };
-      let mounted = null;
       let navigatedAt = -Infinity;
       const unmountEditor = () => {
         const current = mounted;
         mounted = null;
-        if (!current) return;
+        if (!current) return Promise.resolve();
         if (Date.now() - navigatedAt <= 2e3) clearLinkTooltip(doc);
+        const pending = [];
         for (const dispose of current.disposers) {
           try {
-            dispose();
+            const out = dispose();
+            if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
           } catch (error) {
             console.warn("[plexus] editor cleanup failed", error);
           }
         }
+        if (current.app) scenes.release(current.app);
         actions.cancelDrawingTool();
         if (current.uid) {
           emitter.emit({ uid: current.uid, kind: "drawing" });
           warmThumbnails(current.uid);
         }
+        return Promise.all(pending).then(() => void 0);
       };
       lifecycle.add(unmountEditor);
       const discovery = createDiscovery({
@@ -6205,7 +7644,7 @@ async function onload({ extensionAPI, extension }) {
           unmountEditor();
           const app = findApp(el);
           if (!app) return;
-          mounted = { uid: host.blockUidFromNode(el), disposers: [] };
+          mounted = { uid: host.blockUidFromNode(el), app, disposers: [], overlay: null };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -6214,8 +7653,19 @@ async function onload({ extensionAPI, extension }) {
           }
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
-          const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1e3 });
+          const overlay = createEmbedOverlay({
+            doc,
+            api,
+            host,
+            app,
+            containerEl: el,
+            zIndex: outer ? baseZIndex(doc, outer) : 1e3,
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            onStateChange: () => toolbar.refresh()
+          });
+          mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
+          mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1e3 }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
@@ -6240,7 +7690,8 @@ async function onload({ extensionAPI, extension }) {
       ["Plexus: Create image region", "createImageRegion"],
       ["Plexus: Present open drawing", "presentDrawing"],
       ["Plexus: Refresh crops for open drawing", "refreshCropsForOpenDrawing"],
-      ["Plexus: Clear crop cache", "clearCache"]
+      ["Plexus: Clear crop cache", "clearCache"],
+      ["Plexus: Legacy drawings (dry run)", "legacyDryRun"]
     ];
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });

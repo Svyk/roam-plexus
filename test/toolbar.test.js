@@ -146,3 +146,39 @@ test("Mind map button exists only when onMindMap is given and fires it", async (
   assert.equal(on.fired(), 1);
   on.tb.hide();
 });
+
+test("Edit embed button sits between Embed block and Present, exists only with onEditEmbed, is gated, and fires", async () => {
+  const make = (withEdit, canEdit) => {
+    const buttons = [];
+    const { doc, bar } = fakeDoc(36);
+    const create = doc.createElement;
+    doc.createElement = (tag) => {
+      const el = create(tag);
+      if (tag === "button") { el.disabled = false; el.handlers = {}; el.addEventListener = (t, f) => { el.handlers[t] = f; }; buttons.push(el); }
+      return el;
+    };
+    let fired = 0;
+    const tb = createEditorToolbar({
+      doc, onAreaRegion() {}, onImageRegion() {}, onFrameRegion() {}, onCropRegion() {}, onEmbed() {}, onPresent() {}, onMindMap() {},
+      ...(withEdit ? { onEditEmbed: () => { fired += 1; }, canEditEmbed: () => canEdit } : {}),
+    });
+    tb.show(outerEl);
+    return { buttons, fired: () => fired, tb, bar };
+  };
+  const off = make(false);
+  assert.equal(off.buttons.some((b) => /Edit embed/.test(b.textContent || "")), false);
+  off.tb.hide();
+  const on = make(true, true);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(on.bar.children.map((b) => b.textContent), ["Region", "Image region", "Frame (with margin)", "Region from crop", "Embed block", "Edit embed", "Present", "Mind map"]);
+  const b = on.buttons.find((x) => /Edit embed/.test(x.textContent));
+  assert.equal(b.disabled, false);
+  b.handlers.click({ stopPropagation() {} });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(on.fired(), 1);
+  on.tb.hide();
+  const gated = make(true, false);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(gated.buttons.find((x) => /Edit embed/.test(x.textContent)).disabled, true);
+  gated.tb.hide();
+});

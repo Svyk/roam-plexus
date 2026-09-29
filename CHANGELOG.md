@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.5.0]
+
+- Legacy drawings: dry-run report of old ExcalDATA drawings (`Plexus: Legacy drawings (dry run)`) and migration into native drawings; the legacy block is never written.
+- Automation API v2: scene registry, `whenOpen`, `add`/`update`/`remove`/`exportSvg`.
+- Editable embeds: edit a drawing in place from an embed (Edit embed button, F2).
+
 ## [0.4.0]
 
 - Mind-map builder: create a mind map from an outline block, with two-way sync between the canvas and the Roam outline (add, edit, move, copy, delete, fold).

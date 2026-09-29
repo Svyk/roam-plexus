@@ -6,14 +6,14 @@ import { createCropCache } from "./host/cache.js";
 import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
 import { baseZIndex, createEditorToolbar } from "./view/toolbar.js";
-import { createEmbedOverlay } from "./view/embeds.js";
+import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
 import { createPresenter } from "./view/present.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
 import { createHoverPreview } from "./view/hover-preview.js";
 import { clearLinkTooltip, installLinkInterception } from "./host/links.js";
-import { createPublicApi, installPublicApi, uninstallPublicApi } from "./api.js";
+import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createMindMap } from "./view/mindmap.js";
 import { createMmWriter } from "./host/mmwrites.js";
 import { createMeasurer } from "./host/measure.js";
@@ -93,8 +93,13 @@ export async function onload({ extensionAPI, extension }) {
         onPresent: () => actions.presentDrawing(),
         canPresent: () => actions.hasFrames(),
         onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
+        onEditEmbed: () => actions.editEmbed(),
+        canEditEmbed: () => actions.canEditEmbed(),
       });
       lifecycle.add(() => toolbar.dispose());
+      const scenes = createSceneRegistry({ native, doc });
+      lifecycle.add(() => scenes.dispose());
+      let mounted = null;
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
@@ -115,10 +120,11 @@ export async function onload({ extensionAPI, extension }) {
         clipboard: globalThis.navigator?.clipboard,
         presenter,
         mindmap,
+        getEmbedOverlay: () => mounted?.overlay ?? null,
       });
       lifecycle.add(() => actions.dispose());
 
-      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development" });
+      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
 
@@ -169,21 +175,26 @@ export async function onload({ extensionAPI, extension }) {
         thumbTimers.add(timer);
       };
       // Link interception and hover preview live only while an editor is mounted.
-      let mounted = null;
       let navigatedAt = -Infinity;
       const unmountEditor = () => {
         const current = mounted;
         mounted = null;
-        if (!current) return;
+        if (!current) return Promise.resolve();
         if (Date.now() - navigatedAt <= 2000) clearLinkTooltip(doc);
+        const pending = [];
         for (const dispose of current.disposers) {
-          try { dispose(); } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
+          try {
+            const out = dispose();
+            if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
+          } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
         }
+        if (current.app) scenes.release(current.app);
         actions.cancelDrawingTool();
         if (current.uid) {
           emitter.emit({ uid: current.uid, kind: "drawing" });
           warmThumbnails(current.uid);
         }
+        return Promise.all(pending).then(() => undefined);
       };
       lifecycle.add(unmountEditor);
       const discovery = createDiscovery({
@@ -195,15 +206,21 @@ export async function onload({ extensionAPI, extension }) {
           unmountEditor();
           const app = native.findApp(el);
           if (!app) return;
-          mounted = { uid: host.blockUidFromNode(el), disposers: [] };
+          mounted = { uid: host.blockUidFromNode(el), app, disposers: [], overlay: null };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
           } catch (error) { console.warn("[plexus] toolbar refresh subscribe failed", error); }
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
-          const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000 });
+          const overlay = createEmbedOverlay({
+            doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000,
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            onStateChange: () => toolbar.refresh(),
+          });
+          mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
+          mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000 }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
@@ -230,6 +247,7 @@ export async function onload({ extensionAPI, extension }) {
       ["Plexus: Present open drawing", "presentDrawing"],
       ["Plexus: Refresh crops for open drawing", "refreshCropsForOpenDrawing"],
       ["Plexus: Clear crop cache", "clearCache"],
+      ["Plexus: Legacy drawings (dry run)", "legacyDryRun"],
     ];
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });

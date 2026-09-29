@@ -1,18 +1,25 @@
 import { DEFAULT_PAD, geometryKey, isId, parseRegion, serializeRegion } from "./model/region.js";
-import { regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
-import { embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
+import { commonBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
+import { embedAnchors, embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
+import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
 import { orderFrames } from "./model/slides.js";
 import { captionFromElements } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { isExcludedString } from "./model/mindmap.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
+import { lockName, withLock } from "./host/locks.js";
 import { cropCanvasToBlob } from "./host/cold-render.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
+import { createLegacyDialog } from "./view/legacy-dialog.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const DRAWING_BLOCK_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
+const NOT_EDITABLE_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw|\[\[roam\/render\]\]|roam\/render)/;
+const liveTagged = (drawing, uid) => (drawing?.elements || []).filter((e) => !e.isDeleted && e.customData?.plexus?.migratedFrom === uid).length;
 
 async function waitFor(fn, timeoutMs, stepMs = 50, aborted = () => false) {
   const end = Date.now() + timeoutMs;
@@ -107,6 +114,13 @@ export function createActions({
   startTool = startImageRegionTool,
   presenter = null,
   mindmap = null,
+  getEmbedOverlay = () => null,
+  createDialog = createLegacyDialog,
+  confirm = (message) => globalThis.confirm?.(message),
+  withLockFn = withLock,
+  frame = () => new Promise((resolve) => (typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(() => resolve()) : setTimeout(resolve, 16))),
+  verifyPollMs = 100,
+  verifyTimeoutMs = 3000,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -116,6 +130,8 @@ export function createActions({
   let presentOwner = null;
   const thumbPending = new Map();
   const aborted = () => disposed;
+  let legacyDialog = null;
+  let migrating = false;
 
   async function once(name, fn) {
     if (busy.has(name)) return null;
@@ -238,6 +254,8 @@ export function createActions({
       activeTool = null;
       stopSpotlight?.();
       stopSpotlight = null;
+      legacyDialog?.dispose();
+      legacyDialog = null;
     },
 
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
@@ -494,6 +512,22 @@ export function createActions({
       return mindmap.startRoot({ app: editor.app, drawingUid: editor.drawingUid });
     },
 
+    legacyDryRun: () => once("legacy-dry-run", legacyDryRunOnce),
+
+    migrateLegacy: (uid) => migrateLegacyOnce(uid),
+
+    // Exactly one live, non-bound-text element selected, and it is an embed anchor.
+    canEditEmbed() {
+      const overlay = getEmbedOverlay();
+      if (!overlay || overlay.editState?.() !== "idle") return false;
+      const editor = native.activeEditor(doc);
+      return !!(editor && selectedAnchor(editor.app));
+    },
+
+    editEmbed: () => once("edit-embed", editEmbedOnce),
+
+    openDrawing: (uid, { sidebar = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true })),
+
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
 
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
@@ -742,7 +776,231 @@ export function createActions({
     return ok ? drawingUid : null;
   }
 
-  async function openDrawingOnce(uid) {
+
+  function selectedAnchor(app) {
+    const all = sceneElements(app);
+    const ids = native.selectedElementIds(app);
+    const picked = ids.map((id) => all.find((e) => e.id === id)).filter((e) => e && !(e.type === "text" && e.containerId));
+    if (picked.length !== 1) return null;
+    return embedAnchors(picked)[0] ?? null;
+  }
+
+  async function editEmbedOnce() {
+    const overlay = getEmbedOverlay();
+    const editor = native.activeEditor(doc);
+    if (!overlay || !editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return false;
+    }
+    if (overlay.editState?.() !== "idle") return false;
+    const anchor = selectedAnchor(editor.app);
+    if (!anchor) {
+      toaster.show("Select one embedded block first", { kind: "error" });
+      return false;
+    }
+    const ref = parseEmbedRef(anchor.customData.plexus.embed);
+    if (!ref || ref.kind === "page") {
+      toaster.show("Page embeds are read-only for now");
+      return false;
+    }
+    const block = host.pullBlock(ref.uid);
+    let ancestor = false;
+    if (block && editor.drawingUid) {
+      try {
+        const raw = api.data.pull("[{:block/parents [:block/uid]}]", [":block/uid", editor.drawingUid]);
+        ancestor = (raw?.[":block/parents"] || []).some((p) => p[":block/uid"] === ref.uid);
+      } catch (error) {
+        console.warn("[plexus] ancestor check failed", error);
+      }
+    }
+    if (!block || ref.uid === editor.drawingUid || ancestor || NOT_EDITABLE_RE.test(block.string)) {
+      toaster.show("This block cannot be edited on the canvas", { kind: "error" });
+      return false;
+    }
+    return overlay.edit(anchor.id);
+  }
+
+  async function legacyDryRunOnce() {
+    let rows;
+    try {
+      rows = rowsFromQuery(api.data.q(LEGACY_QUERY));
+    } catch (error) {
+      console.warn("[plexus] legacy query failed", error);
+      toaster.show("Could not scan for legacy drawings", { kind: "error" });
+      return null;
+    }
+    const summary = legacySummary(rows);
+    const report = legacyReport(rows);
+    if (!legacyDialog) {
+      legacyDialog = createDialog({
+        doc,
+        onMigrate: (uid) => migrateLegacyOnce(uid),
+        onCopy: async ({ summary: sum, rows: list }) => {
+          const write = () => clipboard.writeText(JSON.stringify({ summary: sum, rows: list }, null, 2));
+          try {
+            await (native.withClipboard ? native.withClipboard(write) : write());
+            toaster.show("Report copied");
+          } catch (error) {
+            console.warn("[plexus] clipboard failed", error);
+            toaster.show("Clipboard access was blocked", { kind: "error" });
+          }
+        },
+      });
+    }
+    legacyDialog.show({ summary, rows: report });
+    return { summary, rows: report };
+  }
+
+  function legacySnapshot(uid) {
+    const b = host.pullBlock(uid);
+    return b ? { string: b.string, editTime: b.editTime } : null;
+  }
+
+  async function migrateLegacyOnce(legacyUid) {
+    if (!isId(legacyUid)) return null;
+    if (native.activeEditor(doc)) {
+      toaster.show("Close the open drawing first", { kind: "error" });
+      return null;
+    }
+    if (migrating) {
+      toaster.show("A migration is already running", { kind: "error" });
+      return null;
+    }
+    const block = host.pullBlock(legacyUid);
+    if (!block || !isLegacyDrawingString(block.string)) {
+      toaster.show("Not a legacy drawing", { kind: "error" });
+      return null;
+    }
+    const parsed = parseLegacyDrawing(block.string);
+    if (parsed.error) {
+      toaster.show(`Cannot migrate: ${parsed.error}`, { kind: "error" });
+      return null;
+    }
+    const conv = legacyToElements(parsed.elements, { migratedFrom: legacyUid });
+    if (!conv.elements.length) {
+      toaster.show("Nothing to migrate", { kind: "error" });
+      return null;
+    }
+    let ok = false;
+    try { ok = confirm("Create a new native drawing right below this legacy block? The legacy block is not changed.") === true; } catch { ok = false; }
+    if (!ok) return null;
+    migrating = true;
+    try {
+      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv), { ifAvailable: true });
+      if (!lock.acquired) {
+        toaster.show("Migration already running in another window", { kind: "error" });
+        return null;
+      }
+      return lock.value ?? null;
+    } catch (error) {
+      console.warn("[plexus] migration failed", error);
+      if (!disposed) toaster.show("Migration failed; the legacy block is unchanged", { kind: "error" });
+      return null;
+    } finally {
+      migrating = false;
+    }
+  }
+
+  async function migrateBody(legacyUid, parsed, conv) {
+    const before = legacySnapshot(legacyUid);
+    const target = `m${fnv1a(legacyUid)}`;
+    const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", legacyUid]);
+    const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
+    if (!parent) {
+      toaster.show("Could not find the legacy block's parent", { kind: "error" });
+      return null;
+    }
+    const already = () => {
+      toaster.show("Already migrated");
+      return null;
+    };
+    const existing = host.pullBlock(target);
+    let targetUid = target;
+    let reuse = false;
+    if (existing) {
+      if (!DRAWING_BLOCK_RE.test(existing.string)) {
+        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        return null;
+      }
+      const d = host.drawing(target);
+      if (liveTagged(d, legacyUid) > 0) return already();
+      if ((d?.elements || []).some((e) => !e.isDeleted)) {
+        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        return null;
+      }
+      reuse = true;
+    }
+    for (const sib of host.pullBlock(parent)?.children || []) {
+      if (sib.uid === legacyUid || sib.uid === target || !DRAWING_BLOCK_RE.test(sib.string)) continue;
+      if (liveTagged(host.drawing(sib.uid), legacyUid) > 0) return already();
+    }
+    legacyDialog?.close();
+    if (!reuse) {
+      const create = (uid) => api.data.block.create({
+        location: { "parent-uid": parent, order: (at[":block/order"] ?? 0) + 1 },
+        block: { uid, string: "{{[[excalidraw]]}}" },
+      });
+      try {
+        await create(target);
+      } catch (error) {
+        if (!host.pullBlock(target)) {
+          targetUid = api.util.generateUID();
+          await create(targetUid);
+        }
+      }
+    }
+    if (disposed) return null;
+    const editor = await openDrawingOnce(targetUid, {});
+    if (!editor || disposed) return null;
+    const app = editor.app;
+    const stillHere = () => {
+      const now = native.activeEditor(doc);
+      return !!now && now.app === app && now.drawingUid === targetUid && app.state?.width > 0 && app.state?.height > 0;
+    };
+    await native.waitNotLoading(app, 5000, { doc });
+    await frame();
+    await frame();
+    if (disposed) return null;
+    if (!stillHere()) {
+      toaster.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
+      return null;
+    }
+    const ids = native.addViaPaste(app, conv.elements);
+    const N = ids.length;
+    if (!N) {
+      toaster.show("Migration pasted no elements", { kind: "error" });
+      return null;
+    }
+    try {
+      const all = sceneElements(app);
+      const pasted = all.filter((e) => ids.includes(e.id));
+      const bbox = commonBounds(pasted);
+      if (bbox) native.zoomTo(app, bbox);
+    } catch (error) {
+      console.warn("[plexus] zoom to migrated drawing failed", error);
+    }
+    const M = parsed.elements.length;
+    const end = Date.now() + verifyTimeoutMs;
+    let confirmed = false;
+    for (;;) {
+      if (disposed) return null;
+      if (liveTagged(host.drawing(targetUid), legacyUid) === N) { confirmed = true; break; }
+      if (Date.now() >= end) break;
+      await sleep(verifyPollMs);
+    }
+    if (!confirmed) {
+      toaster.show("Migration not confirmed yet. Reopen the drawing before running Migrate again", { kind: "error" });
+      return null;
+    }
+    const after = legacySnapshot(legacyUid);
+    const unchanged = !!before && !!after && before.string === after.string && before.editTime === after.editTime;
+    const skipped = conv.invalid + conv.invisible;
+    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped} invalid or invisible skipped).`;
+    toaster.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
+    return targetUid;
+  }
+
+  async function openDrawingOnce(uid, { sidebar = false, reuseIcon = false } = {}) {
     const matches = () => {
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
@@ -755,12 +1013,15 @@ export function createActions({
       }
       return null;
     };
-    try {
-      await host.openBlock(uid, {});
-    } catch (error) {
-      console.warn("[plexus] open block failed", error);
-      toaster.show("Could not open drawing", { kind: "error" });
-      return null;
+    // A drawing already on screen is opened through its own icon: navigating away would destroy the user's view.
+    if (!(reuseIcon && (matches() || findIcon()))) {
+      try {
+        await host.openBlock(uid, sidebar ? { sidebar } : {});
+      } catch (error) {
+        console.warn("[plexus] open block failed", error);
+        toaster.show("Could not open drawing", { kind: "error" });
+        return null;
+      }
     }
     const View = doc.defaultView;
     const deadline = Date.now() + 10000;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createEmbedOverlay, embedPlacement } from "../src/view/embeds.js";
+import { createEmbedOverlay, embedPlacement, installEmbedF2 } from "../src/view/embeds.js";
 
 function fakeEl() {
   const el = {
@@ -153,4 +153,340 @@ test("block embed header is the containing page title, not the block text; page 
   const page = setup({ content: { kind: "page", uid: "abcdefghi", title: "My Page", string: "", children: [] } });
   await page.flush();
   assert.equal(page.body.children[0].children[0].textContent, "My Page");
+});
+
+// ---- edit mode ----
+
+function node(tag, doc) {
+  const n = {
+    tagName: String(tag).toUpperCase(), style: {}, children: [], className: "", textContent: "", id: "", attrs: {},
+    parentNode: null, listeners: {}, value: "", selectionStart: 0, selectionEnd: 0, removed: false,
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    append(...c) { for (const x of c) { x.parentNode = this; this.children.push(x); } },
+    remove() {
+      this.removed = true;
+      if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this);
+      this.parentNode = null;
+    },
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); },
+    dispatchEvent(ev) { ev.target = this; ev.stopPropagation = () => { ev.stopped = true; }; for (let n = this; n && !ev.stopped; n = n.parentNode) for (const fn of [...(n.listeners[ev.type] || [])]) fn(ev); return true; },
+    all() { return this.children.flatMap((c) => [c, ...c.all()]); },
+    querySelectorAll(sel) {
+      if (sel === ".rm-block__input") return this.all().filter((c) => c.className === "rm-block__input");
+      if (sel === "textarea") return this.all().filter((c) => c.tagName === "TEXTAREA");
+      return [];
+    },
+    closest() { return null; },
+    focus() { doc.activeElement = this; },
+    blur() { doc.log.push("blur"); if (doc.activeElement === this) doc.activeElement = doc.body; },
+    setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
+  };
+  return n;
+}
+
+// Dispatches a bubbling event; returns the event. Roots stop propagation via ev.stopPropagation().
+function bubble(target, type, extra = {}) {
+  const ev = { type, target, stopped: false, prevented: false, stopPropagation() { this.stopped = true; }, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; this.prevented = true; }, ...extra };
+  for (let n = target; n && !ev.stopped; n = n.parentNode) for (const fn of [...(n.listeners[type] || [])]) fn(ev);
+  return ev;
+}
+
+function editSetup({ elements } = {}) {
+  const log = [];
+  const doc = { log, activeElement: null, menuOpen: false, docListeners: [] };
+  doc.body = node("body", doc);
+  doc.activeElement = doc.body;
+  doc.createElement = (tag) => node(tag, doc);
+  doc.querySelector = () => (doc.menuOpen ? {} : null);
+  doc.addEventListener = (type, fn, cap) => doc.docListeners.push({ type, fn, cap });
+  doc.removeEventListener = (type, fn) => { doc.docListeners = doc.docListeners.filter((l) => !(l.type === type && l.fn === fn)); };
+  const winListeners = [];
+  const frames = [];
+  doc.defaultView = {
+    requestAnimationFrame: (cb) => { frames.push(cb); return frames.length; }, cancelAnimationFrame() {},
+    addEventListener: (type, fn, cap) => winListeners.push({ type, fn, cap }),
+    removeEventListener: (type, fn) => { const i = winListeners.findIndex((l) => l.type === type && l.fn === fn); if (i >= 0) winListeners.splice(i, 1); },
+    MouseEvent: class { constructor(type) { this.type = type; } },
+  };
+  const rendered = [];
+  const unmounted = [];
+  const blocks = [];
+  const api = {
+    data: new Proxy({}, { get() { throw new Error("graph access during edit"); } }),
+    ui: { components: {
+      renderString: ({ el, string }) => rendered.push([el, string]),
+      renderBlock: ({ uid, el }) => {
+        log.push("renderBlock");
+        blocks.push({ uid, el });
+        const input = doc.createElement("div");
+        input.className = "rm-block__input";
+        input.id = `block-input-w-${uid}`;
+        const ta = doc.createElement("textarea");
+        ta.id = `block-input-w-${uid}`;
+        ta.value = "hello";
+        input.append(ta);
+        input.addEventListener("click", () => ta.focus());
+        el.append(input);
+      },
+      unmountNode: ({ el }) => { log.push("unmount"); unmounted.push(el); },
+    } },
+  };
+  const watches = [];
+  const host = {
+    pullEmbedContent: async () => { log.push("pull"); return { kind: "block", uid: "abcdefghi", title: "P", string: "s", children: [] }; },
+    watchEmbed: (uid, cb) => { const w = { cb }; watches.push(w); return () => {}; },
+  };
+  const updates = [];
+  const anchor = (id, ref) => ({ id, type: "rectangle", x: 10, y: 20, width: 100, height: 50, angle: 0, isDeleted: false, customData: { plexus: { embed: ref } } });
+  const app = {
+    state: { scrollX: 0, scrollY: 0, zoom: { value: 2 }, offsetLeft: 0, offsetTop: 0, selectedElementIds: { e1: true }, selectedGroupIds: {} },
+    elements: elements ?? [anchor("e1", "((abcdefghi))")],
+    getSceneElementsIncludingDeleted() { return this.elements; },
+    updateScene(u) { updates.push(u); },
+  };
+  const containerEl = doc.createElement("div");
+  containerEl.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 800, width: 1000 });
+  containerEl.focus = () => { log.push("focus-container"); };
+  const subs = {};
+  const overlay = createEmbedOverlay({
+    doc, api, host, app, containerEl, subscribe: (_a, cb) => { subs.cb = cb; return () => {}; },
+    sleep: async (ms) => { log.push(`sleep${ms}`); },
+    waitQuiet: async () => {},
+  });
+  const flush = async () => { while (frames.length) frames.shift()(); await new Promise((r) => setTimeout(r, 0)); };
+  const key = (target, k, extra = {}) => {
+    const ev = { type: "keydown", key: k, target, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; }, ...extra };
+    for (const l of [...winListeners].filter((x) => x.type === "keydown")) if (!ev.stopped) l.fn(ev);
+    return ev;
+  };
+  const down = (target) => { for (const l of [...doc.docListeners].filter((x) => x.type === "pointerdown")) l.fn({ type: "pointerdown", target }); };
+  return { overlay, doc, api, log, rendered, unmounted, blocks, watches, updates, app, flush, key, down, subs, winListeners, containerEl };
+}
+
+async function entered(t) {
+  await t.flush();
+  const root = t.doc.body.children[0];
+  const ok = await t.overlay.edit("e1");
+  return { root, ok };
+}
+
+test("edit mode mounts renderBlock, focuses the root textarea, and reports state", async () => {
+  const t = editSetup();
+  const { root, ok } = await entered(t);
+  assert.equal(ok, true);
+  assert.equal(t.overlay.editState(), "active");
+  assert.equal(t.overlay.isEditing(), true);
+  assert.deepEqual(t.blocks.map((b) => b.uid), ["abcdefghi"]);
+  assert.match(root.className, /plexus-embed--editing/);
+  assert.equal(root.style.transform, "");
+  assert.equal(root.style.clipPath, "");
+  assert.equal(root.style.pointerEvents, "auto");
+  assert.equal(t.doc.activeElement.tagName, "TEXTAREA");
+  assert.equal(root.attrs["aria-hidden"], undefined);
+  assert.deepEqual(t.updates.map((u) => Object.keys(u)), [["appState"]]);
+  await t.overlay.dispose();
+});
+
+test("edit mode: keys and pointers typed in the editor never reach Excalidraw's document handlers", async () => {
+  const t = editSetup();
+  const { root } = await entered(t);
+  const seen = [];
+  t.doc.body.addEventListener("keydown", (e) => seen.push(e.type));
+  const ta = t.doc.activeElement;
+  // Up events only stop for a gesture that started inside.
+  const outsideUp = bubble(ta, "pointerup");
+  assert.equal(outsideUp.stopped, false);
+  for (const type of ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "pointerdown", "mousedown", "dblclick", "wheel"]) bubble(ta, type);
+  assert.deepEqual(seen, []);
+  bubble(ta, "pointerdown");
+  assert.equal(bubble(ta, "pointerup").stopped, true);
+  assert.ok(root.listeners.keydown.length >= 1);
+  await t.overlay.dispose();
+});
+
+test("edit mode makes zero graph writes and no scene element updates", async () => {
+  const t = editSetup();
+  await entered(t);
+  t.watches[0].cb();
+  t.subs.cb();
+  await t.flush();
+  await t.overlay.leave("keyboard");
+  assert.ok(t.updates.every((u) => Object.keys(u).length === 1 && "appState" in u), "only selection updates");
+  await t.overlay.dispose();
+});
+
+test("leave order: blur, container focus (keyboard), 300 ms wait, unmount, then a fresh read-only load", async () => {
+  const t = editSetup();
+  await entered(t);
+  t.log.length = 0;
+  await t.overlay.leave("keyboard");
+  const at = (x) => t.log.indexOf(x);
+  assert.ok(at("blur") >= 0 && at("blur") < at("focus-container"));
+  assert.ok(at("focus-container") < at("sleep300"));
+  assert.ok(at("sleep300") < at("unmount"));
+  assert.ok(at("unmount") < at("pull"));
+  assert.equal(t.overlay.editState(), "idle");
+  await t.flush();
+  assert.ok(t.rendered.length > 0, "read-only content rendered again");
+  const root = t.doc.body.children[0];
+  assert.equal(root.attrs["aria-hidden"], "true");
+  assert.doesNotMatch(root.className, /editing/);
+  assert.equal(t.updates.length, 2, "selection cleared on enter, restored on keyboard leave");
+  assert.deepEqual(t.updates[1].appState.selectedElementIds, { e1: true });
+  await t.overlay.dispose();
+});
+
+test("a pointer leave does not restore the selection or move focus to the container", async () => {
+  const t = editSetup();
+  await entered(t);
+  t.log.length = 0;
+  t.down(t.doc.body);
+  await t.overlay.leave();
+  assert.ok(!t.log.includes("focus-container"));
+  assert.equal(t.updates.length, 1);
+  await t.overlay.dispose();
+});
+
+test("watch callbacks mid-edit neither unmount the inner element nor render strings", async () => {
+  const t = editSetup();
+  await entered(t);
+  const inner = t.blocks[0].el;
+  const renders = t.rendered.length;
+  t.watches[0].cb();
+  await t.flush();
+  assert.equal(t.unmounted.includes(inner), false);
+  assert.equal(t.rendered.length, renders);
+  await t.overlay.leave("api");
+  await t.flush();
+  assert.ok(t.rendered.length > renders, "one fresh load after the leave");
+  await t.overlay.dispose();
+});
+
+test("Esc: with a menu open the key passes through, without one it leaves once", async () => {
+  const t = editSetup();
+  await entered(t);
+  const ta = t.doc.activeElement;
+  t.doc.menuOpen = true;
+  const passed = t.key(ta, "Escape");
+  assert.equal(passed.prevented, undefined);
+  assert.equal(t.overlay.editState(), "active");
+  t.doc.menuOpen = false;
+  const swallowed = t.key(ta, "Escape");
+  assert.equal(swallowed.stopped, true);
+  t.key(ta, "Escape");
+  await t.overlay.leave();
+  assert.equal(t.overlay.editState(), "idle");
+  assert.equal(t.unmounted.filter((el) => el === t.blocks[0].el).length, 1, "leave is idempotent");
+  await t.overlay.dispose();
+});
+
+test("Enter on the root leaves; Tab, Backspace at 0 and second Cmd+A are swallowed", async () => {
+  const t = editSetup();
+  await entered(t);
+  const ta = t.doc.activeElement;
+  ta.selectionStart = 0; ta.selectionEnd = 0;
+  assert.equal(t.key(ta, "Tab").stopped, true);
+  assert.equal(t.key(ta, "Backspace").stopped, true);
+  ta.selectionStart = 0; ta.selectionEnd = ta.value.length;
+  assert.equal(t.key(ta, "a", { metaKey: true }).stopped, true);
+  ta.selectionStart = 2; ta.selectionEnd = 2;
+  assert.equal(t.key(ta, "x").stopped, undefined);
+  assert.equal(t.key(ta, "Enter").stopped, true);
+  await t.overlay.leave();
+  assert.equal(t.overlay.editState(), "idle");
+  await t.overlay.dispose();
+});
+
+test("focus falling to body after the click: Delete is swallowed, focus restored, no leave", async () => {
+  const t = editSetup();
+  await entered(t);
+  t.doc.activeElement = t.doc.body;
+  const excal = [];
+  t.doc.body.addEventListener("keydown", (e) => excal.push(e.key));
+  const ev = t.key(t.doc.body, "Delete");
+  assert.equal(ev.stopped, true);
+  assert.equal(t.doc.activeElement.tagName, "TEXTAREA");
+  assert.equal(t.overlay.editState(), "active");
+  assert.deepEqual(excal, []);
+  await t.overlay.dispose();
+});
+
+test("a pointerdown outside leaves; one inside the overlay does not", async () => {
+  const t = editSetup();
+  const { root } = await entered(t);
+  t.down(t.doc.activeElement);
+  await Promise.resolve();
+  assert.equal(t.overlay.editState(), "active");
+  t.down(t.doc.body);
+  await t.overlay.leave();
+  assert.equal(t.overlay.editState(), "idle");
+  assert.ok(root);
+  await t.overlay.dispose();
+});
+
+test("only one overlay edits at a time and page refs are read-only", async () => {
+  const anchor = (id, ref) => ({ id, type: "rectangle", x: 0, y: 0, width: 50, height: 50, angle: 0, isDeleted: false, customData: { plexus: { embed: ref } } });
+  const t = editSetup({ elements: [anchor("e1", "((abcdefghi))"), anchor("e2", "((bcdefghij))"), anchor("e3", "[[A Page]]")] });
+  await t.flush();
+  assert.equal(await t.overlay.edit("e1"), true);
+  assert.equal(await t.overlay.edit("e2"), false);
+  await t.overlay.leave();
+  assert.equal(await t.overlay.edit("e3"), false);
+  await t.overlay.dispose();
+});
+
+test("an anchor deleted mid-edit leaves first, then its portal is removed", async () => {
+  const t = editSetup();
+  await entered(t);
+  const inner = t.blocks[0].el;
+  t.app.elements = [];
+  t.subs.cb();
+  await t.flush();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(t.overlay.portalCount(), 0);
+  assert.equal(t.unmounted.filter((el) => el === inner).length, 1);
+  await t.overlay.dispose();
+});
+
+test("unload while editing leaves cleanly: one unmount, no portals, no listeners", async () => {
+  const t = editSetup();
+  await entered(t);
+  const inner = t.blocks[0].el;
+  const p = t.overlay.dispose();
+  assert.ok(p && typeof p.then === "function");
+  await p;
+  assert.equal(t.overlay.portalCount(), 0);
+  assert.equal(t.unmounted.filter((el) => el === inner).length, 1);
+  assert.equal(inner.removed, true);
+  assert.equal(t.winListeners.length, 0);
+  assert.equal(t.doc.docListeners.length, 0);
+  assert.equal(t.doc.body.children.length, 0);
+});
+
+test("dispose while idle is synchronous in effect and returns a resolved promise", async () => {
+  const t = editSetup();
+  await t.flush();
+  const p = t.overlay.dispose();
+  assert.equal(t.overlay.portalCount(), 0);
+  await p;
+});
+
+test("installEmbedF2 acts only for a plain F2 on the container with an editable selection", async () => {
+  const listeners = [];
+  const containerEl = { addEventListener: (t, f) => listeners.push(f), removeEventListener() {} };
+  let can = false;
+  let edits = 0;
+  const off = installEmbedF2({ containerEl, app: { state: {} }, canEdit: () => can, onEdit: () => { edits += 1; } });
+  const fire = (extra) => { const ev = { key: "F2", target: containerEl, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; }, ...extra }; listeners[0](ev); return ev; };
+  assert.equal(fire({}).stopped, undefined);
+  can = true;
+  assert.equal(fire({ repeat: true }).stopped, undefined);
+  assert.equal(fire({ shiftKey: true }).stopped, undefined);
+  assert.equal(fire({ target: {} }).stopped, undefined);
+  assert.equal(fire({}).stopped, true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(edits, 1);
+  assert.equal(typeof off, "function");
 });

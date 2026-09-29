@@ -131,6 +131,29 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
   }
 }
 
+// Before-snapshot, paste and after-snapshot run in one synchronous task. Deleted copies (invisibly small elements
+// that restoreElements keeps as isDeleted) are not counted.
+export function addViaPaste(app, elements, { position = "center" } = {}) {
+  const before = new Set((app.getSceneElementsIncludingDeleted?.() || []).map((e) => e.id));
+  app.addElementsFromPasteOrLibrary({ elements, files: {}, position });
+  return (app.getSceneElementsIncludingDeleted?.() || []).filter((e) => !before.has(e.id) && !e.isDeleted).map((e) => e.id);
+}
+
+// Polls once per animation frame. Resolves false on timeout or when the App is no longer the active editor.
+export function waitNotLoading(app, timeoutMs, { doc = globalThis.document, raf = globalThis.requestAnimationFrame, now = () => Date.now() } = {}) {
+  const tick = typeof raf === "function" ? (fn) => raf(fn) : (fn) => setTimeout(fn, 16);
+  const end = now() + timeoutMs;
+  return new Promise((resolve) => {
+    const step = () => {
+      if (activeEditor(doc)?.app !== app) return resolve(false);
+      if (!app.state?.isLoading) return resolve(true);
+      if (now() >= end) return resolve(false);
+      tick(step);
+    };
+    step();
+  });
+}
+
 export function zoomTo(app, bbox, opts = {}) {
   const result = fitZoom({ bbox, viewportWidth: app.state.width, viewportHeight: app.state.height, ...opts });
   app.updateScene({ appState: { zoom: { value: result.zoom }, scrollX: result.scrollX, scrollY: result.scrollY } });

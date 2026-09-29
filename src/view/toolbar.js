@@ -7,7 +7,7 @@ export function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed }) {
   const view = doc.defaultView;
   let bar = null;
   let outer = null;
@@ -74,7 +74,13 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       const cropButton = button("Region from crop", onCropRegion);
       const presentButton = button("Present", onPresent);
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
-      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton];
+      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed)];
+      if (onEditEmbed) {
+        const editButton = button("Edit embed", onEditEmbed);
+        gated.push([editButton, canEditEmbed]);
+        controls.push(editButton);
+      }
+      controls.push(presentButton);
       if (onMindMap) controls.push(button("Mind map", onMindMap));
       bar.append(...controls);
       doc.body.append(bar);

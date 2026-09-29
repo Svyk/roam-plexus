@@ -228,3 +228,38 @@ test("F2: a never-settling action only delays restore by doneWaitMs", async () =
   assert.ok(Date.now() - started < 500);
   assert.equal(app.updates.at(-1).appState.toast, null);
 });
+
+import { addViaPaste, waitNotLoading } from "../src/host/native.js";
+
+test("addViaPaste returns live new ids by diff, skipping deleted copies", () => {
+  const els = [{ id: "a" }];
+  const app = {
+    getSceneElementsIncludingDeleted: () => els,
+    addElementsFromPasteOrLibrary(arg) {
+      this.arg = arg;
+      els.push({ id: "n1" }, { id: "n2", isDeleted: true }, { id: "n3" });
+    },
+  };
+  assert.deepEqual(addViaPaste(app, [{ id: "x" }]), ["n1", "n3"]);
+  assert.equal(app.arg.position, "center");
+  assert.deepEqual(app.arg.files, {});
+  addViaPaste(app, [], { position: { clientX: 1, clientY: 2 } });
+  assert.deepEqual(app.arg.position, { clientX: 1, clientY: 2 });
+});
+
+function docFor(app) {
+  const el = { closest: (sel) => (sel === ".plexus-offscreen" ? null : { closest: () => null }), "__reactFiber$x": { stateNode: app } };
+  return { querySelector: () => el };
+}
+
+test("waitNotLoading resolves true when loading ends, false on timeout or non-active app", async () => {
+  const app = { state: { isLoading: true }, updateScene() {}, getSceneElementsIncludingDeleted() { return []; }, actionManager: {} };
+  const doc = docFor(app);
+  let n = 0;
+  const raf = (fn) => { if (++n === 3) app.state.isLoading = false; setTimeout(fn, 0); };
+  assert.equal(await waitNotLoading(app, 1000, { doc, raf }), true);
+  app.state.isLoading = true;
+  let t = 0;
+  assert.equal(await waitNotLoading(app, 50, { doc, raf: (fn) => setTimeout(fn, 0), now: () => (t += 20) }), false);
+  assert.equal(await waitNotLoading({ state: {} }, 50, { doc, raf: (fn) => setTimeout(fn, 0) }), false);
+});

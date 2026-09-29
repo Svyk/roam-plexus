@@ -326,3 +326,51 @@ input.plexus-portal.plexus-mm-input {
   background: #fff;
   box-shadow: 0 2px 8px rgba(16, 22, 26, 0.3);
 }
+
+.plexus-portal.plexus-embed.plexus-embed--editing {
+  transform: none;
+  overflow: visible;
+  pointer-events: auto;
+  min-height: 2em;
+  font-size: 100%;
+}
+
+dialog.plexus-portal.plexus-legacy {
+  max-width: 760px;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 6px;
+  color: inherit;
+  background: var(--plexus-bg, #fff);
+}
+
+.plexus-legacy .plexus-legacy-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.plexus-legacy .plexus-legacy-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.plexus-legacy .plexus-legacy-uid,
+.plexus-legacy .plexus-legacy-types {
+  opacity: 0.7;
+}
+
+.plexus-legacy .plexus-legacy-flags {
+  color: #b7791f;
+}
+
+.plexus-legacy .plexus-legacy-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
