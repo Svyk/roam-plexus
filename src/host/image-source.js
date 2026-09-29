@@ -1,4 +1,4 @@
-const BITMAP_MEMO_CAP = 16;
+const BITMAP_MEMO_CAP = 4;
 const memo = new Map();
 
 // Accepts flat [x1,y1,x2,y2,...], [[x,y],...], or [{x,y},...]; returns [[x,y],...] or null.

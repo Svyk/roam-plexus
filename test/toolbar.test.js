@@ -62,3 +62,40 @@ test("Frame button is disabled unless canFrame reports a single frame", async ()
   assert.equal(bar.style.left, "500px");
   tb.hide();
 });
+
+test("Frame button enables on a single frame after a pointerup refresh, fires onFrameRegion, and disables again", async () => {
+  const buttons = [];
+  const { doc } = fakeDoc(36);
+  const create = doc.createElement;
+  doc.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === "button") {
+      el.disabled = false;
+      el.handlers = {};
+      el.addEventListener = (t, f) => { el.handlers[t] = f; };
+      buttons.push(el);
+    }
+    return el;
+  };
+  const listeners = {};
+  const outer = { ...outerEl, addEventListener: (t, f) => { listeners[t] = f; }, removeEventListener: (t) => { delete listeners[t]; } };
+  let frame = false;
+  let framed = 0;
+  const tb = createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {}, onFrameRegion() { framed++; }, canFrame: () => frame });
+  tb.show(outer);
+  const fb = buttons.find((b) => /Frame/.test(b.textContent || ""));
+  assert.equal(fb.disabled, true);
+  frame = true;
+  listeners.pointerup();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(fb.disabled, false);
+  fb.handlers.click({ stopPropagation() {} });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(framed, 1);
+  frame = false;
+  listeners.keyup();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(fb.disabled, true);
+  tb.hide();
+  assert.deepEqual(Object.keys(listeners), []);
+});

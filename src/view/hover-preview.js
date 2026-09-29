@@ -1,5 +1,6 @@
 import { viewportToScene } from "../model/scene.js";
 import { parseRoamLink } from "../model/links.js";
+import { isCanvasEvent } from "../host/links.js";
 
 const OFFSET_PX = 14;
 const MAX_CHILDREN = 3;
@@ -18,11 +19,15 @@ export function createHoverPreview({
   let body = null;
   let shownKey = null;
   let timer = null;
+  let memoLink = null;
+  let memoTarget = null;
   let detachCurrent = null;
 
   const hide = () => {
     if (timer != null) { clearTimeout(timer); timer = null; }
     shownKey = null;
+    memoLink = null;
+    memoTarget = null;
     if (!portal) return;
     try { api.ui.components.unmountNode({ el: body }); } catch (error) { console.warn("[plexus] unmount failed", error); }
     portal.remove();
@@ -31,6 +36,13 @@ export function createHoverPreview({
   };
 
   function classify(link) {
+    if (link === memoLink) return memoTarget;
+    memoTarget = classifyUncached(link);
+    memoLink = link;
+    return memoTarget;
+  }
+
+  function classifyUncached(link) {
     const target = parse(link, api.graph.name);
     if (!target) return null;
     if (target.title) return { type: "page", title: target.title };
@@ -118,6 +130,11 @@ export function createHoverPreview({
       };
 
       const onMove = (e) => {
+        // A held button is a drag or pan, not a hover; stray targets are Excalidraw's own panels.
+        if (e.buttons || !isCanvasEvent(e)) {
+          if (last || portal) onHide();
+          return;
+        }
         last = { x: e.clientX, y: e.clientY };
         if (frame != null) return;
         frame = raf ? raf(probe) : (probe(), null);

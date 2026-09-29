@@ -13,9 +13,12 @@ import { createHoverPreview } from "./view/hover-preview.js";
 import { installLinkInterception } from "./host/links.js";
 import { createPublicApi, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createActions } from "./actions.js";
+import { clearImageMemo } from "./host/image-source.js";
 
 let activeLifecycle = null;
 
+const THUMB_WIDTHS = [160, 480];
+const THUMB_WARM_DELAY_MS = 1500;
 const CONTEXT_MENU_LABEL = "Plexus: Region on image";
 
 function createEmitter() {
@@ -116,6 +119,22 @@ export async function onload({ extensionAPI, extension }) {
       lifecycle.add(() => regionref.releaseAll());
       const hover = createHoverPreview({ doc, api });
       lifecycle.add(() => hover.dispose());
+      // Compass reads thumbnails cache-only, so warm them once a visit ends (after Roam has saved the scene).
+      const thumbTimers = new Set();
+      let thumbsOff = false;
+      lifecycle.add(() => { thumbsOff = true; for (const t of thumbTimers) clearTimeout(t); thumbTimers.clear(); });
+      lifecycle.add(clearImageMemo);
+      const warmThumbnails = (uid) => {
+        if (thumbsOff) return;
+        const timer = setTimeout(async () => {
+          thumbTimers.delete(timer);
+          for (const maxWidth of THUMB_WIDTHS) {
+            if (thumbsOff) return;
+            try { await actions.thumbnail(uid, { maxWidth, render: true }); } catch (error) { console.warn("[plexus] thumbnail warm failed", error); }
+          }
+        }, THUMB_WARM_DELAY_MS);
+        thumbTimers.add(timer);
+      };
       // Link interception and hover preview live only while an editor is mounted.
       let mounted = null;
       const unmountEditor = () => {
@@ -125,7 +144,11 @@ export async function onload({ extensionAPI, extension }) {
         for (const dispose of current.disposers) {
           try { dispose(); } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
         }
-        if (current.uid) emitter.emit({ uid: current.uid, kind: "drawing" });
+        actions.cancelDrawingTool();
+        if (current.uid) {
+          emitter.emit({ uid: current.uid, kind: "drawing" });
+          warmThumbnails(current.uid);
+        }
       };
       lifecycle.add(unmountEditor);
       const discovery = createDiscovery({

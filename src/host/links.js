@@ -4,6 +4,18 @@ import { parseRoamLink } from "../model/links.js";
 const MAX_MOVE_PX = 6;
 const MAX_HOLD_MS = 400;
 
+// Only the interactive canvas is a link surface; Excalidraw's toolbars and panels sit inside the same container.
+export function isCanvasEvent(event) {
+  const tag = event?.target?.tagName;
+  return !tag || String(tag).toUpperCase() === "CANVAS";
+}
+
+// Excalidraw follows links only with the selection tool (or in view mode); other tools own the gesture.
+export function linksActive(app) {
+  const tool = app?.state?.activeTool?.type;
+  return !tool || tool === "selection" || !!app.state.viewModeEnabled;
+}
+
 // Capture-phase pointerdown/up on the editor container. Only trusted, short, still clicks on an element whose
 // link is a Roam link are taken over; everything else falls through to Excalidraw.
 export function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
@@ -34,12 +46,13 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
     return null;
   }
 
-  function navigate(target, sidebar) {
+  const sidebarWindow = (target) => (target.type === "page"
+    ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) }
+    : { type: "block", "block-uid": target.uid });
+
+  function navigate(target, sidebar, window) {
     if (sidebar) {
-      const window = target.type === "page"
-        ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) }
-        : { type: "block", "block-uid": target.uid };
-      if (window["block-uid"]) api.ui.rightSidebar.addWindow({ window });
+      api.ui.rightSidebar.addWindow({ window });
       return;
     }
     containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
@@ -63,14 +76,18 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
     down = null;
     if (!start || !e.isTrusted) return;
     if (getSettings?.()?.links === false) return;
+    if (!isCanvasEvent(e) || !linksActive(app)) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
     try {
       const target = resolve(e);
       if (!target) return;
+      const sidebar = !!e.shiftKey;
+      const window = sidebar ? sidebarWindow(target) : null;
+      // Nothing to open in the sidebar (page does not exist): leave the click to Excalidraw, no false toast.
+      if (sidebar && !window["block-uid"]) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const sidebar = !!e.shiftKey;
-      navigate(target, sidebar);
+      navigate(target, sidebar, window);
       onNavigate?.({ target, sidebar });
     } catch (error) {
       console.warn("[plexus] link interception failed", error);

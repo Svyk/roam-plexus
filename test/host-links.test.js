@@ -100,3 +100,76 @@ test("disposer removes listeners", () => {
   s.dispose();
   assert.deepEqual(Object.keys(s.handlers), []);
 });
+
+test("an element object with a link property is resolved (real Excalidraw shape)", () => {
+  const s = setup({ link: { link: "[[Target]]" } });
+  s.handlers.pointerdown(s.ev());
+  const u = s.ev();
+  s.handlers.pointerup(u);
+  assert.equal(u.prevented, 1);
+  assert.deepEqual(s.calls, [["page", { page: { title: "Target" } }]]);
+});
+
+test("shift-click on a page that does not exist is left to Excalidraw: no swallow, no toast, no window", () => {
+  const s = setup();
+  s.handlers.pointerdown(s.ev());
+  const u = s.ev({ shiftKey: true });
+  s.handlers.pointerup(u);
+  assert.equal(u.prevented, 0);
+  assert.equal(u.stopped, 0);
+  assert.deepEqual(s.calls, []);
+  assert.deepEqual(s.navs, []);
+});
+
+test("shift-click on an existing page opens an outline window", () => {
+  const s = setup({ pulls: { Target: { ":block/uid": "pageuid01" } } });
+  s.handlers.pointerdown(s.ev());
+  s.handlers.pointerup(s.ev({ shiftKey: true }));
+  assert.deepEqual(s.calls, [["side", { window: { type: "outline", "block-uid": "pageuid01" } }]]);
+});
+
+test("clicks on Excalidraw UI (non-canvas target) and non-selection tools are ignored", () => {
+  const s = setup();
+  s.handlers.pointerdown(s.ev());
+  const ui = s.ev({ target: { tagName: "BUTTON" } });
+  s.handlers.pointerup(ui);
+  assert.equal(ui.prevented, 0);
+  s.app.state.activeTool = { type: "freedraw" };
+  s.handlers.pointerdown(s.ev());
+  const draw = s.ev({ target: { tagName: "CANVAS" } });
+  s.handlers.pointerup(draw);
+  assert.equal(draw.prevented, 0);
+  s.app.state.viewModeEnabled = true;
+  s.handlers.pointerdown(s.ev());
+  const view = s.ev({ target: { tagName: "CANVAS" } });
+  s.handlers.pointerup(view);
+  assert.equal(view.prevented, 1);
+});
+
+test("boundary: exactly 6 px and 400 ms still count; 7 px or 401 ms do not; button 2 is ignored", () => {
+  const run = (dx, dt, button = 0) => {
+    const s = setup();
+    s.handlers.pointerdown(s.ev({ button }));
+    s.setT(dt);
+    const u = s.ev({ clientX: 100 + dx });
+    s.handlers.pointerup(u);
+    return u.prevented;
+  };
+  assert.equal(run(6, 400), 1);
+  assert.equal(run(7, 0), 0);
+  assert.equal(run(0, 401), 0);
+  assert.equal(run(0, 0, 2), 0);
+});
+
+test("links:false disables interception", () => {
+  const handlers = {};
+  const containerEl = { addEventListener: (t, f) => { handlers[t] = f; }, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  installLinkInterception({
+    app: { state: { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, getElementLinkAtPosition: () => "[[T]]" },
+    containerEl, api: { graph: { name: "g" } }, getSettings: () => ({ links: false }), parse: () => ({ type: "page", title: "T" }),
+  });
+  handlers.pointerdown({ isTrusted: true, button: 0, clientX: 1, clientY: 1 });
+  const u = { isTrusted: true, clientX: 1, clientY: 1, prevented: 0, preventDefault() { this.prevented++; }, stopImmediatePropagation() {} };
+  handlers.pointerup(u);
+  assert.equal(u.prevented, 0);
+});

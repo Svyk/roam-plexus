@@ -948,12 +948,8 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
 var native_exports = {};
 __export(native_exports, {
   activeEditor: () => activeEditor,
-  captureFrameSvg: () => captureFrameSvg,
-  captureGroupSvg: () => captureGroupSvg,
   captureSelectionSvg: () => captureSelectionSvg,
   findApp: () => findApp,
-  frameCaptureIds: () => frameCaptureIds,
-  groupCaptureIds: () => groupCaptureIds,
   looksLikeSvg: () => looksLikeSvg,
   selectedElementIds: () => selectedElementIds,
   viewportRectOf: () => viewportRectOf,
@@ -1112,26 +1108,6 @@ function viewportRectOf(app, bbox) {
   const a = sceneToViewport({ x: bbox[0], y: bbox[1], appState });
   const b = sceneToViewport({ x: bbox[2], y: bbox[3], appState });
   return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y };
-}
-var liveElements2 = (app) => (app.getSceneElementsIncludingDeleted?.() || []).filter((e) => !e.isDeleted);
-function groupCaptureIds(app, groupId) {
-  return liveElements2(app).filter((e) => Array.isArray(e.groupIds) && e.groupIds.includes(groupId)).map((e) => e.id);
-}
-function frameCaptureIds(app, frameId, { clipped = false } = {}) {
-  const live = liveElements2(app);
-  if (!live.some((e) => e.id === frameId && e.type === "frame")) return [];
-  if (clipped) return [frameId];
-  return [frameId, ...live.filter((e) => e.frameId === frameId).map((e) => e.id)];
-}
-function captureGroupSvg(app, groupId, opts) {
-  const ids = groupCaptureIds(app, groupId);
-  if (!ids.length) return Promise.reject(new Error("[plexus] group has no live elements"));
-  return captureSelectionSvg(app, ids, opts);
-}
-function captureFrameSvg(app, frameId, { clipped = false, ...opts } = {}) {
-  const ids = frameCaptureIds(app, frameId, { clipped });
-  if (!ids.length) return Promise.reject(new Error("[plexus] frame not found"));
-  return captureSelectionSvg(app, ids, opts);
 }
 
 // src/host/cache.js
@@ -1358,7 +1334,7 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
 }
 
 // src/host/image-source.js
-var BITMAP_MEMO_CAP = 16;
+var BITMAP_MEMO_CAP = 4;
 var memo = /* @__PURE__ */ new Map();
 function polyPoints(poly) {
   if (!Array.isArray(poly) || !poly.length) return null;
@@ -1406,6 +1382,9 @@ function loadImageBitmap(url, { api = globalThis.roamAlphaAPI, createBitmap = gl
   });
   while (memo.size > BITMAP_MEMO_CAP) memo.delete(memo.keys().next().value);
   return p;
+}
+function clearImageMemo() {
+  memo.clear();
 }
 
 // src/host/cold-render.js
@@ -1717,7 +1696,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     root.className = "plexus-root plexus-regionref plexus-chip";
     root.textContent = text;
   };
-  const paint = (root, entry, key) => {
+  const paint = (root, entry, key, region) => {
     if (!root.isConnected) return;
     const img = doc.createElement("img");
     img.className = "plexus-crop";
@@ -1725,7 +1704,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     img.onerror = () => {
       if (key) Promise.resolve(cache.delete?.(key)).catch(() => {
       });
-      if (root.isConnected) finishChip(root);
+      if (root.isConnected) finishChip(root, region);
     };
     img.style.maxHeight = `${getSettings().maxCropHeight}px`;
     img.src = entry.url;
@@ -1775,7 +1754,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       const svgKey = target.url ? null : cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "svg" });
       const hotSvg = svgKey ? cache.peek(svgKey) : null;
       const hot = hotSvg || cache.peek(pngKey);
-      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey);
+      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey, region);
       const maxH = getSettings().maxCropHeight;
       let bw = 4;
       let bh = 3;
@@ -1800,36 +1779,42 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
           if (!entry) {
             const failKey = `${region.drawingUid}|${target.hash}`;
             const failedAt = failed.get(failKey);
-            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
+            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root, region);
             if (!root.isConnected) return;
-            const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+            let rendered;
+            try {
+              rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+            } catch (error) {
+              console.warn("[plexus] crop failed", error);
+              rendered = { error: "render-failed" };
+            }
             if (!root.isConnected) return;
             if (rendered.error) {
               failed.set(failKey, Date.now());
-              return finishChip(root);
+              return finishChip(root, region);
             }
             entryKey = pngKey;
             await cache.put(pngKey, rendered.blob, { w: rendered.w, h: rendered.h, persist: rendered.settled !== false });
             entry = cache.peek(pngKey) || await cache.get(pngKey);
           }
           if (!root.isConnected) return;
-          if (!entry) return finishChip(root);
+          if (!entry) return finishChip(root, region);
           root.style.height = "";
           root.style.width = "";
-          paint(root, entry, entryKey);
+          paint(root, entry, entryKey, region);
         } catch (error) {
           console.warn("[plexus] crop failed", error);
-          finishChip(root);
+          finishChip(root, region);
         }
       })();
     } catch (error) {
       console.warn("[plexus] claim failed", error);
     }
   };
-  function finishChip(root) {
+  function finishChip(root, region) {
     root.style.height = "";
     root.style.width = "";
-    chip(root, "Open the drawing to render this region");
+    chip(root, region && isImageKind(region.kind) ? "Image not available" : "Open the drawing to render this region");
   }
   return {
     claim,
@@ -1974,6 +1959,91 @@ function parseRoamLink(link, graphName) {
   return null;
 }
 
+// src/host/links.js
+var MAX_MOVE_PX = 6;
+var MAX_HOLD_MS = 400;
+function isCanvasEvent(event) {
+  const tag = event?.target?.tagName;
+  return !tag || String(tag).toUpperCase() === "CANVAS";
+}
+function linksActive(app) {
+  const tool = app?.state?.activeTool?.type;
+  return !tool || tool === "selection" || !!app.state.viewModeEnabled;
+}
+function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
+  if (!app || !containerEl?.addEventListener) return () => {
+  };
+  let down = null;
+  const kindOf = (uid) => {
+    const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
+    if (!raw) return null;
+    return raw[":node/title"] != null ? "page" : "block";
+  };
+  function resolve(event) {
+    const el = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const appState = { ...app.state, offsetLeft: el.left, offsetTop: el.top };
+    const point = viewportToScene({ x: event.clientX, y: event.clientY, appState });
+    const found = app.getElementLinkAtPosition(point, null);
+    const link = typeof found === "string" ? found : found?.link;
+    if (!link) return null;
+    const target = parse(link, api.graph.name);
+    if (!target) return null;
+    if (target.type === "block" && target.uid) return target;
+    if (target.type === "page" && target.title) return target;
+    if (target.uid) {
+      const type = kindOf(target.uid);
+      return type ? { type, uid: target.uid } : null;
+    }
+    return null;
+  }
+  const sidebarWindow = (target) => target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) } : { type: "block", "block-uid": target.uid };
+  function navigate(target, sidebar, window) {
+    if (sidebar) {
+      api.ui.rightSidebar.addWindow({ window });
+      return;
+    }
+    containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
+    if (target.type === "page") {
+      const uid = target.uid ?? pageUidOf(target.title);
+      if (uid) api.ui.mainWindow.openPage({ page: { uid } });
+      else api.ui.mainWindow.openPage({ page: { title: target.title } });
+    } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+  }
+  function pageUidOf(title) {
+    return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
+  }
+  const onDown = (e) => {
+    down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
+  };
+  const onUp = (e) => {
+    const start = down;
+    down = null;
+    if (!start || !e.isTrusted) return;
+    if (getSettings?.()?.links === false) return;
+    if (!isCanvasEvent(e) || !linksActive(app)) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
+    try {
+      const target = resolve(e);
+      if (!target) return;
+      const sidebar = !!e.shiftKey;
+      const window = sidebar ? sidebarWindow(target) : null;
+      if (sidebar && !window["block-uid"]) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      navigate(target, sidebar, window);
+      onNavigate?.({ target, sidebar });
+    } catch (error) {
+      console.warn("[plexus] link interception failed", error);
+    }
+  };
+  containerEl.addEventListener("pointerdown", onDown, true);
+  containerEl.addEventListener("pointerup", onUp, true);
+  return () => {
+    containerEl.removeEventListener("pointerdown", onDown, true);
+    containerEl.removeEventListener("pointerup", onUp, true);
+  };
+}
+
 // src/view/hover-preview.js
 var OFFSET_PX = 14;
 var MAX_CHILDREN = 3;
@@ -1989,6 +2059,8 @@ function createHoverPreview({
   let body = null;
   let shownKey = null;
   let timer = null;
+  let memoLink = null;
+  let memoTarget = null;
   let detachCurrent = null;
   const hide = () => {
     if (timer != null) {
@@ -1996,6 +2068,8 @@ function createHoverPreview({
       timer = null;
     }
     shownKey = null;
+    memoLink = null;
+    memoTarget = null;
     if (!portal) return;
     try {
       api.ui.components.unmountNode({ el: body });
@@ -2007,6 +2081,12 @@ function createHoverPreview({
     body = null;
   };
   function classify(link) {
+    if (link === memoLink) return memoTarget;
+    memoTarget = classifyUncached(link);
+    memoLink = link;
+    return memoTarget;
+  }
+  function classifyUncached(link) {
     const target = parse(link, api.graph.name);
     if (!target) return null;
     if (target.title) return { type: "page", title: target.title };
@@ -2088,6 +2168,10 @@ function createHoverPreview({
         }
       };
       const onMove = (e) => {
+        if (e.buttons || !isCanvasEvent(e)) {
+          if (last || portal) onHide();
+          return;
+        }
         last = { x: e.clientX, y: e.clientY };
         if (frame != null) return;
         frame = raf ? raf(probe) : (probe(), null);
@@ -2122,80 +2206,6 @@ function createHoverPreview({
   };
 }
 
-// src/host/links.js
-var MAX_MOVE_PX = 6;
-var MAX_HOLD_MS = 400;
-function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
-  if (!app || !containerEl?.addEventListener) return () => {
-  };
-  let down = null;
-  const kindOf = (uid) => {
-    const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
-    if (!raw) return null;
-    return raw[":node/title"] != null ? "page" : "block";
-  };
-  function resolve(event) {
-    const el = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
-    const appState = { ...app.state, offsetLeft: el.left, offsetTop: el.top };
-    const point = viewportToScene({ x: event.clientX, y: event.clientY, appState });
-    const found = app.getElementLinkAtPosition(point, null);
-    const link = typeof found === "string" ? found : found?.link;
-    if (!link) return null;
-    const target = parse(link, api.graph.name);
-    if (!target) return null;
-    if (target.type === "block" && target.uid) return target;
-    if (target.type === "page" && target.title) return target;
-    if (target.uid) {
-      const type = kindOf(target.uid);
-      return type ? { type, uid: target.uid } : null;
-    }
-    return null;
-  }
-  function navigate(target, sidebar) {
-    if (sidebar) {
-      const window = target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(target.title) } : { type: "block", "block-uid": target.uid };
-      if (window["block-uid"]) api.ui.rightSidebar.addWindow({ window });
-      return;
-    }
-    containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
-    if (target.type === "page") {
-      const uid = target.uid ?? pageUidOf(target.title);
-      if (uid) api.ui.mainWindow.openPage({ page: { uid } });
-      else api.ui.mainWindow.openPage({ page: { title: target.title } });
-    } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
-  }
-  function pageUidOf(title) {
-    return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
-  }
-  const onDown = (e) => {
-    down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
-  };
-  const onUp = (e) => {
-    const start = down;
-    down = null;
-    if (!start || !e.isTrusted) return;
-    if (getSettings?.()?.links === false) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
-    try {
-      const target = resolve(e);
-      if (!target) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const sidebar = !!e.shiftKey;
-      navigate(target, sidebar);
-      onNavigate?.({ target, sidebar });
-    } catch (error) {
-      console.warn("[plexus] link interception failed", error);
-    }
-  };
-  containerEl.addEventListener("pointerdown", onDown, true);
-  containerEl.addEventListener("pointerup", onUp, true);
-  return () => {
-    containerEl.removeEventListener("pointerdown", onDown, true);
-    containerEl.removeEventListener("pointerup", onUp, true);
-  };
-}
-
 // src/api.js
 var API_VERSION = 1;
 function subscribe(emitter, type, cb) {
@@ -2220,8 +2230,14 @@ function createPublicApi({ host, actions, emitter, version } = {}) {
         return false;
       }
     },
-    create(args) {
-      return host.createDrawing(args || {});
+    async create(args) {
+      const result = await host.createDrawing(args || {});
+      try {
+        emitter?.emit?.({ uid: result?.uid, kind: "drawing" });
+      } catch (error) {
+        console.warn("[plexus] change emit failed", error);
+      }
+      return result;
     },
     open(uid, { region, sidebar = false } = {}) {
       let isRegion = region;
@@ -2332,6 +2348,9 @@ function startImageRegionTool({ app, element, doc, imageRect: fixedRect }) {
       finished = true;
       doc.removeEventListener("keydown", onKey, true);
       doc.removeEventListener("pointerdown", onOutside, true);
+      doc.removeEventListener("wheel", cancelOnMove, true);
+      doc.removeEventListener("scroll", cancelOnMove, true);
+      doc.defaultView?.removeEventListener?.("resize", cancelOnMove);
       overlay.remove();
       resolve(value);
     };
@@ -2344,6 +2363,7 @@ function startImageRegionTool({ app, element, doc, imageRect: fixedRect }) {
     const onOutside = (e) => {
       if (!overlay.contains(e.target)) finish(null);
     };
+    const cancelOnMove = () => finish(null);
     const rectFrom = (a, b) => ({
       left: Math.min(a.x, b.x),
       top: Math.min(a.y, b.y),
@@ -2395,6 +2415,9 @@ function startImageRegionTool({ app, element, doc, imageRect: fixedRect }) {
     for (const type of ["click", "mousedown", "mouseup"]) overlay.addEventListener(type, (e) => e.stopPropagation());
     doc.addEventListener("keydown", onKey, true);
     doc.addEventListener("pointerdown", onOutside, true);
+    doc.addEventListener("wheel", cancelOnMove, true);
+    doc.addEventListener("scroll", cancelOnMove, true);
+    doc.defaultView?.addEventListener?.("resize", cancelOnMove);
   });
   promise.cancel = () => cancel?.();
   return promise;
@@ -2462,7 +2485,8 @@ function contentRect(img, view2) {
   if (!(nw > 0) || !(nh > 0) || !(rect.width > 0) || !(rect.height > 0) || !["contain", "scale-down"].includes(fit)) {
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
   }
-  const scale = Math.min(rect.width / nw, rect.height / nh);
+  const fitScale = Math.min(rect.width / nw, rect.height / nh);
+  const scale = fit === "scale-down" ? Math.min(1, fitScale) : fitScale;
   const width = nw * scale;
   const height = nh * scale;
   return { left: rect.left + (rect.width - width) / 2, top: rect.top + (rect.height - height) / 2, width, height };
@@ -2492,10 +2516,12 @@ function createActions({
   },
   loadBitmap = loadImageBitmap,
   fetchBlob = (url) => globalThis.fetch(url).then((r) => r.blob()),
-  createBitmap = globalThis.createImageBitmap?.bind(globalThis)
+  createBitmap = globalThis.createImageBitmap?.bind(globalThis),
+  startTool = startImageRegionTool
 }) {
   let disposed = false;
   let activeTool = null;
+  let activeToolIsDrawing = false;
   let stopSpotlight = null;
   const busy = /* @__PURE__ */ new Set();
   const thumbPending = /* @__PURE__ */ new Map();
@@ -2597,6 +2623,10 @@ function createActions({
       stopSpotlight?.();
       stopSpotlight = null;
     },
+    // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
+    cancelDrawingTool() {
+      if (activeToolIsDrawing) activeTool?.cancel?.();
+    },
     createAreaRegion: () => once("area", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
@@ -2670,8 +2700,9 @@ function createActions({
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
-      const tool = startImageRegionTool({ app, element, doc });
+      const tool = startTool({ app, element, doc });
       activeTool = tool;
+      activeToolIsDrawing = true;
       let picked;
       try {
         picked = await tool;
@@ -2703,8 +2734,9 @@ function createActions({
         return null;
       }
       const imageRect = contentRect(img, doc.defaultView);
-      const tool = startImageRegionTool({ doc, imageRect });
+      const tool = startTool({ doc, imageRect });
       activeTool = tool;
+      activeToolIsDrawing = false;
       let picked;
       try {
         picked = await tool;
@@ -2755,6 +2787,7 @@ function createActions({
       return count;
     },
     async clearCache() {
+      clearImageMemo();
       await cache.clear();
       toaster.show("Crop cache cleared");
     }
@@ -2851,6 +2884,16 @@ function createActions({
       return null;
     }
     const uid = region.drawingUid;
+    if (isImageKind(region.kind)) {
+      try {
+        await host.openBlock(uid, { sidebar });
+      } catch (error) {
+        console.warn("[plexus] open block failed", error);
+        toaster.show("Could not open image", { kind: "error" });
+        return null;
+      }
+      return uid;
+    }
     const matches = () => {
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
@@ -2918,6 +2961,8 @@ function createActions({
 
 // src/extension.js
 var activeLifecycle = null;
+var THUMB_WIDTHS = [160, 480];
+var THUMB_WARM_DELAY_MS = 1500;
 var CONTEXT_MENU_LABEL = "Plexus: Region on image";
 function createEmitter() {
   const listeners = /* @__PURE__ */ new Map();
@@ -3015,6 +3060,29 @@ async function onload({ extensionAPI, extension }) {
       lifecycle.add(() => regionref.releaseAll());
       const hover = createHoverPreview({ doc, api });
       lifecycle.add(() => hover.dispose());
+      const thumbTimers = /* @__PURE__ */ new Set();
+      let thumbsOff = false;
+      lifecycle.add(() => {
+        thumbsOff = true;
+        for (const t of thumbTimers) clearTimeout(t);
+        thumbTimers.clear();
+      });
+      lifecycle.add(clearImageMemo);
+      const warmThumbnails = (uid) => {
+        if (thumbsOff) return;
+        const timer = setTimeout(async () => {
+          thumbTimers.delete(timer);
+          for (const maxWidth of THUMB_WIDTHS) {
+            if (thumbsOff) return;
+            try {
+              await actions.thumbnail(uid, { maxWidth, render: true });
+            } catch (error) {
+              console.warn("[plexus] thumbnail warm failed", error);
+            }
+          }
+        }, THUMB_WARM_DELAY_MS);
+        thumbTimers.add(timer);
+      };
       let mounted = null;
       const unmountEditor = () => {
         const current = mounted;
@@ -3027,7 +3095,11 @@ async function onload({ extensionAPI, extension }) {
             console.warn("[plexus] editor cleanup failed", error);
           }
         }
-        if (current.uid) emitter.emit({ uid: current.uid, kind: "drawing" });
+        actions.cancelDrawingTool();
+        if (current.uid) {
+          emitter.emit({ uid: current.uid, kind: "drawing" });
+          warmThumbnails(current.uid);
+        }
       };
       lifecycle.add(unmountEditor);
       const discovery = createDiscovery({

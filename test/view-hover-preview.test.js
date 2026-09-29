@@ -15,7 +15,7 @@ class El extends EventTarget {
   getBoundingClientRect() { return { left: 0, top: 0, width: 300, height: 100 }; }
 }
 
-function setup({ link }) {
+function setup({ link, state = { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, onLookup, onPull }) {
   const created = [];
   const rendered = [];
   const unmounted = [];
@@ -27,15 +27,15 @@ function setup({ link }) {
   const api = {
     graph: { name: "g" },
     data: {
-      pull: () => ({ ":block/children": [3, 1, 2, 0].map((n) => ({ ":block/string": `c${n}`, ":block/order": n })) }),
+      pull: () => (onPull?.(), { ":block/children": [3, 1, 2, 0].map((n) => ({ ":block/string": `c${n}`, ":block/order": n })) }),
     },
     ui: { components: { renderString: (o) => rendered.push(o.string), unmountNode: (o) => unmounted.push(o.el) } },
   };
-  const app = { state: { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, getElementLinkAtPosition: () => link };
+  const app = { state, getElementLinkAtPosition: (p) => { onLookup?.(p); return link; } };
   const containerEl = new El();
   const hover = createHoverPreview({ doc, api, raf: (cb) => { queueMicrotask(cb); return 1; }, caf() {}, delayMs: 0 });
   const dispose = hover.attach({ app, containerEl });
-  const move = () => containerEl.dispatchEvent(Object.assign(new Event("pointermove"), { clientX: 50, clientY: 60 }));
+  const move = (extra = {}) => containerEl.dispatchEvent(Object.assign(new Event("pointermove"), { clientX: 50, clientY: 60 }, extra));
   return { doc, containerEl, rendered, unmounted, created, dispose, move, hover };
 }
 
@@ -84,4 +84,41 @@ test("a block link renders ((uid)); dispose removes listeners and the portal", a
   s.move();
   await tick();
   assert.equal(s.doc.body.children.length, before);
+});
+
+test("the scene point passed to the hit test honours zoom and scroll", async () => {
+  const seen = [];
+  const s = setup({ link: null, state: { zoom: { value: 2 }, scrollX: 5, scrollY: 6 }, onLookup: (p) => seen.push(p) });
+  s.move();
+  await tick();
+  // viewport (50,60), container at 0,0: 50/2-5, 60/2-6
+  assert.deepEqual(seen[0], { x: 20, y: 24 });
+});
+
+test("pointermove with a button held (drag/pan) does no hit test and shows nothing", async () => {
+  const seen = [];
+  const s = setup({ link: "((abcdefghi))", onLookup: (p) => seen.push(p) });
+  s.move({ buttons: 1 });
+  await tick();
+  assert.equal(seen.length, 0);
+  assert.equal(s.doc.body.children.length, 0);
+});
+
+test("a stable hover on a URL link pulls once, not once per frame; leave hides; wheel hides", async () => {
+  let pulls = 0;
+  const s = setup({ link: "https://roamresearch.com/#/app/g/page/abcdefghi", onPull: () => { pulls++; } });
+  for (let i = 0; i < 4; i++) { s.move(); await tick(); }
+  const first = pulls;
+  assert.ok(first >= 1);
+  const portal = s.doc.body.children[0];
+  assert.ok(portal);
+  for (let i = 0; i < 4; i++) { s.move(); await tick(); }
+  assert.equal(pulls, first);
+  s.containerEl.dispatchEvent(new Event("pointerleave"));
+  assert.equal(portal.removed, true);
+  s.move();
+  await tick();
+  assert.equal(s.doc.body.children.length, 2);
+  s.containerEl.dispatchEvent(new Event("wheel"));
+  assert.equal(s.doc.body.children[1].removed, true);
 });

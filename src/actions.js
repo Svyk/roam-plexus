@@ -4,7 +4,7 @@ import { captionFromElements } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, thumbnailSize } from "./model/image.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
-import { loadImageBitmap } from "./host/image-source.js";
+import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
 
@@ -52,7 +52,7 @@ export function detectRegionKind({ elements, ids, selectedGroupIds }) {
   return { kind: "area" };
 }
 
-function contentRect(img, view) {
+export function contentRect(img, view) {
   const rect = img.getBoundingClientRect();
   const nw = img.naturalWidth;
   const nh = img.naturalHeight;
@@ -60,7 +60,8 @@ function contentRect(img, view) {
   if (!(nw > 0) || !(nh > 0) || !(rect.width > 0) || !(rect.height > 0) || !["contain", "scale-down"].includes(fit)) {
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
   }
-  const scale = Math.min(rect.width / nw, rect.height / nh);
+  const fitScale = Math.min(rect.width / nw, rect.height / nh);
+  const scale = fit === "scale-down" ? Math.min(1, fitScale) : fitScale;
   const width = nw * scale;
   const height = nh * scale;
   return { left: rect.left + (rect.width - width) / 2, top: rect.top + (rect.height - height) / 2, width, height };
@@ -92,9 +93,11 @@ export function createActions({
   loadBitmap = loadImageBitmap,
   fetchBlob = (url) => globalThis.fetch(url).then((r) => r.blob()),
   createBitmap = globalThis.createImageBitmap?.bind(globalThis),
+  startTool = startImageRegionTool,
 }) {
   let disposed = false;
   let activeTool = null;
+  let activeToolIsDrawing = false;
   let stopSpotlight = null;
   const busy = new Set();
   const thumbPending = new Map();
@@ -210,6 +213,11 @@ export function createActions({
       stopSpotlight = null;
     },
 
+    // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
+    cancelDrawingTool() {
+      if (activeToolIsDrawing) activeTool?.cancel?.();
+    },
+
     createAreaRegion: () => once("area", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
@@ -286,8 +294,9 @@ export function createActions({
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
-      const tool = startImageRegionTool({ app, element, doc });
+      const tool = startTool({ app, element, doc });
       activeTool = tool;
+      activeToolIsDrawing = true;
       let picked;
       try {
         picked = await tool;
@@ -321,8 +330,9 @@ export function createActions({
         return null;
       }
       const imageRect = contentRect(img, doc.defaultView);
-      const tool = startImageRegionTool({ doc, imageRect });
+      const tool = startTool({ doc, imageRect });
       activeTool = tool;
+      activeToolIsDrawing = false;
       let picked;
       try {
         picked = await tool;
@@ -377,6 +387,7 @@ export function createActions({
     },
 
     async clearCache() {
+      clearImageMemo();
       await cache.clear();
       toaster.show("Crop cache cleared");
     },
@@ -477,6 +488,17 @@ export function createActions({
       return null;
     }
     const uid = region.drawingUid;
+    if (isImageKind(region.kind)) {
+      // The source is an ordinary image block, not a drawing: just take the user there.
+      try {
+        await host.openBlock(uid, { sidebar });
+      } catch (error) {
+        console.warn("[plexus] open block failed", error);
+        toaster.show("Could not open image", { kind: "error" });
+        return null;
+      }
+      return uid;
+    }
     const matches = () => {
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;

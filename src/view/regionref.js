@@ -74,14 +74,14 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     root.textContent = text;
   };
 
-  const paint = (root, entry, key) => {
+  const paint = (root, entry, key, region) => {
     if (!root.isConnected) return;
     const img = doc.createElement("img");
     img.className = "plexus-crop";
     img.draggable = false;
     img.onerror = () => {
       if (key) Promise.resolve(cache.delete?.(key)).catch(() => {});
-      if (root.isConnected) finishChip(root);
+      if (root.isConnected) finishChip(root, region);
     };
     img.style.maxHeight = `${getSettings().maxCropHeight}px`;
     img.src = entry.url;
@@ -138,7 +138,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
       const hotSvg = svgKey ? cache.peek(svgKey) : null;
       const hot = hotSvg || cache.peek(pngKey);
-      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey);
+      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey, region);
 
       const maxH = getSettings().maxCropHeight;
       let bw = 4;
@@ -162,13 +162,19 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
           if (!entry) {
             const failKey = `${region.drawingUid}|${target.hash}`;
             const failedAt = failed.get(failKey);
-            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
+            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root, region);
             if (!root.isConnected) return;
-            const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+            let rendered;
+            try {
+              rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+            } catch (error) {
+              console.warn("[plexus] crop failed", error);
+              rendered = { error: "render-failed" };
+            }
             if (!root.isConnected) return;
             if (rendered.error) {
               failed.set(failKey, Date.now());
-              return finishChip(root);
+              return finishChip(root, region);
             }
             entryKey = pngKey;
             // An unsettled render may still be Roam's placeholder: paint it from memory, never persist it.
@@ -176,13 +182,13 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
             entry = cache.peek(pngKey) || (await cache.get(pngKey));
           }
           if (!root.isConnected) return;
-          if (!entry) return finishChip(root);
+          if (!entry) return finishChip(root, region);
           root.style.height = "";
           root.style.width = "";
-          paint(root, entry, entryKey);
+          paint(root, entry, entryKey, region);
         } catch (error) {
           console.warn("[plexus] crop failed", error);
-          finishChip(root);
+          finishChip(root, region);
         }
       })();
     } catch (error) {
@@ -190,10 +196,10 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     }
   };
 
-  function finishChip(root) {
+  function finishChip(root, region) {
     root.style.height = "";
     root.style.width = "";
-    chip(root, "Open the drawing to render this region");
+    chip(root, region && isImageKind(region.kind) ? "Image not available" : "Open the drawing to render this region");
   }
 
   return {

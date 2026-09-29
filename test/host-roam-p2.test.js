@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRoamHost } from "../src/host/roam.js";
-import { groupCaptureIds, frameCaptureIds, captureFrameSvg, captureGroupSvg } from "../src/host/native.js";
 
 function makeApi({ pages = {}, nodes = {}, rows = [] } = {}) {
   let n = 0;
@@ -79,28 +78,11 @@ test("resolveUidKind distinguishes page, block, and unknown", () => {
   assert.equal(host.resolveUidKind("nope"), null);
 });
 
-function sceneApp() {
-  const els = [
-    { id: "f", type: "frame" },
-    { id: "a", type: "rectangle", frameId: "f", groupIds: ["g"] },
-    { id: "b", type: "rectangle", frameId: "f", groupIds: ["g", "h"] },
-    { id: "c", type: "rectangle", groupIds: ["h"] },
-    { id: "d", type: "rectangle", frameId: "f", isDeleted: true, groupIds: ["g"] },
-  ];
-  return { getSceneElementsIncludingDeleted: () => els };
-}
-
-test("groupCaptureIds and frameCaptureIds pick live members", () => {
-  const app = sceneApp();
-  assert.deepEqual(groupCaptureIds(app, "g"), ["a", "b"]);
-  assert.deepEqual(groupCaptureIds(app, "zz"), []);
-  assert.deepEqual(frameCaptureIds(app, "f"), ["f", "a", "b"]);
-  assert.deepEqual(frameCaptureIds(app, "f", { clipped: true }), ["f"]);
-  assert.deepEqual(frameCaptureIds(app, "a"), []);
-});
-
-test("captureFrameSvg / captureGroupSvg reject on empty id sets before touching the scene", async () => {
-  const app = sceneApp();
-  await assert.rejects(captureFrameSvg(app, "missing"), /frame not found/);
-  await assert.rejects(captureGroupSvg(app, "missing"), /no live elements/);
+test("drawingsOn queries both macro forms and keeps the {{excalidraw}} variant", () => {
+  const rows = [["a", "{{[[excalidraw]]}}", 1], ["y", "{{excalidraw}} tail", 2], ["x", "plain text", 3]];
+  const api = makeApi({ rows });
+  const out = createRoamHost({ api }).drawingsOn("page");
+  assert.deepEqual(out, ["a", "y"]);
+  assert.match(api.queries[0][0], /\{\{\[\[excalidraw\]\]\}\}/);
+  assert.match(api.queries[0][0], /\{\{excalidraw\}\}/);
 });

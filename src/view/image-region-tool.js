@@ -41,6 +41,9 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
       finished = true;
       doc.removeEventListener("keydown", onKey, true);
       doc.removeEventListener("pointerdown", onOutside, true);
+      doc.removeEventListener("wheel", cancelOnMove, true);
+      doc.removeEventListener("scroll", cancelOnMove, true);
+      doc.defaultView?.removeEventListener?.("resize", cancelOnMove);
       overlay.remove();
       resolve(value);
     };
@@ -53,6 +56,8 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
     const onOutside = (e) => {
       if (!overlay.contains(e.target)) finish(null);
     };
+    // The overlay rect is measured once; any scroll, wheel or resize could leave it off the image.
+    const cancelOnMove = () => finish(null);
     const rectFrom = (a, b) => ({
       left: Math.min(a.x, b.x),
       top: Math.min(a.y, b.y),
@@ -105,6 +110,9 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
     for (const type of ["click", "mousedown", "mouseup"]) overlay.addEventListener(type, (e) => e.stopPropagation());
     doc.addEventListener("keydown", onKey, true);
     doc.addEventListener("pointerdown", onOutside, true);
+    doc.addEventListener("wheel", cancelOnMove, true);
+    doc.addEventListener("scroll", cancelOnMove, true);
+    doc.defaultView?.addEventListener?.("resize", cancelOnMove);
   });
   promise.cancel = () => cancel?.();
   return promise;

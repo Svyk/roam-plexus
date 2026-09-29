@@ -25,7 +25,11 @@ export function createPublicApi({ host, actions, emitter, version } = {}) {
     isAvailable() {
       try { return !!host?.graphName?.(); } catch { return false; }
     },
-    create(args) { return host.createDrawing(args || {}); },
+    async create(args) {
+      const result = await host.createDrawing(args || {});
+      try { emitter?.emit?.({ uid: result?.uid, kind: "drawing" }); } catch (error) { console.warn("[plexus] change emit failed", error); }
+      return result;
+    },
     open(uid, { region, sidebar = false } = {}) {
       let isRegion = region;
       if (isRegion == null) isRegion = !!parseRegion(host.pullBlock?.(uid)?.string);
