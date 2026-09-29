@@ -374,3 +374,146 @@ dialog.plexus-portal.plexus-legacy {
   gap: 8px;
   margin-top: 12px;
 }
+
+/* == p6:suggest == */
+.plexus-suggest {
+  position: fixed;
+  width: 400px;
+  box-sizing: border-box;
+}
+
+.plexus-suggest .rm-autocomplete__results-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+/* == p6:regionref == */
+.plexus-root.plexus-regionref--image {
+  display: block;
+  margin: 2px 0 4px;
+  max-width: 100%;
+}
+
+.plexus-root.plexus-regionref--thumbnail {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+}
+
+.plexus-root.plexus-regionref--image .plexus-crop {
+  max-width: 100%;
+}
+
+.plexus-root.plexus-regionref--thumbnail .plexus-crop {
+  width: auto;
+  object-fit: contain;
+}
+
+span.rm-block-ref.plexus-ref-card,
+span.rm-block-ref.plexus-ref-card:hover {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid rgba(138, 155, 168, 0.45);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.85em;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(138, 155, 168, 0.45);
+}
+
+span.bp3-popover-target[data-plexus-card-host],
+span.bp3-popover-wrapper[data-plexus-card-host] {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+}
+
+.plexus-root.plexus-ref-glyph {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+  color: inherit;
+  cursor: zoom-in;
+}
+
+.plexus-root.plexus-ref-glyph svg {
+  display: block;
+}
+
+.plexus-portal.plexus-crop-popover {
+  padding: 4px;
+  border: 1px solid rgba(138, 155, 168, 0.45);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.plexus-portal.plexus-crop-popover .plexus-crop {
+  display: block;
+  cursor: default;
+}
+
+:root.bp3-dark .plexus-portal.plexus-crop-popover,
+body.bt-theme-dark .plexus-portal.plexus-crop-popover {
+  background: #252a31;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+:root.bp3-dark .plexus-crop--invertible,
+:root.rm-dark-theme .plexus-crop--invertible,
+body.bp3-dark .plexus-crop--invertible,
+body.bt-theme-dark .plexus-crop--invertible,
+body.rm-dark-theme .plexus-crop--invertible,
+body.roam-body.dark .plexus-crop--invertible,
+.plexus-crop--invertible.plexus-crop--invert {
+  filter: invert(93%) hue-rotate(180deg);
+}
+/* == p6:menus == */
+dialog.plexus-portal.plexus-settings .plexus-settings-actions .plexus-toolbar-button { color: inherit; }
+dialog.plexus-portal.plexus-settings {
+  min-width: 320px;
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 6px;
+  color: #182026;
+  background: #fff;
+  color-scheme: light;
+}
+
+dialog.plexus-portal.plexus-settings.plexus-settings--dark {
+  color: #f6f7f9;
+  background: #252a31;
+  color-scheme: dark;
+}
+
+dialog.plexus-portal.plexus-settings::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.plexus-settings .plexus-settings-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.plexus-settings .plexus-settings-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.plexus-settings .plexus-settings-input[type="number"] {
+  width: 90px;
+}
+
+.plexus-settings .plexus-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}

@@ -115,6 +115,7 @@ export function createActions({
   presenter = null,
   mindmap = null,
   getEmbedOverlay = () => null,
+  refreshRegion = null,
   createDialog = createLegacyDialog,
   confirm = (message) => globalThis.confirm?.(message),
   withLockFn = withLock,
@@ -538,22 +539,19 @@ export function createActions({
         toaster.show("Open a drawing full-screen first", { kind: "error" });
         return 0;
       }
-      let count = 0;
-      for (const { uid, region } of host.regionsOf(editor.drawingUid)) {
-        if (disposed || native.activeEditor(doc)?.app !== editor.app) break;
-        if (!region?.supported) continue;
-        try {
-          if (isImageKind(region.kind)) continue;
-          const svg = await hotSvg(editor.app, region);
-          if (!svg) continue;
-          await putSvg(uid, region, svg);
-          count += 1;
-        } catch (error) {
-          console.warn("[plexus] refresh failed", uid, error);
-        }
-      }
+      const count = await refreshCrops(editor.drawingUid);
       toaster.show(`Refreshed ${count} crop${count === 1 ? "" : "s"}`);
       return count;
+    },
+
+    refreshCropsForDrawing: (uid) => refreshCrops(uid),
+
+    hasSingleImageSelected() {
+      const editor = native.activeEditor(doc);
+      if (!editor) return false;
+      const ids = native.selectedElementIds(editor.app);
+      if (ids.length !== 1) return false;
+      return sceneElements(editor.app).some((e) => e.id === ids[0] && e.type === "image");
     },
 
     async clearCache() {
@@ -562,6 +560,32 @@ export function createActions({
       toaster.show("Crop cache cleared");
     },
   };
+
+  async function refreshCrops(uid) {
+    const editor = native.activeEditor(doc);
+    const hot = !!editor && editor.drawingUid === uid;
+    let count = 0;
+    for (const { uid: regionUid, region } of host.regionsOf(uid)) {
+      if (disposed) break;
+      if (hot && native.activeEditor(doc)?.app !== editor.app) break;
+      if (!region?.supported) continue;
+      try {
+        if (hot) {
+          if (isImageKind(region.kind)) continue;
+          const svg = await hotSvg(editor.app, region);
+          if (!svg) continue;
+          await putSvg(regionUid, region, svg);
+          await refreshRegion?.(regionUid, { purge: false });
+        } else {
+          await refreshRegion?.(regionUid);
+        }
+        count += 1;
+      } catch (error) {
+        console.warn("[plexus] refresh failed", regionUid, error);
+      }
+    }
+    return count;
+  }
 
   async function presentOnce(requestedUid, release) {
     const editor = native.activeEditor(doc);
@@ -1155,7 +1179,7 @@ export function createActions({
       toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
       return null;
     }
-    native.zoomTo(app, box.bbox);
+    native.zoomTo(app, box.bbox, { maxZoom: 1 });
     await sleep(60);
     if (disposed) return null;
     stopSpotlight?.();

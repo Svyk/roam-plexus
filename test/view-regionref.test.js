@@ -28,6 +28,8 @@ function makeEl(tag) {
     setAttribute: (k, v) => { el.attrs[k] = v; },
     removeAttribute: (k) => { delete el.attrs[k]; },
     addEventListener: (t, fn) => { el.listeners[t] = fn; },
+    removeEventListener: (t, fn) => { if (el.listeners[t] === fn) delete el.listeners[t]; },
+    matches: (sel) => sel.split(",").map((x) => x.trim()).some((x) => x.startsWith(".") && el.classes.has(x.slice(1))),
     closest: () => null,
     append: (c) => { el.children.push(c); c.parentNode = el; },
     remove: () => { el.isConnected = false; },
@@ -77,7 +79,7 @@ function setup({ regionString, hit, cold, cacheGet, drawing: drawingOverride, on
     host,
     cache,
     cold: cold || { renderDrawing: async () => null },
-    getSettings: () => ({ maxCropHeight: 360, openInSidebar: false, ...settings }),
+    getSettings: () => ({ figureHeight: 360, openInSidebar: false, ...settings }),
     onOpen,
     doc,
   });
@@ -249,4 +251,245 @@ test("F4: an unsettled render is painted but not persisted", async () => {
   assert.equal(puts.length, 1);
   assert.equal(puts[0][2].persist, false);
   assert.equal(parent.children[1].children[0].src, "blob:png");
+});
+
+test("U2: a ref inside text gets a thumbnail card; alone gives image; API refreshes in place", async () => {
+  const parent = makeEl("p");
+  const btn = makeEl("button");
+  parent.append(btn);
+  const refEl = makeEl("span");
+  refEl.parentElement = makeEl("div");
+  refEl.closest = () => ({ id: "block-input-x-outer0001" });
+  btn.closest = (sel) => (sel === ".rm-block-ref[data-uid]" ? refEl : null);
+  let refString = `see ((${regionUid}))`;
+  let overrides = {};
+  const host = {
+    blockUidFromNode: (n) => (n === btn ? regionUid : "blk000001"),
+    pullBlock: (uid) => ({ uid, string: uid === regionUid ? areaString : refString }),
+    drawing: () => ({ uid: "drw000001", elements, hash: "abcd1234" }),
+  };
+  const cache = { peek: () => ({ url: "blob:x", w: 1, h: 1 }), get: async () => null, put: async () => {}, delete: async () => {} };
+  const r = createRegionRefRenderer({ host, cache, cold: {}, getSettings: () => ({ figureHeight: 280, thumbHeight: 72, refOverrides: overrides }), onOpen() {}, doc });
+  r.claim(btn);
+  const root = parent.children[1];
+  assert.ok(refEl.classes.has("plexus-ref-card") && refEl.classes.has("plexus-mode-thumbnail"));
+  assert.ok(root.classes.has("plexus-regionref--thumbnail"));
+  assert.equal(root.children[0].style.height, "72px");
+  assert.equal(r.modeOf({ blockUid: "blk000001", refUid: regionUid }), "thumbnail");
+
+  refString = `((${regionUid}))`;
+  r.refreshBlock("blk000001");
+  assert.equal(parent.children.filter((c) => c.classes.has("plexus-root") && c.isConnected).length, 1);
+  assert.ok(refEl.classes.has("plexus-mode-image") && !refEl.classes.has("plexus-mode-thumbnail"));
+
+  overrides = { [`blk000001|${regionUid}`]: "link" };
+  r.refreshAll();
+  const live = parent.children.filter((c) => c.classes.has("plexus-root") && c.isConnected);
+  assert.equal(live.length, 1);
+  assert.ok(live[0].classes.has("plexus-ref-glyph"));
+  assert.ok(!refEl.classes.has("plexus-ref-card"));
+  assert.equal(r.modeOf({ blockUid: "blk000001", refUid: regionUid }), "link");
+
+  await r.refreshRegion(regionUid);
+  assert.equal(parent.children.filter((c) => c.classes.has("plexus-root") && c.isConnected).length, 1);
+  r.releaseAll();
+  assert.ok(!refEl.classes.has("plexus-ref-card"));
+  assert.ok(!btn.classes.has("plexus-hidden"));
+});
+
+test("U2: refreshAll over two roots leaves two roots; disconnected buttons are dropped", () => {
+  const { r, btn, parent } = setup({ regionString: areaString, hit: { url: "blob:x", w: 1, h: 1, type: "x" } });
+  const btn2 = makeEl("button");
+  parent.append(btn2);
+  r.claim(btn);
+  r.claim(btn2);
+  r.refreshAll();
+  assert.equal(parent.children.filter((c) => c.classes.has("plexus-root") && c.isConnected).length, 2);
+  btn2.isConnected = false;
+  r.refreshAll();
+  assert.equal(parent.children.filter((c) => c.classes.has("plexus-root") && c.isConnected).length, 1);
+});
+
+test("U2: the crop is invertible for a light drawing without images and not for image kinds or dark drawings", () => {
+  const hit = { url: "blob:x", w: 1, h: 1, type: "x" };
+  const a = setup({ regionString: areaString, hit });
+  a.r.claim(a.btn);
+  assert.ok(a.parent.children[1].children[0].classes.has("plexus-crop--invertible"));
+  const b = setup({ regionString: areaString, hit, drawing: { uid: "drw000001", hash: "h", elements, appState: { theme: "dark" } } });
+  b.r.claim(b.btn);
+  assert.ok(!b.parent.children[1].children[0].classes.has("plexus-crop--invertible"));
+  const c = setup({ regionString: areaString, hit, settings: { darkCrops: false } });
+  c.r.claim(c.btn);
+  assert.ok(!c.parent.children[1].children[0].classes.has("plexus-crop--invertible"));
+});
+
+test("P6 fix: a host-dark marker leaves --invert to CSS; luminance-only dark stamps it", async () => {
+  const { resetThemeMemo } = await import("../src/host/theme.js");
+  const hit = { url: "blob:x", w: 1, h: 1, type: "x" };
+  const cls = (...c) => ({ classList: { contains: (x) => c.includes(x) } });
+  try {
+    doc.documentElement = cls();
+    doc.body = cls("bp3-dark");
+    resetThemeMemo();
+    const a = setup({ regionString: areaString, hit });
+    a.r.claim(a.btn);
+    const ia = a.parent.children[1].children[0];
+    assert.ok(ia.classes.has("plexus-crop--invertible"));
+    assert.ok(!ia.classes.has("plexus-crop--invert"));
+    doc.body = cls();
+    doc.defaultView = { getComputedStyle: () => ({ backgroundColor: "rgb(20, 20, 20)" }) };
+    resetThemeMemo();
+    const b = setup({ regionString: areaString, hit });
+    b.r.claim(b.btn);
+    const ib = b.parent.children[1].children[0];
+    assert.ok(ib.classes.has("plexus-crop--invertible"));
+    assert.ok(ib.classes.has("plexus-crop--invert"));
+  } finally {
+    delete doc.body; delete doc.documentElement; delete doc.defaultView;
+    resetThemeMemo();
+  }
+});
+
+test("P6 fix: thumbnails lift the base max-height and cap width with min(100%, ...)", () => {
+  const parent = makeEl("p");
+  const btn = makeEl("button");
+  parent.append(btn);
+  const refEl = makeEl("span");
+  refEl.parentElement = makeEl("div");
+  refEl.closest = () => ({ id: "block-input-x-outer0001" });
+  btn.closest = (sel) => (sel === ".rm-block-ref[data-uid]" ? refEl : null);
+  const host = {
+    blockUidFromNode: (n) => (n === btn ? regionUid : "blk000001"),
+    pullBlock: (uid) => ({ uid, string: uid === regionUid ? areaString : `see ((${regionUid}))` }),
+    drawing: () => ({ uid: "drw000001", elements, hash: "abcd1234" }),
+  };
+  const cache = { peek: () => ({ url: "blob:x", w: 1, h: 1 }), get: async () => null, put: async () => {}, delete: async () => {} };
+  const r = createRegionRefRenderer({ host, cache, cold: {}, getSettings: () => ({ figureHeight: 280, thumbHeight: 400, refOverrides: {} }), onOpen() {}, doc });
+  r.claim(btn);
+  const img = parent.children[1].children[0];
+  assert.equal(img.style.height, "400px");
+  assert.equal(img.style.maxHeight, "none");
+  assert.match(img.style.maxWidth, /^min\(100%/);
+});
+
+function hostSetup({ thumbnail = true, refs = 1, settings = {} } = {}) {
+  const outer = makeEl("span");
+  outer.classes.add("bp3-popover-target");
+  const wrapper = makeEl("span");
+  wrapper.classes.add("bp3-popover-wrapper");
+  wrapper.parentElement = outer;
+  const inner = makeEl("span");
+  inner.classes.add("bp3-popover-target");
+  inner.parentElement = wrapper;
+  const input = makeEl("div");
+  input.classes.add("rm-block__input");
+  const beyond = makeEl("span");
+  beyond.classes.add("bp3-popover-target");
+  input.parentElement = beyond;
+  outer.parentElement = input;
+  const refEls = [];
+  const btns = [];
+  const parents = [];
+  for (let i = 0; i < refs; i += 1) {
+    const parent = makeEl("p");
+    const btn = makeEl("button");
+    parent.append(btn);
+    const refEl = makeEl("span");
+    refEl.parentElement = i === 0 ? inner : makeEl("span");
+    if (i > 0) refEl.parentElement.parentElement = inner;
+    refEl.closest = () => ({ id: "block-input-x-outer0001" });
+    btn.closest = (sel) => (sel === ".rm-block-ref[data-uid]" ? refEl : null);
+    refEls.push(refEl); btns.push(btn); parents.push(parent);
+  }
+  const host = {
+    blockUidFromNode: (n) => (btns.includes(n) ? regionUid : "blk000001"),
+    pullBlock: (uid) => ({ uid, string: uid === regionUid ? areaString : thumbnail ? `see ((${regionUid}))` : `((${regionUid}))` }),
+    drawing: () => ({ uid: "drw000001", elements, hash: "abcd1234" }),
+  };
+  const cache = { peek: () => ({ url: "blob:x", w: 1, h: 1 }), get: async () => null, put: async () => {}, delete: async () => {} };
+  const r = createRegionRefRenderer({ host, cache, cold: {}, getSettings: () => ({ figureHeight: 280, thumbHeight: 72, refOverrides: {}, ...settings }), onOpen() {}, doc });
+  return { r, btns, parents, refEls, chain: [inner, wrapper, outer], beyond };
+}
+
+test("host attr: added to popover ancestors up to the block input, removed on release and refresh", () => {
+  const { r, btns, chain, beyond } = hostSetup();
+  r.claim(btns[0]);
+  assert.ok(chain.every((e) => e.attrs["data-plexus-card-host"]));
+  assert.ok(!beyond.attrs["data-plexus-card-host"]);
+  r.refreshAll();
+  assert.ok(chain.every((e) => e.attrs["data-plexus-card-host"]));
+  r.releaseAll();
+  assert.ok(chain.every((e) => !e.attrs["data-plexus-card-host"]));
+});
+
+test("host attr: shared ancestors are refcounted", () => {
+  const s = hostSetup({ refs: 2 });
+  s.r.claim(s.btns[0]);
+  s.r.claim(s.btns[1]);
+  const [inner, wrapper] = s.chain;
+  assert.ok(inner.attrs["data-plexus-card-host"] && wrapper.attrs["data-plexus-card-host"]);
+  s.r.releaseAll();
+  assert.ok(!inner.attrs["data-plexus-card-host"] && !wrapper.attrs["data-plexus-card-host"]);
+
+  const t = hostSetup({ refs: 2 });
+  t.r.claim(t.btns[0]);
+  t.r.claim(t.btns[1]);
+  const shared = t.chain[1];
+  // release only the first ref: the shared wrapper is still used by the second
+  t.parents[0].children[1].remove();
+  t.btns[0].isConnected = false;
+  t.r.refreshAll();
+  assert.ok(shared.attrs["data-plexus-card-host"]);
+  t.btns[1].isConnected = false;
+  t.r.refreshAll();
+  assert.ok(!shared.attrs["data-plexus-card-host"]);
+  assert.ok(!t.chain[0].attrs["data-plexus-card-host"]);
+});
+
+test("host attr: link mode never marks ancestors", () => {
+  const { r, btns, chain } = hostSetup({ settings: { inlineDisplay: "link" } });
+  r.claim(btns[0]);
+  assert.ok(chain.every((e) => !e.attrs["data-plexus-card-host"]));
+});
+
+test("hover stoppers: thumbnail on root, link on refEl, image none; disposed on release", () => {
+  const stop = { stopped: 0, stopPropagation() { this.stopped += 1; } };
+  const t = hostSetup();
+  t.r.claim(t.btns[0]);
+  const troot = t.parents[0].children[1];
+  assert.equal(typeof troot.listeners.mouseover, "function");
+  assert.equal(typeof troot.listeners.mouseout, "function");
+  assert.equal(typeof troot.listeners.mouseenter, "function");
+  assert.equal(t.refEls[0].listeners.mouseenter, undefined);
+  assert.equal(t.refEls[0].listeners.mouseover, undefined);
+  troot.listeners.mouseover(stop);
+  assert.equal(stop.stopped, 1);
+  t.r.releaseAll();
+  assert.equal(troot.listeners.mouseover, undefined);
+
+  const l = hostSetup({ settings: { inlineDisplay: "link" } });
+  l.r.claim(l.btns[0]);
+  const lref = l.refEls[0];
+  assert.equal(typeof lref.listeners.mouseenter, "function");
+  assert.equal(typeof lref.listeners.mouseover, "function");
+  assert.equal(typeof lref.listeners.mouseout, "function");
+  assert.equal(l.parents[0].children[1].listeners.mouseover, undefined);
+
+  const i = hostSetup({ thumbnail: false });
+  i.r.claim(i.btns[0]);
+  const iroot = i.parents[0].children[1];
+  assert.ok(iroot.classes.has("plexus-regionref--image"));
+  assert.equal(iroot.listeners.mouseover, undefined);
+  assert.equal(iroot.listeners.mouseenter, undefined);
+  assert.equal(i.refEls[0].listeners.mouseover, undefined);
+  assert.equal(i.refEls[0].listeners.mouseenter, undefined);
+});
+
+test("host attr survives React overwriting the ancestor className", () => {
+  const { r, btns, chain } = hostSetup();
+  r.claim(btns[0]);
+  chain[0].className = "bp3-popover-target bp3-popover-open";
+  assert.equal(chain[0].attrs["data-plexus-card-host"], "1");
+  r.releaseAll();
+  assert.equal(chain[0].attrs["data-plexus-card-host"], undefined);
 });

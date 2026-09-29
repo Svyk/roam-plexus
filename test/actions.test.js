@@ -68,6 +68,7 @@ function make(over = {}) {
   const copied = [];
   const toasts = [];
   const zooms = [];
+  const zoomOpts = [];
   const spots = [];
   const app = { getSceneElements: () => over.elements || elements };
   const state = { editor: over.editor === undefined ? { app, drawingUid: "drw000001" } : over.editor };
@@ -75,7 +76,7 @@ function make(over = {}) {
     activeEditor: () => state.editor,
     selectedElementIds: () => over.ids || ["rect-a", "text-a"],
     captureSelectionSvg: over.capture || (async () => svg),
-    zoomTo: (a, box) => zooms.push(box),
+    zoomTo: (a, box, opts) => { zooms.push(box); zoomOpts.push(opts); },
     viewportRectOf: () => ({ x: 1 }),
     ...(over.native || {}),
   };
@@ -95,8 +96,9 @@ function make(over = {}) {
     getSettings: () => ({}),
     doc: over.doc || { querySelectorAll: () => [] },
     clipboard: over.clipboard || { writeText: async (t) => copied.push(t) },
+    refreshRegion: over.refreshRegion,
   });
-  return { actions, created, puts, copied, toasts, zooms, spots, state, app };
+  return { actions, created, puts, copied, toasts, zooms, zoomOpts, spots, state, app };
 }
 
 test("empty selection toasts and creates nothing", async () => {
@@ -189,6 +191,53 @@ test("openRegion on the open drawing zooms and spotlights", async () => {
   assert.equal(await actions.openRegion("reg000001"), "drw000001");
   assert.equal(zooms.length, 1);
   assert.deepEqual(spots[0].rect, { x: 1 });
+});
+
+test("openRegion caps the zoom at 100%", async () => {
+  const string = serializeRegion({ kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" });
+  const { actions, zoomOpts } = make({ pullBlock: () => ({ string }) });
+  await actions.openRegion("reg000001");
+  assert.deepEqual(zoomOpts, [{ maxZoom: 1 }]);
+});
+
+test("refreshCropsForDrawing on the open drawing re-renders hot without purging", async () => {
+  const area = { supported: true, kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" };
+  const calls = [];
+  const { actions, puts } = make({
+    regionsOf: () => [{ uid: "reg000001", region: area }, { uid: "reg000002", region: { supported: false } }],
+    refreshRegion: async (uid, opts) => { calls.push([uid, opts]); },
+  });
+  assert.equal(await actions.refreshCropsForDrawing("drw000001"), 1);
+  assert.equal(puts.length, 1);
+  assert.deepEqual(calls, [["reg000001", { purge: false }]]);
+});
+
+test("refreshCropsForDrawing on a closed drawing purges and re-claims each supported region", async () => {
+  const area = { supported: true, kind: "area", drawingUid: "drw000009", ids: ["rect-a"], pad: 10, caption: "x" };
+  const calls = [];
+  const { actions, puts } = make({
+    regionsOf: () => [{ uid: "reg000001", region: area }, { uid: "reg000002", region: { supported: false } }],
+    refreshRegion: async (uid, opts) => { calls.push([uid, opts]); },
+  });
+  assert.equal(await actions.refreshCropsForDrawing("drw000009"), 1);
+  assert.equal(puts.length, 0);
+  assert.deepEqual(calls, [["reg000001", undefined]]);
+});
+
+test("refreshCropsForOpenDrawing re-claims refs after a hot refresh", async () => {
+  const area = { supported: true, kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" };
+  const calls = [];
+  const { actions } = make({ regionsOf: () => [{ uid: "reg000001", region: area }], refreshRegion: async (uid, opts) => { calls.push([uid, opts]); } });
+  assert.equal(await actions.refreshCropsForOpenDrawing(), 1);
+  assert.deepEqual(calls, [["reg000001", { purge: false }]]);
+});
+
+test("hasSingleImageSelected is true only for exactly one selected image element", () => {
+  const els = [{ id: "img-a", type: "image" }, { id: "rect-a", type: "rectangle" }];
+  assert.equal(make({ elements: els, ids: ["img-a"] }).actions.hasSingleImageSelected(), true);
+  assert.equal(make({ elements: els, ids: ["rect-a"] }).actions.hasSingleImageSelected(), false);
+  assert.equal(make({ elements: els, ids: ["img-a", "rect-a"] }).actions.hasSingleImageSelected(), false);
+  assert.equal(make({ editor: null, elements: els }).actions.hasSingleImageSelected(), false);
 });
 
 test("openRegion reports an unresolvable region instead of zooming", async () => {

@@ -1,5 +1,5 @@
 import { createLifecycle } from "./lifecycle.js";
-import { createSettingsPanel, initializeSettings, readSettings } from "./settings.js";
+import { createSettingsPanel, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
@@ -19,15 +19,16 @@ import { createMmWriter } from "./host/mmwrites.js";
 import { createMeasurer } from "./host/measure.js";
 import { createActions } from "./actions.js";
 import { clearImageMemo } from "./host/image-source.js";
+import { createLinkSuggest, installSuggestAutoAttach } from "./view/link-suggest.js";
+import { installCanvasMenu, installRoamMenus } from "./view/context-menus.js";
+import { openSettingsDialog } from "./view/settings-dialog.js";
+import { isHostDark, resetThemeMemo } from "./host/theme.js";
 
 let activeLifecycle = null;
 
 const THUMB_WIDTHS = [160, 480];
 const THUMB_WARM_DELAY_MS = 1500;
-const CONTEXT_MENU_LABEL = "Plexus: Region on image";
-const MINDMAP_MENU_LABEL = "Plexus: Mind map from outline";
-const PRESENT_MENU_LABEL = "Plexus: Present frames";
-const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
+const REFRESH_DEBOUNCE_MS = 300;
 
 function createEmitter() {
   const listeners = new Map();
@@ -60,10 +61,21 @@ export async function onload({ extensionAPI, extension }) {
     lifecycle.add(() => { delete flagTarget.__ROAM_PLEXUS_VERSION; });
 
     await initializeSettings(extensionAPI);
-    await lifecycle.settingsPanel(extensionAPI, createSettingsPanel());
+    let refreshTimer = null;
+    let refreshAll = () => {};
+    const scheduleRefresh = () => {
+      if (refreshTimer != null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        try { refreshAll(); } catch (error) { console.warn("[plexus] refresh failed", error); }
+      }, REFRESH_DEBOUNCE_MS);
+    };
+    lifecycle.add(() => { if (refreshTimer != null) clearTimeout(refreshTimer); refreshTimer = null; refreshAll = () => {}; });
+    await lifecycle.settingsPanel(extensionAPI, createSettingsPanel({ onChange: scheduleRefresh }));
     const getSettings = () => readSettings(extensionAPI);
 
     let actions = null;
+    let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
@@ -100,6 +112,13 @@ export async function onload({ extensionAPI, extension }) {
       const scenes = createSceneRegistry({ native, doc });
       lifecycle.add(() => scenes.dispose());
       let mounted = null;
+      let regionref = null;
+      const zIndexFor = (el) => {
+        const outer = el?.closest?.(".excalidraw-outer-container");
+        if (outer) return baseZIndex(doc, outer);
+        const z = Number.parseInt(doc.defaultView?.getComputedStyle?.(el)?.zIndex, 10);
+        return Number.isFinite(z) ? z : 1000;
+      };
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
@@ -121,6 +140,7 @@ export async function onload({ extensionAPI, extension }) {
         presenter,
         mindmap,
         getEmbedOverlay: () => mounted?.overlay ?? null,
+        refreshRegion: (uid, opts) => regionref?.refreshRegion(uid, opts),
       });
       lifecycle.add(() => actions.dispose());
 
@@ -128,26 +148,7 @@ export async function onload({ extensionAPI, extension }) {
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
 
-      if (api.ui?.blockContextMenu?.addCommand) {
-        api.ui.blockContextMenu.addCommand({
-          label: CONTEXT_MENU_LABEL,
-          callback: (e) => actions.createPlainImageRegion(e?.["block-uid"]).catch((error) => console.warn("[plexus] image region failed", error)),
-        });
-        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: CONTEXT_MENU_LABEL }));
-        api.ui.blockContextMenu.addCommand({
-          label: PRESENT_MENU_LABEL,
-          "display-conditional": (e) => DRAWING_START.test(host.pullBlock(e?.["block-uid"])?.string ?? ""),
-          callback: (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }).catch((error) => console.warn("[plexus] present failed", error)),
-        });
-        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: PRESENT_MENU_LABEL }));
-        api.ui.blockContextMenu.addCommand({
-          label: MINDMAP_MENU_LABEL,
-          callback: (e) => actions.mindMapFromOutline(e?.["block-uid"]).catch((error) => console.warn("[plexus] mind map failed", error)),
-        });
-        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: MINDMAP_MENU_LABEL }));
-      }
-
-      const regionref = createRegionRefRenderer({
+      regionref = createRegionRefRenderer({
         host,
         cache,
         cold,
@@ -156,6 +157,41 @@ export async function onload({ extensionAPI, extension }) {
         onOpen: (uid, opts) => actions.openRegion(uid, opts).catch((error) => console.warn("[plexus] open failed", error)),
       });
       lifecycle.add(() => regionref.releaseAll());
+      refreshAll = () => regionref.refreshAll();
+      const ThemeMO = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver;
+      if (ThemeMO && doc.documentElement && doc.body) {
+        let wasDark = isHostDark(doc);
+        const themeObserver = new ThemeMO(() => {
+          try {
+            resetThemeMemo();
+            const now = isHostDark(doc);
+            if (now !== wasDark) { wasDark = now; scheduleRefresh(); }
+          } catch (error) { console.warn("[plexus] theme observer failed", error); }
+        });
+        lifecycle.observer(themeObserver, doc.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+        themeObserver.observe(doc.body, { attributes: true, attributeFilter: ["class", "style"] });
+      }
+      let settingsHandle = null;
+      lifecycle.add(() => settingsHandle?.close());
+      openSettings = () => (settingsHandle = openSettingsDialog({
+        doc,
+        get: (id) => extensionAPI.settings.get(id),
+        set: (id, value) => writeSetting(extensionAPI, id, value),
+        onChanged: () => regionref.refreshAll(),
+        dark: isHostDark(doc),
+      }));
+      lifecycle.add(installRoamMenus({
+        api,
+        host,
+        actions,
+        regionref,
+        getSettings,
+        setRefOverride: (blockUid, refUid, mode) => setRefOverride(extensionAPI, blockUid, refUid, mode),
+        openSettings,
+      }));
+      const suggest = createLinkSuggest({ doc, api, zIndexFor });
+      lifecycle.add(() => suggest.dispose());
+      lifecycle.add(installSuggestAutoAttach({ doc, suggest }));
       const hover = createHoverPreview({ doc, api });
       lifecycle.add(() => hover.dispose());
       // Compass reads thumbnails cache-only, so warm them once a visit ends (after Roam has saved the scene).
@@ -222,6 +258,24 @@ export async function onload({ extensionAPI, extension }) {
           mounted.disposers.push(() => overlay.dispose());
           mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000 }));
+          mounted.disposers.push(installCanvasMenu({
+            doc, app, containerEl: el,
+            getItems: () => {
+              const guard = (fn) => { try { return !!fn(); } catch { return false; } };
+              const call = (name, fn) => () => fn().catch?.((error) => console.warn("[plexus]", name, "failed", error));
+              return [
+                { id: "region", label: "Plexus: Create region", enabled: guard(() => native.selectedElementIds(app).length > 0), run: call("region", () => actions.createAreaRegion()) },
+                { id: "frame", label: "Plexus: Frame region", enabled: guard(() => actions.isFrameSelected()), run: call("frame", () => actions.createFrameRegion()) },
+                { id: "crop", label: "Plexus: Region from crop", enabled: guard(() => actions.hasCroppedImageSelected()), run: call("crop", () => actions.regionFromCrop()) },
+                { id: "image", label: "Plexus: Image region", enabled: guard(() => actions.hasSingleImageSelected()), run: call("image", () => actions.createImageRegion()) },
+                { id: "embed", label: "Plexus: Embed block from clipboard", enabled: true, run: call("embed", () => actions.insertEmbedFromClipboard()) },
+                { id: "edit-embed", label: "Plexus: Edit embed", enabled: guard(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
+                { id: "present", label: "Plexus: Present", enabled: guard(() => actions.hasFrames()), run: call("present", () => actions.presentDrawing()) },
+                { id: "mindmap", label: "Plexus: Mind map", enabled: true, run: call("mindmap", () => actions.startMindMap()) },
+                { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
+              ];
+            },
+          }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
@@ -252,6 +306,7 @@ export async function onload({ extensionAPI, extension }) {
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });
     }
+    await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Region settings", callback: () => openSettings() });
     await lifecycle.command(extensionAPI.ui.commandPalette, {
       label: "Plexus: Mind map from outline",
       callback: () => {

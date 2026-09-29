@@ -4,6 +4,15 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.6.0]
+
+- Region refs render as tidy cards by mode (image, thumbnail, link); hovering a thumbnail shows the full crop; crops follow the dark theme.
+- `[[` and `((` picker in text elements, the mind-map input and the element hyperlink input.
+- Right-click menus: Plexus items on region refs and blocks, plus a Plexus section in the canvas menu; per-ref "Show as link" and "Use default display".
+- Region settings dialog (`Plexus: Region settings`); image and thumbnail heights, inline display and dark crops settings replace the max crop height.
+- Opening a region zooms to at most 100%.
+- `Plexus: Refresh crops for open drawing` re-renders the refs; `actions.refreshCropsForDrawing(uid)` added.
+
 ## [0.5.0]
 
 - Legacy drawings: dry-run report of old ExcalDATA drawings (`Plexus: Legacy drawings (dry run)`) and migration into native drawings; the legacy block is never written.

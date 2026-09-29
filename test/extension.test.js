@@ -36,8 +36,8 @@ test("extension exports the Roam lifecycle contract and survives repeated unload
   await extension.onunload();
   await extension.onunload();
 
-  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 7);
-  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 7);
+  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 8);
+  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 8);
   assert.ok(api.calls.some(([name, label]) => name === "panel:create" && label === "Plexus"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Clear crop cache"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Legacy drawings (dry run)"));
@@ -50,8 +50,8 @@ test("a second load disposes the previous runtime before registering again", asy
   await extension.onload({ extensionAPI: firstApi, extension: { version: "one" } });
   const cleanup = await extension.onload({ extensionAPI: secondApi, extension: { version: "two" } });
 
-  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 7);
-  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 7);
+  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 8);
+  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 8);
   await cleanup();
 });
 
@@ -76,6 +76,8 @@ async function loadWithFakeRoam({ isEncrypted }) {
     defaultView: { MutationObserver: undefined, addEventListener() {}, removeEventListener() {} },
     querySelector: () => null,
     querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
     createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, append() {}, remove() { removed.push(1); }, addEventListener() {}, setAttribute() {} }),
   };
   globalThis.roamAlphaAPI = { graph: { name: "g", isEncrypted }, util: { generateUID: () => "x" }, data: { pull: () => null }, ui: { components: {} } };
@@ -115,13 +117,14 @@ test("load registers the block context menu command and RoamPlexus; unload remov
   const saved = { doc: g.document, api: g.roamAlphaAPI, mo: g.MutationObserver };
   g.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
   const noop = () => {};
+  const docListeners = new Set();
   g.document = {
     body: { append: noop },
     querySelector: () => null,
     querySelectorAll: () => [],
     createElement: () => ({ style: {}, append: noop, addEventListener: noop, removeEventListener: noop, setAttribute: noop }),
-    addEventListener: noop,
-    removeEventListener: noop,
+    addEventListener: (t, f) => docListeners.add(f),
+    removeEventListener: (t, f) => docListeners.delete(f),
     defaultView: { addEventListener: noop, removeEventListener: noop, getComputedStyle: () => ({}) },
   };
   g.roamAlphaAPI = {
@@ -135,10 +138,12 @@ test("load registers the block context menu command and RoamPlexus; unload remov
   try {
     const cleanup = await extension.onload({ extensionAPI: fakeExtensionApi(), extension: { version: "t" } });
     assert.ok(menu.some(([k, l]) => k === "add" && l === "Plexus: Region on image"));
+    assert.ok(docListeners.size > 0, "suggest auto-attach registered");
     assert.ok(g.RoamPlexus || g.window?.RoamPlexus, "RoamPlexus installed");
     await cleanup();
     assert.ok(menu.some(([k, l]) => k === "remove" && l === "Plexus: Region on image"));
     assert.ok(!g.RoamPlexus && !g.window?.RoamPlexus);
+    assert.equal(docListeners.size, 0, "no document listeners left");
   } finally {
     if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
     if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
