@@ -197,7 +197,7 @@ Compass learns nothing about props or geometry. Edges stay harcs and refs.
 
 ## 13. Phase 0 results (live, 2026-09-28, Readwisenotes page `Plexus Spike 2026-09-28`, uid `8eai6ikkw`)
 
-Spike drawing `ITvT3bqaL`; region block `eyjMKi1DA`; ref block `N4AykqSVu`. Trusted CDP input only (`/tmp/wo/cdp-input.mjs`, `/tmp/wo/cdp-clickxy.mjs`).
+Spike drawing `ITvT3bqaL`; region block `eyjMKi1DA`; ref block `N4AykqSVu`. Trusted CDP input only (a local CDP input helper).
 
 | Spike | Result | Consequence for the design |
 |---|---|---|

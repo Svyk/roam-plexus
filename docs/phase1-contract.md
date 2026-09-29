@@ -1,7 +1,7 @@
 # Plexus Phase 1 — implementation contract (binding)
 
-Repo: `/Users/svyatoslavkleshchev/roam-plexus` (created by the scaffold stage from `~/roam-extension-template`).
-Spec: `docs/spec-plexus.md` in the repo (copy of `/Users/svyatoslavkleshchev/system-setup/roam-excalidraw-plugin/spec-plexus.md`). Section 13 "Phase 0 results" is measured ground truth; where section 13 and earlier sections disagree, section 13 wins.
+Repo: `~/roam-plexus` (created by the scaffold stage from `~/roam-extension-template`).
+Spec: `docs/spec-plexus.md` in the repo (copy of `~/system-setup/roam-excalidraw-plugin/spec-plexus.md`). Section 13 "Phase 0 results" is measured ground truth; where section 13 and earlier sections disagree, section 13 wins.
 Reference implementations to imitate (read, do not copy blindly): `~/roam-compass/src` (host/model/view split, `withLock`, pull patterns, tests with fakes), `~/roam-extension-template/src/lifecycle.js`, `~/roam-grid/src/extension.js` (discovery, image handling, IndexedDB).
 Roam rules: `~/.claude/skills/roam-plugin-dev/SKILL.md` section (d), rules 1, 2, 4, 5, 7, 10, 11, 14, 20 are binding.
 
