@@ -173,3 +173,31 @@ test("withClipboard runs behind an in-flight capture", async () => {
   await Promise.all([cap, after]);
   assert.deepEqual(order, ["capture-end", "write"]);
 });
+
+test("F2: toast:null is applied after the copyAsSvg action returns its own toast", async () => {
+  const app = makeApp({ silent: true });
+  const clipboard = makeClipboard();
+  app.clipboard = clipboard;
+  app.actionManager.executeAction = async () => {
+    await clipboard.writeText("<svg>x</svg>");
+    await new Promise((r) => setTimeout(r, 30));
+    app.updateScene({ appState: { toast: { message: "Copied selection to clipboard as SVG" } } });
+  };
+  const svg = await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200 });
+  assert.equal(svg, "<svg>x</svg>");
+  assert.equal(app.state.toast, null);
+  const last = app.updates.at(-1).appState;
+  assert.equal(last.toast, null);
+  assert.deepEqual(last.selectedElementIds, { keep: true });
+});
+
+test("F2: a never-settling action only delays restore by doneWaitMs", async () => {
+  const app = makeApp({ silent: true });
+  const clipboard = makeClipboard();
+  app.clipboard = clipboard;
+  app.actionManager.executeAction = () => { clipboard.writeText("<svg>x</svg>"); return new Promise(() => {}); };
+  const started = Date.now();
+  await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200, doneWaitMs: 50 });
+  assert.ok(Date.now() - started < 500);
+  assert.equal(app.updates.at(-1).appState.toast, null);
+});

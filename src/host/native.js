@@ -49,7 +49,7 @@ export function withClipboard(fn) {
 const SVG_RE = /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>/]/;
 export const looksLikeSvg = (text) => SVG_RE.test(String(text));
 
-async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500 } = {}) {
+async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500, doneWaitMs = 1000 } = {}) {
   if (!clipboard) throw new Error("[plexus] clipboard unavailable");
   const prevIds = { ...(app.state?.selectedElementIds || {}) };
   const prevGroups = { ...(app.state?.selectedGroupIds || {}) };
@@ -57,6 +57,7 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
   const origWrite = clipboard.write;
   let timer = null;
   let timedOut = false;
+  let done = null;
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
@@ -75,7 +76,7 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
     };
     const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
     const action = app.actionManager.actions.copyAsSvg;
-    const done = Promise.resolve(app.actionManager.executeAction(action, "api"));
+    done = Promise.resolve(app.actionManager.executeAction(action, "api"));
     done.catch(() => {});
     const svg = await Promise.race([captured, timeout, done.then(() => timeout)]);
     if (!svg) { timedOut = true; throw new Error("[plexus] no SVG captured"); }
@@ -93,6 +94,12 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
         return origWrite.call(clipboard, items);
       };
       await new Promise((resolve) => setTimeout(resolve, graceMs));
+    }
+    if (done) {
+      // copyAsSvg returns its own toast after writeText; let it land so our toast:null is the last write.
+      let settleTimer = null;
+      await Promise.race([done.catch(() => {}), new Promise((resolve) => { settleTimer = setTimeout(resolve, doneWaitMs); })]);
+      clearTimeout(settleTimer);
     }
     clipboard.writeText = origWriteText;
     clipboard.write = origWrite;

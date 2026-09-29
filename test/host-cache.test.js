@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCropCache, cropKey } from "../src/host/cache.js";
+import { createCropCache, cropKey, CACHE_VERSION } from "../src/host/cache.js";
 
 function fakeUrls() {
   let n = 0;
@@ -14,7 +14,8 @@ function fakeUrls() {
 const blob = (size = 10, type = "image/png") => ({ size, type });
 
 test("cropKey format", () => {
-  assert.equal(cropKey({ regionUid: "r", geometryKey: "g", drawingHash: "h", tier: "svg" }), "r|g|h|svg");
+  assert.equal(cropKey({ regionUid: "r", geometryKey: "g", drawingHash: "h", tier: "svg" }), "v2|r|g|h|svg");
+  assert.equal(CACHE_VERSION, 2);
 });
 
 test("memory-only: put, peek, get, clear", async () => {
@@ -101,22 +102,22 @@ test("IndexedDB: persists with graph prefix, hydrates, evicts to limit", async (
   const idb = fakeIdb();
   const urls = fakeUrls();
   const cache = createCropCache({ graph: "g", idb, urls, limitBytes: 25 });
-  await cache.put("a", blob(10), { w: 1, h: 1 });
+  await cache.put("v2|a", blob(10), { w: 1, h: 1 });
   await new Promise((r) => setTimeout(r, 2));
-  await cache.put("b", blob(10), { w: 1, h: 1 });
+  await cache.put("v2|b", blob(10), { w: 1, h: 1 });
   await new Promise((r) => setTimeout(r, 2));
-  await cache.put("c", blob(10), { w: 1, h: 1 });
-  assert.deepEqual([...idb.rows.keys()].sort(), ["g|b", "g|c"]);
+  await cache.put("v2|c", blob(10), { w: 1, h: 1 });
+  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v2|b", "g|v2|c"]);
 
   const cache2 = createCropCache({ graph: "g", idb, urls: fakeUrls() });
-  assert.equal(cache2.peek("c"), null);
-  const hit = await cache2.get("c");
+  assert.equal(cache2.peek("v2|c"), null);
+  const hit = await cache2.get("v2|c");
   assert.equal(hit.w, 1);
-  assert.ok(cache2.peek("c"));
+  assert.ok(cache2.peek("v2|c"));
   assert.equal(await cache2.get("zzz"), null);
 
   const other = createCropCache({ graph: "other", idb, urls: fakeUrls() });
-  assert.equal(await other.get("c"), null);
+  assert.equal(await other.get("v2|c"), null);
 
   await cache.clear();
   assert.equal(idb.rows.size, 0);
@@ -151,11 +152,11 @@ test("put scans the store once, then only when the tracked size passes the limit
   idb.db.transaction = (...a) => { transactions += 1; return realTx(...a); };
   const cache = createCropCache({ graph: "g", idb, urls: fakeUrls(), limitBytes: 1000 });
   for (let i = 0; i < 5; i++) await cache.put(`k${i}`, blob(10), { w: 1, h: 1 });
-  assert.equal(transactions, 6);
+  assert.equal(transactions, 7); // 1 stale-version purge at open + 1 initial scan + 5 puts
   const small = createCropCache({ graph: "g", idb, urls: fakeUrls(), limitBytes: 25 });
   transactions = 0;
   await small.put("z", blob(10), { w: 1, h: 1 });
-  assert.equal(transactions, 2);
+  assert.equal(transactions, 3); // purge at open, put, scan
 });
 
 test("delete drops the memory entry, revokes its URL, and removes the row", async () => {
@@ -167,4 +168,24 @@ test("delete drops the memory entry, revokes its URL, and removes the row", asyn
   assert.equal(cache.peek("k"), null);
   assert.equal(urls.live.size, 0);
   assert.equal(idb.rows.has("g|k"), false);
+});
+
+test("open purges this graph's rows from older cache versions, keeps current and other graphs", async () => {
+  const idb = fakeIdb();
+  const row = (key) => ({ key, blob: blob(), w: 1, h: 1, type: "image/png", size: 10, ts: 1 });
+  for (const k of ["g|old|geom|hash|png", "g|v1|old|geom|hash|png", "g|v2|keep", "other|old|x", "other|v2|keep"]) idb.rows.set(k, row(k));
+  const cache = createCropCache({ graph: "g", idb, urls: fakeUrls() });
+  assert.equal(await cache.get("v2|missing"), null);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v2|keep", "other|old|x", "other|v2|keep"]);
+  const stale = await cache.get("old|geom|hash|png");
+  assert.equal(stale, null);
+});
+
+test("put with persist:false stays in memory only", async () => {
+  const idb = fakeIdb();
+  const cache = createCropCache({ graph: "g", idb, urls: fakeUrls() });
+  await cache.put("v2|mem", blob(), { w: 1, h: 1, persist: false });
+  assert.ok(cache.peek("v2|mem"));
+  assert.equal(idb.rows.size, 0);
 });

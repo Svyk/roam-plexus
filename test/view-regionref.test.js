@@ -140,7 +140,7 @@ test("cold render: crops the png, puts it under the png key, paints it", async (
   await flush();
   assert.equal(puts.length, 1);
   assert.equal(puts[0][0], keys().png);
-  assert.deepEqual(puts[0][2], { w: 480 + 20 - 260 + 40 - 40 + 0 === 0 ? 0 : puts[0][2].w, h: puts[0][2].h });
+  assert.equal(puts[0][2].persist, true);
   assert.equal(parent.children[1].children[0].src, "blob:png");
   assert.ok(!parent.children[1].classes.has("plexus-placeholder"));
 });
@@ -224,4 +224,29 @@ test("a detached button is not claimed", () => {
   btn.isConnected = false;
   r.claim(btn);
   assert.equal(btn.attrs["data-plexus-claimed"], undefined);
+});
+
+test("F4: an image drawing asks for a 1200 ms settle, a plain one for 150 ms", async () => {
+  const seen = [];
+  const cold = { renderDrawing: async (uid, opts) => { seen.push(opts.settleMs); return null; } };
+  const plain = setup({ regionString: areaString, cold });
+  plain.r.claim(plain.btn);
+  await flush();
+  const withImage = setup({
+    regionString: areaString,
+    cold,
+    drawing: { uid: "drw000001", hash: "img", elements: [...elements, { id: "im", type: "image", fileId: "f", x: 0, y: 0, width: 5, height: 5, angle: 0, isDeleted: false }] },
+  });
+  withImage.r.claim(withImage.btn);
+  await flush();
+  assert.deepEqual(seen, [150, 1200]);
+});
+
+test("F4: an unsettled render is painted but not persisted", async () => {
+  const { r, btn, parent, puts } = setup({ regionString: areaString, cold: { renderDrawing: async () => ({ ...rendered(), settled: false }) } });
+  r.claim(btn);
+  await flush();
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0][2].persist, false);
+  assert.equal(parent.children[1].children[0].src, "blob:png");
 });

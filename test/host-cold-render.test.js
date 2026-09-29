@@ -135,3 +135,52 @@ test("image ready via an injected MutationObserver", async () => {
   assert.ok(disconnected);
   assert.ok(log.includes("unmount:d1"));
 });
+
+test("F4: skips the placeholder view png and resolves on the settled second src", async () => {
+  const { api, doc } = makeEnv({ ready: false });
+  const render = api.ui.components.renderBlock;
+  api.ui.components.renderBlock = (args) => {
+    render(args);
+    args.el.img = { complete: true, naturalWidth: 100, naturalHeight: 100, src: "blob:1" };
+    setTimeout(() => { args.el.img.src = "blob:2"; args.el.img.naturalWidth = 500; }, 30);
+  };
+  const r = createColdRenderer({ api, doc, timeoutMs: 2000 });
+  const out = await r.renderDrawing("d1", { settleMs: 200 });
+  assert.equal(out.naturalWidth, 500);
+  assert.equal(out.settled, true);
+});
+
+test("F4: at the timeout cap a complete but still-changing image resolves as unsettled", async () => {
+  const { api, doc, log } = makeEnv({ ready: false });
+  const render = api.ui.components.renderBlock;
+  api.ui.components.renderBlock = (args) => {
+    render(args);
+    args.el.img = { complete: true, naturalWidth: 100, naturalHeight: 100, src: "blob:0" };
+    let n = 0;
+    const t = setInterval(() => { args.el.img.src = `blob:${++n}`; if (n > 50) clearInterval(t); }, 15);
+  };
+  const r = createColdRenderer({ api, doc, timeoutMs: 250 });
+  const out = await r.renderDrawing("d1", { settleMs: 200 });
+  assert.equal(out.settled, false);
+  assert.equal(out.naturalWidth, 100);
+  assert.ok(log.includes("unmount:d1"));
+});
+
+test("F4: concurrent requests for one uid share the render and use the larger settleMs", async () => {
+  const { api, doc, log } = makeEnv({ ready: false });
+  const render = api.ui.components.renderBlock;
+  api.ui.components.renderBlock = (args) => {
+    render(args);
+    args.el.img = { complete: true, naturalWidth: 100, naturalHeight: 100, src: "blob:1" };
+    setTimeout(() => { args.el.img.src = "blob:2"; }, 60);
+  };
+  const r = createColdRenderer({ api, doc, timeoutMs: 2000 });
+  const started = Date.now();
+  const a = r.renderDrawing("d1", { settleMs: 20 });
+  const b = r.renderDrawing("d1", { settleMs: 300 });
+  assert.equal(a, b);
+  const out = await a;
+  assert.equal(out.settled, true);
+  assert.ok(Date.now() - started >= 280, "waited for the larger settleMs");
+  assert.equal(log.filter((l) => l === "render:d1").length, 1);
+});

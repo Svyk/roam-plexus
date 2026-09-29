@@ -6,6 +6,8 @@ import { cropCanvasToBlob } from "../host/cold-render.js";
 const CLAIMED = "data-plexus-claimed";
 const FAIL_TTL_MS = 60000;
 const PRUNE_FLOOR = 64;
+const IMAGE_SETTLE_MS = 1200;
+const PLAIN_SETTLE_MS = 150;
 
 export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }) {
   const roots = new Map();
@@ -111,7 +113,8 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
             const failedAt = failed.get(failKey);
             if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
             if (!root.isConnected) return;
-            const rendered = await cold.renderDrawing(region.drawingUid);
+            const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
+            const rendered = await cold.renderDrawing(region.drawingUid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
             if (!root.isConnected) return;
             const crop = rendered
               ? viewPngCropRect({
@@ -127,7 +130,8 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
             }
             entryKey = pngKey;
             const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
-            await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh });
+            // An unsettled render may still be Roam's placeholder: paint it from memory, never persist it.
+            await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
             entry = cache.peek(pngKey) || (await cache.get(pngKey));
           }
           if (!root.isConnected) return;

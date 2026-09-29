@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseDrawingProps, liveElements, elementBounds, commonBounds, regionSceneBBox,
-  viewPngCropRect, fitZoom, sceneToViewport, viewportToScene, rectToFraction, cropSvgToFraction,
+  viewPngCropRect, fitZoom, sceneToViewport, viewportToScene, rectToFraction, cropSvgToFraction, normalizeSvgSize,
 } from "../src/model/scene.js";
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} vs ${b}`);
@@ -214,4 +214,19 @@ test("cropSvgToFraction rejects bad input", () => {
   assert.throws(() => cropSvgToFraction("<div/>", [0, 0, 1, 1]), TypeError);
   assert.throws(() => cropSvgToFraction("<svg></svg>", [0, 0, 1, 1]), TypeError);
   assert.throws(() => cropSvgToFraction(svgDoc, [0, 0, 0, 1]), TypeError);
+});
+
+test("normalizeSvgSize sets width/height from the viewBox, rounded to 2 decimals, touching only the root tag", () => {
+  const out = normalizeSvgSize('<svg xmlns="x" viewBox="10 20 180 120.456" width="540" height="361.37"><rect width="9"/></svg>');
+  assert.equal(out, '<svg xmlns="x" viewBox="10 20 180 120.456" width="180" height="120.46"><rect width="9"/></svg>');
+  assert.equal(normalizeSvgSize('<svg viewBox="0 0 100 100"></svg>'), '<svg viewBox="0 0 100 100" width="100" height="100"></svg>');
+  assert.equal(normalizeSvgSize("<svg></svg>"), "<svg></svg>");
+});
+
+test("cropSvgToFraction viewBox is independent of an exportScale-inflated width/height", () => {
+  const scaled = '<svg viewBox="0 0 260 180" width="780" height="540"><g/></svg>';
+  const plain = '<svg viewBox="0 0 260 180" width="260" height="180"><g/></svg>';
+  const vb = (s) => /viewBox="([^"]+)"/.exec(s)[1];
+  assert.equal(vb(cropSvgToFraction(scaled, [0.25, 0.5, 0.5, 0.25])), vb(cropSvgToFraction(plain, [0.25, 0.5, 0.5, 0.25])));
+  assert.match(normalizeSvgSize(cropSvgToFraction(scaled, [0, 0, 0.5, 0.5])), /viewBox="10 10 120 80" width="120" height="80"/);
 });

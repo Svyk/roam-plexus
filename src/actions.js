@@ -1,5 +1,5 @@
 import { DEFAULT_PAD, geometryKey, isId, parseRegion, serializeRegion } from "./model/region.js";
-import { regionSceneBBox, cropSvgToFraction } from "./model/scene.js";
+import { regionSceneBBox, cropSvgToFraction, normalizeSvgSize } from "./model/scene.js";
 import { captionFromElements } from "./model/caption.js";
 import { cropKey } from "./host/cache.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
@@ -45,6 +45,7 @@ export function createActions({ host, native, cache, cold, toaster, spotlight, g
   async function putSvg(uid, region, svg) {
     const drawing = host.drawing(region.drawingUid);
     if (!svg || !drawing) return;
+    svg = normalizeSvgSize(svg);
     const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: drawing.hash, tier: "svg" });
     await cache.put(key, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
   }
@@ -201,33 +202,48 @@ export function createActions({ host, native, cache, cold, toaster, spotlight, g
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
     };
-    if (!matches()) {
-      try {
-        await host.openBlock(uid, { sidebar });
-      } catch (error) {
-        console.warn("[plexus] open block failed", error);
-        toaster.show("Could not open drawing", { kind: "error" });
-        return null;
+    const findIcon = () => {
+      for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+        if (found && found.isConnected !== false) return found;
       }
-      const icon = await waitFor(() => {
-        for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-          if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
-          const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
-          if (found) return found;
+      return null;
+    };
+    const deadline = Date.now() + 10000;
+    let editor = matches();
+    if (!editor) {
+      // The editor is full-screen, so a drawing already in the DOM needs no navigation (navigation destroys that DOM).
+      if (!findIcon()) {
+        try {
+          await host.openBlock(uid, { sidebar });
+        } catch (error) {
+          console.warn("[plexus] open block failed", error);
+          toaster.show("Could not open drawing", { kind: "error" });
+          return null;
         }
-        return null;
-      }, 3000, 50, aborted);
-      if (!icon) {
-        if (disposed) return null;
-        toaster.show("Could not find the drawing", { kind: "error" });
-        return null;
       }
       const View = doc.defaultView;
-      for (const type of ["mousedown", "mouseup", "click"]) {
-        icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+      let dispatched = false;
+      for (let attempt = 0; attempt < 3 && !editor; attempt++) {
+        const icon = await waitFor(findIcon, Math.min(attempt === 0 ? 3000 : 1500, Math.max(0, deadline - Date.now())), 50, aborted);
+        if (disposed) return null;
+        if (!icon) {
+          if (!dispatched) {
+            toaster.show("Could not find the drawing", { kind: "error" });
+            return null;
+          }
+          continue;
+        }
+        if (icon.isConnected === false) continue;
+        for (const type of ["mousedown", "mouseup", "click"]) {
+          icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+        }
+        dispatched = true;
+        editor = await waitFor(matches, Math.min(1500, Math.max(0, deadline - Date.now())), 50, aborted);
       }
     }
-    const editor = await waitFor(matches, 10000, 50, aborted);
+    if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
     if (!editor) {
       if (disposed) return null;
       toaster.show("Drawing did not open", { kind: "error" });

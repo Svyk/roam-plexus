@@ -1,8 +1,10 @@
 const DB_NAME = "plexus-cache";
 const STORE = "crops";
 
+export const CACHE_VERSION = 2;
+
 export function cropKey({ regionUid, geometryKey, drawingHash, tier }) {
-  return `${regionUid}|${geometryKey}|${drawingHash}|${tier}`;
+  return `v${CACHE_VERSION}|${regionUid}|${geometryKey}|${drawingHash}|${tier}`;
 }
 
 const reqPromise = (request) => new Promise((resolve, reject) => {
@@ -18,6 +20,7 @@ const txPromise = (tx) => new Promise((resolve, reject) => {
 export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL } = {}) {
   const memory = new Map();
   const prefix = `${graph}|`;
+  const currentPrefix = `${prefix}v${CACHE_VERSION}|`;
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
@@ -50,7 +53,10 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
             const store = db.createObjectStore(STORE, { keyPath: "key" });
             store.createIndex("ts", "ts");
           };
-          request.onsuccess = () => resolve(request.result);
+          request.onsuccess = () => {
+            resolve(request.result);
+            purgeStale(request.result).catch((error) => console.warn("[plexus] cache purge failed", error));
+          };
           request.onerror = () => { console.warn("[plexus] cache db unavailable", request.error); resolve(null); };
         } catch (error) {
           console.warn("[plexus] cache db unavailable", error);
@@ -59,6 +65,24 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
       });
     }
     return dbPromise;
+  }
+
+  // One cursor pass at open: drop this graph's rows written under an older CACHE_VERSION.
+  async function purgeStale(db) {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    await new Promise((resolve, reject) => {
+      const cursorReq = store.openCursor();
+      cursorReq.onerror = () => reject(cursorReq.error);
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) { resolve(); return; }
+        const k = cursor.value.key;
+        if (typeof k === "string" && k.startsWith(prefix) && !k.startsWith(currentPrefix)) cursor.delete();
+        cursor.continue();
+      };
+    });
+    await txPromise(tx);
   }
 
   async function evictDb(db) {
@@ -118,10 +142,11 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
       }
     },
 
-    async put(key, blob, { w, h } = {}) {
+    async put(key, blob, { w, h, persist = true } = {}) {
       if (disposed) return;
       const entry = { url: urls.createObjectURL(blob), w, h, type: blob.type, size: blob.size || 0 };
       remember(key, entry);
+      if (!persist) return;
       try {
         const db = await openDb();
         if (!db || disposed) return;

@@ -279,3 +279,69 @@ test("dispose stops the spotlight and halts a refresh loop", async () => {
   assert.equal(await b.actions.refreshCropsForOpenDrawing(), 0);
   assert.equal(b.puts.length, 0);
 });
+
+test("F3: cached area svg takes its size from the viewBox, not an exportScale-inflated width/height", async () => {
+  const { actions, puts } = make({ capture: async () => '<svg viewBox="0 0 180 120" width="540" height="360"></svg>' });
+  await actions.createAreaRegion();
+  assert.deepEqual(puts[0][2], { w: 180, h: 120 });
+  assert.match(await puts[0][1].text(), /viewBox="0 0 180 120" width="180" height="120"/);
+});
+
+test("F3: image-region and refresh svgs are size-normalized after the crop", async () => {
+  const big = '<svg viewBox="0 0 120 120" width="360" height="360"></svg>';
+  const area = { supported: true, kind: "rect", drawingUid: "drw000001", el: "rect-a", f: [0, 0, 1, 1], caption: "x" };
+  const { actions, puts } = make({ regionsOf: () => [{ uid: "reg000001", region: area }], capture: async () => big });
+  await actions.refreshCropsForOpenDrawing();
+  const text = await puts[0][1].text();
+  assert.match(text, /viewBox="10 10 100 100" width="100" height="100"/);
+  assert.deepEqual(puts[0][2], { w: 100, h: 100 });
+});
+
+function iconDoc({ blocks }) {
+  return { defaultView: { MouseEvent: class { constructor(type) { this.type = type; } } }, querySelectorAll: () => blocks() };
+}
+
+test("F1: a drawing already in the DOM is clicked without navigating", async () => {
+  const string = serializeRegion({ kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" });
+  const events = [];
+  const icon = { isConnected: true, dispatchEvent: (e) => events.push(e.type) };
+  const block = { id: "block-input-u-drw000001", closest: () => null, querySelector: () => icon };
+  let navigated = 0;
+  const a = make({ pullBlock: () => ({ string }), editor: null, openBlock: async () => { navigated += 1; }, doc: iconDoc({ blocks: () => [block] }) });
+  const opened = a.actions.openRegion("reg000001");
+  setTimeout(() => { a.state.editor = { app: a.app, drawingUid: "drw000001" }; }, 80);
+  assert.equal(await opened, "drw000001");
+  assert.equal(navigated, 0);
+  assert.deepEqual(events, ["mousedown", "mouseup", "click"]);
+});
+
+test("F1: navigates only when absent, and never clicks a detached icon (re-queries)", async () => {
+  const string = serializeRegion({ kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" });
+  const stale = { isConnected: false, dispatchEvent: () => { throw new Error("clicked detached icon"); } };
+  const clicks = [];
+  const live = { isConnected: true, dispatchEvent: (e) => clicks.push(e.type) };
+  let current = null;
+  const mk = (icon) => ({ id: "block-input-u-drw000001", closest: () => null, querySelector: () => icon });
+  const a = make({
+    pullBlock: () => ({ string }),
+    editor: null,
+    openBlock: async () => { current = mk(stale); setTimeout(() => { current = mk(live); }, 100); },
+    doc: iconDoc({ blocks: () => (current ? [current] : []) }),
+  });
+  const opened = a.actions.openRegion("reg000001");
+  setTimeout(() => { a.state.editor = { app: a.app, drawingUid: "drw000001" }; }, 300);
+  assert.equal(await opened, "drw000001");
+  assert.deepEqual(clicks.slice(0, 3), ["mousedown", "mouseup", "click"]);
+});
+
+test("F1: re-dispatches when the editor has not mounted within 1500 ms, at most 3 attempts", async () => {
+  const string = serializeRegion({ kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10, caption: "x" });
+  let clicks = 0;
+  const icon = { isConnected: true, dispatchEvent: (e) => { if (e.type === "click") clicks += 1; } };
+  const block = { id: "block-input-u-drw000001", closest: () => null, querySelector: () => icon };
+  const a = make({ pullBlock: () => ({ string }), editor: null, doc: iconDoc({ blocks: () => [block] }) });
+  const opened = a.actions.openRegion("reg000001");
+  setTimeout(() => { a.state.editor = { app: a.app, drawingUid: "drw000001" }; }, 1700);
+  assert.equal(await opened, "drw000001");
+  assert.equal(clicks, 2);
+});

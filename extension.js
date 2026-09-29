@@ -547,6 +547,20 @@ function cropSvgToFraction(svgString, f, pad = VIEW_EXPORT_PADDING) {
   next = setAttr(next, "height", fmt(nh * sy));
   return svgString.slice(0, m.index) + next + svgString.slice(m.index + tag.length);
 }
+var fmt2 = (n) => String(Math.round(n * 100) / 100);
+function normalizeSvgSize(svgString) {
+  const m = /<svg\b[^>]*>/.exec(svgString);
+  if (!m) return svgString;
+  const tag = m[0];
+  const vb = /\sviewBox\s*=\s*["']\s*(-?[\d.eE+-]+)[\s,]+(-?[\d.eE+-]+)[\s,]+([\d.eE+-]+)[\s,]+([\d.eE+-]+)\s*["']/.exec(tag);
+  if (!vb) return svgString;
+  const vw = Number(vb[3]);
+  const vh = Number(vb[4]);
+  if (!(vw > 0) || !(vh > 0)) return svgString;
+  let next = setAttr(tag, "width", fmt2(vw));
+  next = setAttr(next, "height", fmt2(vh));
+  return svgString.slice(0, m.index) + next + svgString.slice(m.index + tag.length);
+}
 
 // src/model/hash.js
 var encoder = new TextEncoder();
@@ -735,7 +749,7 @@ function withClipboard(fn) {
 }
 var SVG_RE = /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>/]/;
 var looksLikeSvg = (text) => SVG_RE.test(String(text));
-async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500 } = {}) {
+async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500, doneWaitMs = 1e3 } = {}) {
   if (!clipboard) throw new Error("[plexus] clipboard unavailable");
   const prevIds = { ...app.state?.selectedElementIds || {} };
   const prevGroups = { ...app.state?.selectedGroupIds || {} };
@@ -743,6 +757,7 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
   const origWrite = clipboard.write;
   let timer = null;
   let timedOut = false;
+  let done = null;
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
@@ -771,7 +786,7 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
       timer = setTimeout(() => resolve(null), timeoutMs);
     });
     const action = app.actionManager.actions.copyAsSvg;
-    const done = Promise.resolve(app.actionManager.executeAction(action, "api"));
+    done = Promise.resolve(app.actionManager.executeAction(action, "api"));
     done.catch(() => {
     });
     const svg = await Promise.race([captured, timeout, done.then(() => timeout)]);
@@ -792,6 +807,14 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
         return origWrite.call(clipboard, items);
       };
       await new Promise((resolve) => setTimeout(resolve, graceMs));
+    }
+    if (done) {
+      let settleTimer = null;
+      await Promise.race([done.catch(() => {
+      }), new Promise((resolve) => {
+        settleTimer = setTimeout(resolve, doneWaitMs);
+      })]);
+      clearTimeout(settleTimer);
     }
     clipboard.writeText = origWriteText;
     clipboard.write = origWrite;
@@ -817,8 +840,9 @@ function viewportRectOf(app, bbox) {
 // src/host/cache.js
 var DB_NAME = "plexus-cache";
 var STORE = "crops";
+var CACHE_VERSION = 2;
 function cropKey({ regionUid, geometryKey: geometryKey2, drawingHash, tier }) {
-  return `${regionUid}|${geometryKey2}|${drawingHash}|${tier}`;
+  return `v${CACHE_VERSION}|${regionUid}|${geometryKey2}|${drawingHash}|${tier}`;
 }
 var reqPromise = (request) => new Promise((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
@@ -832,6 +856,7 @@ var txPromise = (tx) => new Promise((resolve, reject) => {
 function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL } = {}) {
   const memory = /* @__PURE__ */ new Map();
   const prefix = `${graph}|`;
+  const currentPrefix = `${prefix}v${CACHE_VERSION}|`;
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
@@ -867,7 +892,10 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
             const store = db.createObjectStore(STORE, { keyPath: "key" });
             store.createIndex("ts", "ts");
           };
-          request.onsuccess = () => resolve(request.result);
+          request.onsuccess = () => {
+            resolve(request.result);
+            purgeStale(request.result).catch((error) => console.warn("[plexus] cache purge failed", error));
+          };
           request.onerror = () => {
             console.warn("[plexus] cache db unavailable", request.error);
             resolve(null);
@@ -879,6 +907,25 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
       });
     }
     return dbPromise;
+  }
+  async function purgeStale(db) {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    await new Promise((resolve, reject) => {
+      const cursorReq = store.openCursor();
+      cursorReq.onerror = () => reject(cursorReq.error);
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const k = cursor.value.key;
+        if (typeof k === "string" && k.startsWith(prefix) && !k.startsWith(currentPrefix)) cursor.delete();
+        cursor.continue();
+      };
+    });
+    await txPromise(tx);
   }
   async function evictDb(db) {
     const tx = db.transaction(STORE, "readwrite");
@@ -937,10 +984,11 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
         return null;
       }
     },
-    async put(key, blob, { w, h } = {}) {
+    async put(key, blob, { w, h, persist: persist2 = true } = {}) {
       if (disposed) return;
       const entry = { url: urls.createObjectURL(blob), w, h, type: blob.type, size: blob.size || 0 };
       remember(key, entry);
+      if (!persist2) return;
       try {
         const db = await openDb();
         if (!db || disposed) return;
@@ -1013,52 +1061,82 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
 }
 
 // src/host/cold-render.js
+var DEFAULT_SETTLE_MS = 150;
 function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.document, timeoutMs = 8e3 } = {}) {
   const pending = /* @__PURE__ */ new Map();
+  const wanted = /* @__PURE__ */ new Map();
   let tail = Promise.resolve();
   let disposed = false;
   const inflight = /* @__PURE__ */ new Set();
   const findImg = (host) => host.querySelector("img.rm-inline-img--excalidraw");
   const isReady = (img) => !!img && img.complete && img.naturalWidth > 0;
-  function waitForImage(host) {
+  function waitForImage(host, settleMs) {
     return new Promise((resolve) => {
       let cancel = null;
       let observer = null;
       let timer = null;
       let poll = null;
+      let quiet = null;
       let done = false;
-      const finish = (img) => {
+      let seenImg = null;
+      let seenSrc = null;
+      const finish = (img, settled) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        clearTimeout(quiet);
         clearInterval(poll);
         observer?.disconnect?.();
         host.removeEventListener?.("load", check, true);
         inflight.delete(cancel);
-        resolve(img);
+        resolve(img ? { img, settled } : null);
       };
-      cancel = () => finish(null);
+      cancel = () => finish(null, false);
       inflight.add(cancel);
       function check() {
+        if (done) return;
         const img = findImg(host);
-        if (isReady(img)) finish(img);
-      }
-      const initial = findImg(host);
-      if (isReady(initial)) {
-        finish(initial);
-        return;
+        const src = img ? img.src : null;
+        if (img !== seenImg || src !== seenSrc) {
+          seenImg = img;
+          seenSrc = src;
+          clearTimeout(quiet);
+          quiet = null;
+        }
+        if (!isReady(img)) {
+          clearTimeout(quiet);
+          quiet = null;
+          return;
+        }
+        if (settleMs <= 0) {
+          finish(img, true);
+          return;
+        }
+        if (quiet) return;
+        quiet = setTimeout(() => {
+          quiet = null;
+          const now = findImg(host);
+          if (now === seenImg && now?.src === seenSrc && isReady(now)) finish(now, true);
+          else check();
+        }, settleMs);
       }
       host.addEventListener?.("load", check, true);
       const MO = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver;
       if (MO) {
         observer = new MO(check);
-        observer.observe(host, { childList: true, subtree: true, attributes: true });
+        observer.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
       }
-      poll = setInterval(check, 100);
-      timer = setTimeout(() => finish(null), timeoutMs);
+      poll = setInterval(check, 50);
+      timer = setTimeout(() => {
+        const img = findImg(host);
+        finish(isReady(img) ? img : null, false);
+      }, timeoutMs);
+      check();
     });
   }
   async function run(drawingUid) {
+    const settleMs = wanted.get(drawingUid) ?? DEFAULT_SETTLE_MS;
+    wanted.delete(drawingUid);
     if (disposed) return null;
     const host = doc.createElement("div");
     host.className = "plexus-offscreen";
@@ -1067,15 +1145,16 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
     doc.body.appendChild(host);
     try {
       api.ui.components.renderBlock({ uid: drawingUid, el: host });
-      const img = await waitForImage(host);
-      if (!img || disposed) return null;
+      const waited = await waitForImage(host, settleMs);
+      if (!waited || disposed) return null;
+      const { img, settled } = waited;
       const canvas = doc.createElement("canvas");
       const naturalWidth = img.naturalWidth;
       const naturalHeight = img.naturalHeight;
       canvas.width = naturalWidth;
       canvas.height = naturalHeight;
       canvas.getContext("2d").drawImage(img, 0, 0);
-      return { canvas, naturalWidth, naturalHeight };
+      return { canvas, naturalWidth, naturalHeight, settled };
     } catch (error) {
       console.warn("[plexus] cold render failed", error);
       return null;
@@ -1089,7 +1168,8 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
     }
   }
   return {
-    renderDrawing(drawingUid) {
+    renderDrawing(drawingUid, { settleMs = DEFAULT_SETTLE_MS } = {}) {
+      wanted.set(drawingUid, Math.max(wanted.get(drawingUid) ?? 0, settleMs));
       const existing = pending.get(drawingUid);
       if (existing) return existing;
       const p = tail.then(() => run(drawingUid));
@@ -1097,7 +1177,10 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
       });
       pending.set(drawingUid, p);
       const clear = () => {
-        if (pending.get(drawingUid) === p) pending.delete(drawingUid);
+        if (pending.get(drawingUid) === p) {
+          pending.delete(drawingUid);
+          wanted.delete(drawingUid);
+        }
       };
       p.then(clear, clear);
       return p;
@@ -1208,6 +1291,8 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
 var CLAIMED = "data-plexus-claimed";
 var FAIL_TTL_MS = 6e4;
 var PRUNE_FLOOR = 64;
+var IMAGE_SETTLE_MS = 1200;
+var PLAIN_SETTLE_MS = 150;
 function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }) {
   const roots = /* @__PURE__ */ new Map();
   const failed = /* @__PURE__ */ new Map();
@@ -1304,7 +1389,8 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
             const failedAt = failed.get(failKey);
             if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
             if (!root.isConnected) return;
-            const rendered = await cold.renderDrawing(region.drawingUid);
+            const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
+            const rendered = await cold.renderDrawing(region.drawingUid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
             if (!root.isConnected) return;
             const crop = rendered ? viewPngCropRect({
               elements: drawing.elements,
@@ -1318,7 +1404,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
             }
             entryKey = pngKey;
             const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
-            await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh });
+            await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
             entry = cache.peek(pngKey) || await cache.get(pngKey);
           }
           if (!root.isConnected) return;
@@ -1594,6 +1680,7 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
   async function putSvg(uid, region, svg) {
     const drawing = host.drawing(region.drawingUid);
     if (!svg || !drawing) return;
+    svg = normalizeSvgSize(svg);
     const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: drawing.hash, tier: "svg" });
     await cache.put(key, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
   }
@@ -1740,33 +1827,47 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
     };
-    if (!matches()) {
-      try {
-        await host.openBlock(uid, { sidebar });
-      } catch (error) {
-        console.warn("[plexus] open block failed", error);
-        toaster.show("Could not open drawing", { kind: "error" });
-        return null;
+    const findIcon = () => {
+      for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+        if (found && found.isConnected !== false) return found;
       }
-      const icon = await waitFor(() => {
-        for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-          if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
-          const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
-          if (found) return found;
+      return null;
+    };
+    const deadline = Date.now() + 1e4;
+    let editor = matches();
+    if (!editor) {
+      if (!findIcon()) {
+        try {
+          await host.openBlock(uid, { sidebar });
+        } catch (error) {
+          console.warn("[plexus] open block failed", error);
+          toaster.show("Could not open drawing", { kind: "error" });
+          return null;
         }
-        return null;
-      }, 3e3, 50, aborted);
-      if (!icon) {
-        if (disposed) return null;
-        toaster.show("Could not find the drawing", { kind: "error" });
-        return null;
       }
       const View = doc.defaultView;
-      for (const type of ["mousedown", "mouseup", "click"]) {
-        icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+      let dispatched = false;
+      for (let attempt = 0; attempt < 3 && !editor; attempt++) {
+        const icon = await waitFor(findIcon, Math.min(attempt === 0 ? 3e3 : 1500, Math.max(0, deadline - Date.now())), 50, aborted);
+        if (disposed) return null;
+        if (!icon) {
+          if (!dispatched) {
+            toaster.show("Could not find the drawing", { kind: "error" });
+            return null;
+          }
+          continue;
+        }
+        if (icon.isConnected === false) continue;
+        for (const type of ["mousedown", "mouseup", "click"]) {
+          icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+        }
+        dispatched = true;
+        editor = await waitFor(matches, Math.min(1500, Math.max(0, deadline - Date.now())), 50, aborted);
       }
     }
-    const editor = await waitFor(matches, 1e4, 50, aborted);
+    if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
     if (!editor) {
       if (disposed) return null;
       toaster.show("Drawing did not open", { kind: "error" });

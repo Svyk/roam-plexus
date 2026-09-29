@@ -269,3 +269,20 @@ export function cropSvgToFraction(svgString, f, pad = VIEW_EXPORT_PADDING) {
   next = setAttr(next, "height", fmt(nh * sy));
   return svgString.slice(0, m.index) + next + svgString.slice(m.index + tag.length);
 }
+
+const fmt2 = (n) => String(Math.round(n * 100) / 100);
+
+// Excalidraw sizes exported SVGs by its in-memory exportScale; the displayed size must not depend on it.
+export function normalizeSvgSize(svgString) {
+  const m = /<svg\b[^>]*>/.exec(svgString);
+  if (!m) return svgString;
+  const tag = m[0];
+  const vb = /\sviewBox\s*=\s*["']\s*(-?[\d.eE+-]+)[\s,]+(-?[\d.eE+-]+)[\s,]+([\d.eE+-]+)[\s,]+([\d.eE+-]+)\s*["']/.exec(tag);
+  if (!vb) return svgString;
+  const vw = Number(vb[3]);
+  const vh = Number(vb[4]);
+  if (!(vw > 0) || !(vh > 0)) return svgString;
+  let next = setAttr(tag, "width", fmt2(vw));
+  next = setAttr(next, "height", fmt2(vh));
+  return svgString.slice(0, m.index) + next + svgString.slice(m.index + tag.length);
+}
