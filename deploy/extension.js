@@ -749,6 +749,11 @@ function withClipboard(fn) {
 }
 var SVG_RE = /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>/]/;
 var looksLikeSvg = (text) => SVG_RE.test(String(text));
+async function pollToast(app, ms) {
+  const end = Date.now() + ms;
+  while (app.state?.toast == null && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 0));
+}
 async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500, doneWaitMs = 1e3 } = {}) {
   if (!clipboard) throw new Error("[plexus] clipboard unavailable");
   const prevIds = { ...app.state?.selectedElementIds || {} };
@@ -757,7 +762,10 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
   const origWrite = clipboard.write;
   let timer = null;
   let timedOut = false;
-  let done = null;
+  let performed = null;
+  const am = app.actionManager;
+  const origUpdater = am?.updater;
+  let wrapped = false;
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
@@ -786,10 +794,24 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
       timer = setTimeout(() => resolve(null), timeoutMs);
     });
     const action = app.actionManager.actions.copyAsSvg;
-    done = Promise.resolve(app.actionManager.executeAction(action, "api"));
-    done.catch(() => {
-    });
-    const svg = await Promise.race([captured, timeout, done.then(() => timeout)]);
+    if (typeof origUpdater === "function") {
+      wrapped = true;
+      am.updater = function(result) {
+        if (result && typeof result.then === "function") {
+          performed = Promise.resolve(result);
+          performed.catch(() => {
+          });
+        }
+        return origUpdater.apply(this, arguments);
+      };
+    }
+    const ret = am.executeAction(action, "api");
+    if (!performed && ret && typeof ret.then === "function") {
+      performed = Promise.resolve(ret);
+      performed.catch(() => {
+      });
+    }
+    const svg = await Promise.race([captured, timeout, ...performed ? [performed.then(() => timeout)] : []]);
     if (!svg) {
       timedOut = true;
       throw new Error("[plexus] no SVG captured");
@@ -808,12 +830,15 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
       };
       await new Promise((resolve) => setTimeout(resolve, graceMs));
     }
-    if (done) {
+    if (wrapped) am.updater = origUpdater;
+    {
       let settleTimer = null;
-      await Promise.race([done.catch(() => {
-      }), new Promise((resolve) => {
+      const wait = new Promise((resolve) => {
         settleTimer = setTimeout(resolve, doneWaitMs);
-      })]);
+      });
+      if (performed) await Promise.race([performed.catch(() => {
+      }), wait]);
+      else if (!wrapped && app.state?.toast == null) await pollToast(app, doneWaitMs);
       clearTimeout(settleTimer);
     }
     clipboard.writeText = origWriteText;
