@@ -53,6 +53,10 @@ test("string escapes", () => {
   assert.equal(parseEdn(String.raw`"😀"`), "\u{1F600}");
   assert.equal(parseEdn('"raw\ttab\nnl é ☃"'), "raw\ttab\nnl é ☃");
   assert.equal(parseEdn('"has } and }} inside"'), "has } and }} inside");
+  assert.equal(parseEdn(String.raw`"\u00e9"`), "é");
+  assert.equal(parseEdn(String.raw`"\u00E9x"`), "éx");
+  assert.equal(parseEdn(String.raw`"\ud83d\ude00"`), "\u{1F600}");
+  assert.equal(parseEdn(String.raw`"a\u0041b"`), "aAb");
   assert.throws(() => parseEdn(String.raw`"\q"`), SyntaxError);
   assert.throws(() => parseEdn(String.raw`"\u12"`), SyntaxError);
 });
@@ -181,5 +185,5 @@ test("large map parses quickly", () => {
   const ms = performance.now() - t0;
   console.log(`[edn] ${text.length} bytes parsed in ${ms.toFixed(1)} ms`);
   assert.equal(v.elements.length, n);
-  assert.ok(ms < 200 * 5, `too slow: ${ms}`);
+  assert.ok(ms < 200, `too slow: ${ms}`);
 });

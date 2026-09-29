@@ -401,8 +401,15 @@ export function createEmbedOverlay({
   function installGlobals(s) {
     const { portal } = s;
     const onKey = (e) => {
-      if (s.phase !== "active" || e.isComposing || e.keyCode === 229) return;
+      if ((s.phase !== "active" && s.phase !== "entering") || e.isComposing || e.keyCode === 229) return;
       const t = e.target;
+      if (s.phase === "entering") {
+        // The editor is still mounting: Esc cancels, and keys outside the overlay must not reach Excalidraw's hotkeys.
+        if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
+        swallow(e);
+        if (e.key === "Escape") void leave("keyboard");
+        return;
+      }
       if (!within(t, portal.root)) {
         if (t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
         // Focus fell to body (late hydration): keep the key away from Excalidraw and take focus back.
@@ -430,8 +437,10 @@ export function createEmbedOverlay({
         swallow(e);
         return;
       }
-      if (menuOpen || !isRootTextarea(s, t)) return;
       const key = e.key;
+      // Block selection would leave the mount from any textarea in it, child blocks included.
+      if (!menuOpen && ((key === "ArrowUp" && e.shiftKey && !e.altKey && !mod && start === 0) || (key === "ArrowDown" && e.shiftKey && !e.altKey && !mod && end === len))) { swallow(e); return; }
+      if (menuOpen || !isRootTextarea(s, t)) return;
       if (key === "Enter" && !e.shiftKey && !mod && !e.altKey) { swallow(e); void leave("keyboard"); return; }
       const arrow = key === "ArrowUp" || key === "ArrowDown";
       if (key === "Tab"
@@ -442,7 +451,7 @@ export function createEmbedOverlay({
         || (key === "ArrowDown" && e.shiftKey && end === len)) swallow(e);
     };
     const onDown = (e) => {
-      if (s.phase !== "active") return;
+      if (s.phase !== "active" && s.phase !== "entering") return;
       const t = e.target;
       if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
       void leave("pointer");
@@ -503,6 +512,7 @@ export function createEmbedOverlay({
     dirty.delete(portal);
     notify();
     installStoppers(s);
+    installGlobals(s);
     s.prev = { ids: { ...(app.state?.selectedElementIds || {}) }, groups: { ...(app.state?.selectedGroupIds || {}) } };
     updateSelection({}, {});
     unmountHosts(portal);
@@ -531,7 +541,6 @@ export function createEmbedOverlay({
     }
     s.clickedAt = Date.now();
     s.phase = "active";
-    installGlobals(s);
     notify();
     return true;
   }
@@ -584,7 +593,9 @@ export function createEmbedOverlay({
     // 7. keyboard leave: give the selection back if the anchors are all still there
     if (keyboard && !disposed && s.prev) {
       const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
-      if (Object.keys(s.prev.ids).every((id) => live.has(id))) updateSelection(s.prev.ids, s.prev.groups);
+      const now = app.state || {};
+      const untouched = !Object.keys(now.selectedElementIds || {}).length && !Object.keys(now.selectedGroupIds || {}).length;
+      if (untouched && Object.keys(s.prev.ids).every((id) => live.has(id))) updateSelection(s.prev.ids, s.prev.groups);
     }
     notify();
   }

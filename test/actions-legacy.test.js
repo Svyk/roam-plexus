@@ -9,7 +9,7 @@ const TARGET = `m${fnv1a(LEGACY)}`;
 const legacyString = (extra = "") => `{{roam/render: ((ExcalDATA)) {:appState {} :elements [{:type "rectangle" :id "a" :x 1 :y 2 :width 10 :height 10} {:type "text" :id "b" :x 0 :y 0 :width 5 :height 5 :text "hi"}${extra}] :roamExcalidraw {:version 1}}}}`;
 const tagged = (n) => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, type: "rectangle", isDeleted: false, customData: { plexus: { migratedFrom: LEGACY } } }));
 
-function world({ legacy = legacyString(), confirmAnswer = true, editorOpen = false, existing = {}, drawings = {}, verifyTimeoutMs = 1500, openDelay = 0, mutateLegacyOnPaste = false } = {}) {
+function world({ legacy = legacyString(), confirmAnswer = true, editorOpen = false, existing = {}, drawings = {}, verifyTimeoutMs = 1500, openDelay = 0, mutateLegacyOnPaste = false, pasteThrows = false, loaded = true, openFails = false, lockSpy = null } = {}) {
   const log = [];
   const toasts = [];
   const graph = { [LEGACY]: { uid: LEGACY, string: legacy, editTime: 100, children: [], props: null }, parent001: { uid: "parent001", string: "", editTime: 1, children: [{ uid: LEGACY, string: legacy, order: 2 }] } };
@@ -52,6 +52,7 @@ function world({ legacy = legacyString(), confirmAnswer = true, editorOpen = fal
     drawing: (uid) => (drawings[uid] ? { elements: drawings[uid] } : null),
     openBlock: async (uid) => {
       log.push("openBlock");
+      if (openFails) return;
       if (openDelay) await new Promise((r) => setTimeout(r, openDelay));
       state.editor = { app, drawingUid: uid };
     },
@@ -59,12 +60,13 @@ function world({ legacy = legacyString(), confirmAnswer = true, editorOpen = fal
   const pasted = [];
   const native = {
     activeEditor: () => state.editor,
-    waitNotLoading: async () => true,
+    waitNotLoading: async () => loaded,
     selectedElementIds: () => [],
     withClipboard: (fn) => fn(),
     zoomTo() { log.push("zoom"); },
     addViaPaste: (a, els) => {
       log.push("paste");
+      if (pasteThrows) { if (mutateLegacyOnPaste) { graph[LEGACY].string = "edited by user"; graph[LEGACY].editTime = 555; } throw new Error("paste boom"); }
       pasted.push(els);
       const ids = els.map((e, i) => `n${i}`);
       a.scene.push(...els.map((e, i) => ({ ...e, id: ids[i], isDeleted: false })));
@@ -81,6 +83,7 @@ function world({ legacy = legacyString(), confirmAnswer = true, editorOpen = fal
     createDialog: () => dialog,
     confirm: (m) => { confirms.push(m); if (confirmAnswer === "throw") throw new Error("boom"); return confirmAnswer; },
     frame: async () => {}, verifyTimeoutMs, verifyPollMs: 5,
+    ...(lockSpy ? { withLockFn: lockSpy } : {}),
   });
   return { actions, log, toasts, creates, pasted, graph, dialog, confirms, state, drawings };
 }
@@ -105,11 +108,13 @@ test("dry run with strict fakes: any block.* or render call would throw, and non
 
 test("migrate creates one block below the legacy one, tags the paste, closes the dialog first, and never writes the legacy uid", async () => {
   const w = world();
+  await w.actions.legacyDryRun();
   const result = await w.actions.migrateLegacy(LEGACY);
   assert.equal(result, TARGET);
   assert.match(w.confirms[0], /Create a new native drawing right below this legacy block/);
   assert.equal(w.creates.length, 1);
   assert.deepEqual(w.creates[0], { location: { "parent-uid": "parent001", order: 3 }, block: { uid: TARGET, string: "{{[[excalidraw]]}}" } });
+  assert.ok(w.log.indexOf("dialog.close") >= 0, "the dialog was open and got closed");
   assert.ok(w.log.indexOf("dialog.close") < w.log.indexOf("create"));
   assert.ok(w.log.indexOf("dialog.close") < w.log.indexOf("openBlock"));
   assert.equal(w.pasted.length, 1);
@@ -176,7 +181,7 @@ test("invalid elements are skipped and reported as N of M", async () => {
   const w = world({ legacy: legacyString(' {:type "rectangle" :id "c" :x ##NaN :y 0 :width 1 :height 1}') });
   await w.actions.migrateLegacy(LEGACY);
   assert.equal(w.pasted[0].length, 2);
-  assert.match(w.toasts[0], /^Migrated 2 of 3 elements \(1 invalid or invisible skipped\)\. The legacy block is unchanged\.$/);
+  assert.match(w.toasts[0], /^Migrated 2 of 3 elements \(1 not migrated\)\. The legacy block is unchanged\.$/);
 });
 
 test("a legacy block that changed meanwhile is reported as not changed by Plexus", async () => {
@@ -191,6 +196,51 @@ test("no success wording when Roam never saves the pasted elements", async () =>
   const result = await w.actions.migrateLegacy(LEGACY);
   assert.equal(result, null);
   assert.equal(w.toasts.some((m) => /^Migrated/.test(m)), false);
+  assert.deepEqual(w.toasts, ["Migration not confirmed yet. Reopen the drawing before running Migrate again"]);
+  assert.equal(w.graph[LEGACY].string, legacyString());
+});
+
+test("a throwing paste names the empty drawing and does not claim the legacy block is unchanged when it was edited", async () => {
+  const w = world({ pasteThrows: true, mutateLegacyOnPaste: true });
+  assert.equal(await w.actions.migrateLegacy(LEGACY), null);
+  assert.equal(w.toasts.length, 1);
+  assert.ok(w.toasts[0].startsWith(`Migration failed. An empty drawing (${TARGET}) was created; run Migrate again and it will be reused. The legacy block changed meanwhile`));
+  assert.doesNotMatch(w.toasts[0], /is unchanged/);
+});
+
+test("a throwing paste with an untouched legacy block says so, and names the created drawing", async () => {
+  const w = world({ pasteThrows: true });
+  assert.equal(await w.actions.migrateLegacy(LEGACY), null);
+  assert.ok(w.toasts[0].includes(TARGET));
+  assert.ok(w.toasts[0].endsWith("The legacy block is unchanged."));
+});
+
+test("open failure after create names the empty drawing", async () => {
+  const w = world({ openFails: true });
+  const result = await w.actions.migrateLegacy(LEGACY);
+  assert.equal(result, null);
+  assert.equal(w.creates.length, 1);
+  assert.ok(w.toasts.some((m) => m.includes(TARGET) && /did not open/.test(m)));
+  assert.equal(w.log.includes("paste"), false);
+});
+
+test("a scene that is still loading aborts before the paste", async () => {
+  const w = world({ loaded: false });
+  assert.equal(await w.actions.migrateLegacy(LEGACY), null);
+  assert.equal(w.log.includes("paste"), false);
+  assert.deepEqual(w.toasts, ["Drawing is still loading; run Migrate again and the empty drawing will be reused"]);
+});
+
+test("the migration lock: exact name and ifAvailable; a loser toasts and writes nothing", async () => {
+  const calls = [];
+  const w = world({ lockSpy: async (name, fn, opts) => { calls.push([name, opts]); return { acquired: false }; } });
+  await w.actions.legacyDryRun();
+  assert.equal(await w.actions.migrateLegacy(LEGACY), null);
+  assert.deepEqual(calls, [[`plexus:g:migrate:${LEGACY}`, { ifAvailable: true }]]);
+  assert.deepEqual(w.toasts, ["Migration already running in another window"]);
+  assert.equal(w.creates.length, 0);
+  assert.equal(w.log.includes("openBlock"), false);
+  assert.equal(w.log.includes("dialog.close"), false);
 });
 
 test("editEmbed guards: page refs are read-only, drawings and unknown blocks are refused, a block ref opens the editor", async () => {

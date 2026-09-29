@@ -885,8 +885,9 @@ export function createActions({
     try { ok = confirm("Create a new native drawing right below this legacy block? The legacy block is not changed.") === true; } catch { ok = false; }
     if (!ok) return null;
     migrating = true;
+    const run = { before: legacySnapshot(legacyUid), target: null };
     try {
-      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv), { ifAvailable: true });
+      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv, run), { ifAvailable: true });
       if (!lock.acquired) {
         toaster.show("Migration already running in another window", { kind: "error" });
         return null;
@@ -894,15 +895,22 @@ export function createActions({
       return lock.value ?? null;
     } catch (error) {
       console.warn("[plexus] migration failed", error);
-      if (!disposed) toaster.show("Migration failed; the legacy block is unchanged", { kind: "error" });
+      if (!disposed) toaster.show(migrationStoppedText(legacyUid, run, "Migration failed."), { kind: "error" });
       return null;
     } finally {
       migrating = false;
     }
   }
 
-  async function migrateBody(legacyUid, parsed, conv) {
-    const before = legacySnapshot(legacyUid);
+  function migrationStoppedText(legacyUid, run, head) {
+    const now = legacySnapshot(legacyUid);
+    const same = !!run.before && !!now && run.before.string === now.string && run.before.editTime === now.editTime;
+    const made = run.target ? ` An empty drawing (${run.target}) was created; run Migrate again and it will be reused.` : "";
+    return `${head}${made} ${same ? "The legacy block is unchanged." : "The legacy block changed meanwhile (not by Plexus)."}`;
+  }
+
+  async function migrateBody(legacyUid, parsed, conv, run = { before: null, target: null }) {
+    const before = run.before ?? legacySnapshot(legacyUid);
     const target = `m${fnv1a(legacyUid)}`;
     const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", legacyUid]);
     const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
@@ -950,19 +958,28 @@ export function createActions({
       }
     }
     if (disposed) return null;
+    run.target = targetUid;
     const editor = await openDrawingOnce(targetUid, {});
-    if (!editor || disposed) return null;
+    if (disposed) return null;
+    if (!editor) {
+      toaster.show(migrationStoppedText(legacyUid, run, "Migration stopped: the drawing did not open."), { kind: "error" });
+      return null;
+    }
     const app = editor.app;
     const stillHere = () => {
       const now = native.activeEditor(doc);
       return !!now && now.app === app && now.drawingUid === targetUid && app.state?.width > 0 && app.state?.height > 0;
     };
-    await native.waitNotLoading(app, 5000, { doc });
+    const loaded = await native.waitNotLoading(app, 5000, { doc });
     await frame();
     await frame();
     if (disposed) return null;
     if (!stillHere()) {
       toaster.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
+      return null;
+    }
+    if (!loaded || app.state?.isLoading) {
+      toaster.show("Drawing is still loading; run Migrate again and the empty drawing will be reused", { kind: "error" });
       return null;
     }
     const ids = native.addViaPaste(app, conv.elements);
@@ -994,8 +1011,8 @@ export function createActions({
     }
     const after = legacySnapshot(legacyUid);
     const unchanged = !!before && !!after && before.string === after.string && before.editTime === after.editTime;
-    const skipped = conv.invalid + conv.invisible;
-    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped} invalid or invisible skipped).`;
+    const skipped = M - N;
+    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped} not migrated).`;
     toaster.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
     return targetUid;
   }

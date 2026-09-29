@@ -94,7 +94,8 @@ function sceneFixture() {
   let n = 0;
   const native = {
     activeEditor: () => ctx.app && ctx,
-    addViaPaste(a, copies) {
+    addViaPaste(a, copies, opts) {
+      native.lastOpts = opts;
       for (const c of copies) a.els.push({ ...structuredClone(c), id: `new${n++}`, frameId: "f" });
     },
     waitNotLoading: async () => true,
@@ -203,4 +204,33 @@ test("whenOpen validates, shares in-flight promise, and rejects on dispose", asy
   const hang = createPublicApi({ host, actions: {}, scenes: reg, openDrawing: () => new Promise(() => {}) }).whenOpen("d1", { timeoutMs: 5000 });
   reg.dispose();
   await assert.rejects(hang, /Plexus unloaded/);
+});
+
+test("add: an isDeleted-only input returns null ids and does not throw, for keep and center", () => {
+  const { app, reg } = sceneFixture();
+  const s = reg.sceneFor(app, "d1");
+  const dead = { type: "rectangle", x: 0, y: 0, width: 5, height: 5, isDeleted: true };
+  assert.deepEqual(s.add([dead]), [null]);
+  assert.deepEqual(s.add([dead], { at: "center" }), [null]);
+});
+
+test("add: no captureUpdate on the scene update, position follows at, select:false restores the prior selection", () => {
+  const { app, native, reg } = sceneFixture();
+  const s = reg.sceneFor(app, "d1");
+  app.state.selectedElementIds = { a: true };
+  const r = { type: "rectangle", x: 0, y: 0, width: 10, height: 10 };
+  s.add([r], { select: false });
+  assert.ok(app.updates.every((u) => !("captureUpdate" in u)), "one undo step: no captureUpdate");
+  assert.deepEqual(app.state.selectedElementIds, { a: true });
+  assert.ok(native.lastOpts.position && typeof native.lastOpts.position === "object", "keep passes a client position");
+  s.add([r], { at: "center", select: true });
+  assert.equal(native.lastOpts.position, "center");
+});
+
+test("update: a partial customData.plexus patch keeps sibling plexus keys", () => {
+  const { app, reg } = sceneFixture();
+  app.els[0].customData = { k: 1, plexus: { embed: "((abcdefghi))", migratedFrom: "XYZ123456" } };
+  const s = reg.sceneFor(app, "d1");
+  const out = s.update("a", { customData: { plexus: { order: 2 } } });
+  assert.deepEqual(out.customData, { k: 1, plexus: { embed: "((abcdefghi))", migratedFrom: "XYZ123456", order: 2 } });
 });

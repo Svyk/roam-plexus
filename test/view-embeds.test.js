@@ -100,7 +100,7 @@ test("a deleted anchor removes its portal and watch; dispose leaves nothing behi
   assert.equal(t.subs.off, 1);
   assert.ok(t.watches.every((w) => w.off));
   assert.ok(t.body.children.every((c) => c.removed));
-  assert.equal(t.unmounted.length, t.rendered.length + 0 >= 0 ? t.unmounted.length : 0);
+  assert.equal(new Set(t.unmounted).size, t.unmounted.length, "no host unmounted twice");
   for (const [el] of t.rendered) assert.ok(t.unmounted.includes(el), "every renderString host unmounted");
   t.subs.cb();
   assert.equal(t.frames.length, 0);
@@ -238,13 +238,14 @@ function editSetup({ elements } = {}) {
     pullEmbedContent: async () => { log.push("pull"); return { kind: "block", uid: "abcdefghi", title: "P", string: "s", children: [] }; },
     watchEmbed: (uid, cb) => { const w = { cb }; watches.push(w); return () => {}; },
   };
+  const hooks = {};
   const updates = [];
   const anchor = (id, ref) => ({ id, type: "rectangle", x: 10, y: 20, width: 100, height: 50, angle: 0, isDeleted: false, customData: { plexus: { embed: ref } } });
   const app = {
     state: { scrollX: 0, scrollY: 0, zoom: { value: 2 }, offsetLeft: 0, offsetTop: 0, selectedElementIds: { e1: true }, selectedGroupIds: {} },
     elements: elements ?? [anchor("e1", "((abcdefghi))")],
     getSceneElementsIncludingDeleted() { return this.elements; },
-    updateScene(u) { updates.push(u); },
+    updateScene(u) { updates.push(u); if (u.appState) Object.assign(this.state, u.appState); },
   };
   const containerEl = doc.createElement("div");
   containerEl.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 800, width: 1000 });
@@ -252,8 +253,8 @@ function editSetup({ elements } = {}) {
   const subs = {};
   const overlay = createEmbedOverlay({
     doc, api, host, app, containerEl, subscribe: (_a, cb) => { subs.cb = cb; return () => {}; },
-    sleep: async (ms) => { log.push(`sleep${ms}`); },
-    waitQuiet: async () => {},
+    sleep: async (ms) => { log.push(`sleep${ms}`); hooks.onSleep?.(ms); },
+    waitQuiet: () => (hooks.quiet ? hooks.quiet() : Promise.resolve()),
   });
   const flush = async () => { while (frames.length) frames.shift()(); await new Promise((r) => setTimeout(r, 0)); };
   const key = (target, k, extra = {}) => {
@@ -262,7 +263,7 @@ function editSetup({ elements } = {}) {
     return ev;
   };
   const down = (target) => { for (const l of [...doc.docListeners].filter((x) => x.type === "pointerdown")) l.fn({ type: "pointerdown", target }); };
-  return { overlay, doc, api, log, rendered, unmounted, blocks, watches, updates, app, flush, key, down, subs, winListeners, containerEl };
+  return { hooks, overlay, doc, api, log, rendered, unmounted, blocks, watches, updates, app, flush, key, down, subs, winListeners, containerEl };
 }
 
 async function entered(t) {
@@ -489,4 +490,53 @@ test("installEmbedF2 acts only for a plain F2 on the container with an editable 
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(edits, 1);
   assert.equal(typeof off, "function");
+});
+
+test("Esc and an outside pointerdown while the editor is still entering cancel the session; other outside keys are swallowed", async () => {
+  for (const cancel of ["esc", "pointer"]) {
+    const t = editSetup();
+    await t.flush();
+    let release;
+    t.hooks.quiet = () => new Promise((r) => { release = r; });
+    const p = t.overlay.edit("e1");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(t.overlay.editState(), "entering");
+    assert.ok(t.winListeners.length > 0 && t.doc.docListeners.length > 0, "capture listeners installed at entry");
+    assert.equal(t.key(t.doc.body, "r").stopped, true, "hotkey kept from Excalidraw");
+    assert.equal(t.overlay.editState(), "entering");
+    if (cancel === "esc") t.key(t.doc.body, "Escape"); else t.down(t.doc.body);
+    release();
+    assert.equal(await p, false);
+    await t.overlay.leave();
+    assert.equal(t.overlay.editState(), "idle");
+    assert.equal(t.winListeners.length, 0);
+    assert.equal(t.doc.docListeners.length, 0);
+    await t.overlay.dispose();
+  }
+});
+
+test("block-select keys are swallowed in a child block textarea too; Tab is left to Roam there", async () => {
+  const t = editSetup();
+  await entered(t);
+  const child = t.doc.createElement("textarea");
+  child.id = "block-input-w-childuid01";
+  child.value = "kid";
+  t.blocks[0].el.append(child);
+  child.focus();
+  child.selectionStart = 0; child.selectionEnd = 0;
+  assert.equal(t.key(child, "ArrowUp", { shiftKey: true }).stopped, true);
+  child.selectionStart = 3; child.selectionEnd = 3;
+  assert.equal(t.key(child, "ArrowDown", { shiftKey: true }).stopped, true);
+  assert.equal(t.key(child, "Tab").stopped, undefined);
+  await t.overlay.dispose();
+});
+
+test("keyboard leave does not overwrite a selection the user made during the 300 ms wait", async () => {
+  const t = editSetup();
+  await entered(t);
+  t.hooks.onSleep = () => { t.app.state.selectedElementIds = { e2: true }; };
+  await t.overlay.leave("keyboard");
+  assert.equal(t.updates.length, 1, "only the clear on enter");
+  assert.deepEqual(t.app.state.selectedElementIds, { e2: true });
+  await t.overlay.dispose();
 });

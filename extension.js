@@ -2458,8 +2458,14 @@ function createEmbedOverlay({
   function installGlobals(s) {
     const { portal } = s;
     const onKey = (e) => {
-      if (s.phase !== "active" || e.isComposing || e.keyCode === 229) return;
+      if (s.phase !== "active" && s.phase !== "entering" || e.isComposing || e.keyCode === 229) return;
       const t = e.target;
+      if (s.phase === "entering") {
+        if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
+        swallow(e);
+        if (e.key === "Escape") void leave("keyboard");
+        return;
+      }
       if (!within(t, portal.root)) {
         if (t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
         swallow(e);
@@ -2491,8 +2497,12 @@ function createEmbedOverlay({
         swallow(e);
         return;
       }
-      if (menuOpen || !isRootTextarea(s, t)) return;
       const key = e.key;
+      if (!menuOpen && (key === "ArrowUp" && e.shiftKey && !e.altKey && !mod && start === 0 || key === "ArrowDown" && e.shiftKey && !e.altKey && !mod && end === len)) {
+        swallow(e);
+        return;
+      }
+      if (menuOpen || !isRootTextarea(s, t)) return;
       if (key === "Enter" && !e.shiftKey && !mod && !e.altKey) {
         swallow(e);
         void leave("keyboard");
@@ -2502,7 +2512,7 @@ function createEmbedOverlay({
       if (key === "Tab" || key === "Backspace" && start === 0 && end === 0 || key === "Delete" && start === len && end === len || arrow && e.shiftKey && (e.altKey || mod) || key === "ArrowUp" && e.shiftKey && start === 0 || key === "ArrowDown" && e.shiftKey && end === len) swallow(e);
     };
     const onDown = (e) => {
-      if (s.phase !== "active") return;
+      if (s.phase !== "active" && s.phase !== "entering") return;
       const t = e.target;
       if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
       void leave("pointer");
@@ -2572,6 +2582,7 @@ function createEmbedOverlay({
     dirty.delete(portal);
     notify();
     installStoppers(s);
+    installGlobals(s);
     s.prev = { ids: { ...app.state?.selectedElementIds || {} }, groups: { ...app.state?.selectedGroupIds || {} } };
     updateSelection({}, {});
     unmountHosts(portal);
@@ -2600,7 +2611,6 @@ function createEmbedOverlay({
     }
     s.clickedAt = Date.now();
     s.phase = "active";
-    installGlobals(s);
     notify();
     return true;
   }
@@ -2664,7 +2674,9 @@ function createEmbedOverlay({
     }
     if (keyboard && !disposed && s.prev) {
       const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
-      if (Object.keys(s.prev.ids).every((id) => live.has(id))) updateSelection(s.prev.ids, s.prev.groups);
+      const now = app.state || {};
+      const untouched = !Object.keys(now.selectedElementIds || {}).length && !Object.keys(now.selectedGroupIds || {}).length;
+      if (untouched && Object.keys(s.prev.ids).every((id) => live.has(id))) updateSelection(s.prev.ids, s.prev.groups);
     }
     notify();
   }
@@ -3464,6 +3476,7 @@ var isPlain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 var nonce = () => Math.floor(Math.random() * 2 ** 31);
 var bump = (el, extra = {}) => ({ ...el, ...extra, version: (el.version || 0) + 1, versionNonce: nonce(), updated: Date.now() });
 function invisible(el) {
+  if (el.isDeleted) return true;
   if (["line", "arrow", "draw", "freedraw"].includes(el.type)) return !Array.isArray(el.points) || el.points.length < 2;
   if (el.type === "text") return !el.text;
   return el.width === 0 && el.height === 0;
@@ -3516,9 +3529,12 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
         const prevGroups = { ...app.state?.selectedGroupIds || {} };
         let position = "center";
         if (at === "keep") {
-          const [x1, y1, x2, y2] = commonBounds(copies);
-          const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
-          position = { clientX: p.x, clientY: p.y };
+          const bounds = commonBounds(copies);
+          if (bounds) {
+            const [x1, y1, x2, y2] = bounds;
+            const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
+            position = { clientX: p.x, clientY: p.y };
+          }
         }
         native.addViaPaste(app, copies, { position });
         const byKey = /* @__PURE__ */ new Map();
@@ -3555,7 +3571,11 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
         const el = all().find((e) => e.id === id);
         if (!el) throw new Error(`No element ${id}`);
         const extra = { ...patch };
-        if (patch.customData !== void 0) extra.customData = { ...el.customData || {}, ...patch.customData };
+        if (patch.customData !== void 0) {
+          const merged = { ...el.customData || {}, ...patch.customData };
+          if (isPlain(patch.customData.plexus) && isPlain(el.customData?.plexus)) merged.plexus = { ...el.customData.plexus, ...patch.customData.plexus };
+          extra.customData = merged;
+        }
         if (typeof patch.text === "string" && patch.originalText === void 0) extra.originalText = patch.text;
         const updated = bump(el, extra);
         write(all().map((e) => e.id === id ? updated : e));
@@ -7194,8 +7214,9 @@ function createActions({
     }
     if (!ok) return null;
     migrating = true;
+    const run = { before: legacySnapshot(legacyUid), target: null };
     try {
-      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv), { ifAvailable: true });
+      const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv, run), { ifAvailable: true });
       if (!lock.acquired) {
         toaster.show("Migration already running in another window", { kind: "error" });
         return null;
@@ -7203,14 +7224,20 @@ function createActions({
       return lock.value ?? null;
     } catch (error) {
       console.warn("[plexus] migration failed", error);
-      if (!disposed) toaster.show("Migration failed; the legacy block is unchanged", { kind: "error" });
+      if (!disposed) toaster.show(migrationStoppedText(legacyUid, run, "Migration failed."), { kind: "error" });
       return null;
     } finally {
       migrating = false;
     }
   }
-  async function migrateBody(legacyUid, parsed, conv) {
-    const before = legacySnapshot(legacyUid);
+  function migrationStoppedText(legacyUid, run, head) {
+    const now = legacySnapshot(legacyUid);
+    const same2 = !!run.before && !!now && run.before.string === now.string && run.before.editTime === now.editTime;
+    const made = run.target ? ` An empty drawing (${run.target}) was created; run Migrate again and it will be reused.` : "";
+    return `${head}${made} ${same2 ? "The legacy block is unchanged." : "The legacy block changed meanwhile (not by Plexus)."}`;
+  }
+  async function migrateBody(legacyUid, parsed, conv, run = { before: null, target: null }) {
+    const before = run.before ?? legacySnapshot(legacyUid);
     const target = `m${fnv1a(legacyUid)}`;
     const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", legacyUid]);
     const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
@@ -7258,19 +7285,28 @@ function createActions({
       }
     }
     if (disposed) return null;
+    run.target = targetUid;
     const editor = await openDrawingOnce(targetUid, {});
-    if (!editor || disposed) return null;
+    if (disposed) return null;
+    if (!editor) {
+      toaster.show(migrationStoppedText(legacyUid, run, "Migration stopped: the drawing did not open."), { kind: "error" });
+      return null;
+    }
     const app = editor.app;
     const stillHere = () => {
       const now = native.activeEditor(doc);
       return !!now && now.app === app && now.drawingUid === targetUid && app.state?.width > 0 && app.state?.height > 0;
     };
-    await native.waitNotLoading(app, 5e3, { doc });
+    const loaded = await native.waitNotLoading(app, 5e3, { doc });
     await frame();
     await frame();
     if (disposed) return null;
     if (!stillHere()) {
       toaster.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
+      return null;
+    }
+    if (!loaded || app.state?.isLoading) {
+      toaster.show("Drawing is still loading; run Migrate again and the empty drawing will be reused", { kind: "error" });
       return null;
     }
     const ids = native.addViaPaste(app, conv.elements);
@@ -7305,8 +7341,8 @@ function createActions({
     }
     const after = legacySnapshot(legacyUid);
     const unchanged = !!before && !!after && before.string === after.string && before.editTime === after.editTime;
-    const skipped2 = conv.invalid + conv.invisible;
-    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped2} invalid or invisible skipped).`;
+    const skipped2 = M - N;
+    const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped2} not migrated).`;
     toaster.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
     return targetUid;
   }

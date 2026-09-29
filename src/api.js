@@ -12,6 +12,7 @@ const bump = (el, extra = {}) => ({ ...el, ...extra, version: (el.version || 0) 
 
 // Elements that Excalidraw's restore would keep as isDeleted (phase 5 item 15 rule).
 function invisible(el) {
+  if (el.isDeleted) return true;
   if (["line", "arrow", "draw", "freedraw"].includes(el.type)) return !Array.isArray(el.points) || el.points.length < 2;
   if (el.type === "text") return !el.text;
   return el.width === 0 && el.height === 0;
@@ -64,9 +65,12 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
         const prevGroups = { ...(app.state?.selectedGroupIds || {}) };
         let position = "center";
         if (at === "keep") {
-          const [x1, y1, x2, y2] = commonBounds(copies);
-          const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
-          position = { clientX: p.x, clientY: p.y };
+          const bounds = commonBounds(copies);
+          if (bounds) {
+            const [x1, y1, x2, y2] = bounds;
+            const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
+            position = { clientX: p.x, clientY: p.y };
+          }
         }
         native.addViaPaste(app, copies, { position });
         const byKey = new Map();
@@ -102,7 +106,11 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
         const el = all().find((e) => e.id === id);
         if (!el) throw new Error(`No element ${id}`);
         const extra = { ...patch };
-        if (patch.customData !== undefined) extra.customData = { ...(el.customData || {}), ...patch.customData };
+        if (patch.customData !== undefined) {
+          const merged = { ...(el.customData || {}), ...patch.customData };
+          if (isPlain(patch.customData.plexus) && isPlain(el.customData?.plexus)) merged.plexus = { ...el.customData.plexus, ...patch.customData.plexus };
+          extra.customData = merged;
+        }
         if (typeof patch.text === "string" && patch.originalText === undefined) extra.originalText = patch.text;
         const updated = bump(el, extra);
         write(all().map((e) => (e.id === id ? updated : e)));

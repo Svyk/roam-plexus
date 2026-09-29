@@ -263,3 +263,15 @@ test("waitNotLoading resolves true when loading ends, false on timeout or non-ac
   assert.equal(await waitNotLoading(app, 50, { doc, raf: (fn) => setTimeout(fn, 0), now: () => (t += 20) }), false);
   assert.equal(await waitNotLoading({ state: {} }, 50, { doc, raf: (fn) => setTimeout(fn, 0) }), false);
 });
+
+test("waitNotLoading ends false as soon as the editor deactivates between polls", async () => {
+  const app = { state: { isLoading: true }, updateScene() {}, getSceneElementsIncludingDeleted() { return []; }, actionManager: {} };
+  const live = docFor(app);
+  let active = true;
+  const doc = { querySelector: (sel) => (active ? live.querySelector(sel) : null) };
+  let polls = 0;
+  const raf = (fn) => { if (++polls === 2) active = false; setTimeout(fn, 0); };
+  let t = 0;
+  assert.equal(await waitNotLoading(app, 100000, { doc, raf, now: () => (t += 1) }), false);
+  assert.ok(polls <= 3, `stopped early, polled ${polls}`);
+});
