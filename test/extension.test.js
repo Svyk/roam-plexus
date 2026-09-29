@@ -62,3 +62,48 @@ test("version flag is set on load and cleared on unload", async () => {
   await extension.onunload();
   assert.equal(globalThis.__ROAM_PLEXUS_VERSION, undefined);
 });
+
+async function loadWithFakeRoam({ isEncrypted }) {
+  const opens = [];
+  const removed = [];
+  const api = fakeExtensionApi();
+  const callbacks = new Map();
+  api.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+  const body = { append() {}, appendChild() {}, querySelectorAll: () => [] };
+  globalThis.document = {
+    body,
+    defaultView: { MutationObserver: undefined, addEventListener() {}, removeEventListener() {} },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, append() {}, remove() { removed.push(1); }, addEventListener() {}, setAttribute() {} }),
+  };
+  globalThis.roamAlphaAPI = { graph: { name: "g", isEncrypted }, util: { generateUID: () => "x" }, data: { pull: () => null }, ui: { components: {} } };
+  globalThis.indexedDB = { open: () => { opens.push(1); const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} };
+  await extension.onload({ extensionAPI: api, extension: { version: "test" } });
+  await callbacks.get("Plexus: Clear crop cache")();
+  await extension.onunload();
+  return { opens };
+}
+
+function dropFakeRoam() {
+  for (const key of ["document", "roamAlphaAPI", "indexedDB", "MutationObserver"]) delete globalThis[key];
+}
+
+test("wired runtime never opens IndexedDB for an encrypted graph", async () => {
+  try {
+    const { opens } = await loadWithFakeRoam({ isEncrypted: true });
+    assert.equal(opens.length, 0);
+  } finally {
+    dropFakeRoam();
+  }
+});
+
+test("wired runtime persists crops for an unencrypted graph", async () => {
+  try {
+    const { opens } = await loadWithFakeRoam({ isEncrypted: false });
+    assert.ok(opens.length > 0);
+  } finally {
+    dropFakeRoam();
+  }
+});

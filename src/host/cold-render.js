@@ -2,12 +2,14 @@ export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = global
   const pending = new Map();
   let tail = Promise.resolve();
   let disposed = false;
+  const inflight = new Set();
 
   const findImg = (host) => host.querySelector("img.rm-inline-img--excalidraw");
   const isReady = (img) => !!img && img.complete && img.naturalWidth > 0;
 
   function waitForImage(host) {
     return new Promise((resolve) => {
+      let cancel = null;
       let observer = null;
       let timer = null;
       let poll = null;
@@ -19,8 +21,11 @@ export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = global
         clearInterval(poll);
         observer?.disconnect?.();
         host.removeEventListener?.("load", check, true);
+        inflight.delete(cancel);
         resolve(img);
       };
+      cancel = () => finish(null);
+      inflight.add(cancel);
       function check() {
         const img = findImg(host);
         if (isReady(img)) finish(img);
@@ -79,6 +84,7 @@ export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = global
     dispose() {
       disposed = true;
       pending.clear();
+      for (const cancel of [...inflight]) cancel();
     },
   };
 }

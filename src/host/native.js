@@ -17,7 +17,7 @@ export function findApp(excalidrawEl) {
 
 export function activeEditor(doc = globalThis.document) {
   const el = doc?.querySelector?.(".excalidraw-outer-container.full-screen .excalidraw");
-  if (!el) return null;
+  if (!el || el.closest?.(".plexus-offscreen")) return null;
   const outer = el.closest(".excalidraw-outer-container");
   const app = findApp(el);
   if (!app) return null;
@@ -39,13 +39,24 @@ export function captureSelectionSvg(app, ids, opts = {}) {
   return run;
 }
 
-async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000 } = {}) {
+// Runs fn behind any capture in flight, so nothing else writes to the clipboard while a capture stub is installed.
+export function withClipboard(fn) {
+  const run = captureTail.then(fn);
+  captureTail = run.catch(() => {});
+  return run;
+}
+
+const SVG_RE = /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>/]/;
+export const looksLikeSvg = (text) => SVG_RE.test(String(text));
+
+async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500 } = {}) {
   if (!clipboard) throw new Error("[plexus] clipboard unavailable");
   const prevIds = { ...(app.state?.selectedElementIds || {}) };
   const prevGroups = { ...(app.state?.selectedGroupIds || {}) };
   const origWriteText = clipboard.writeText;
   const origWrite = clipboard.write;
   let timer = null;
+  let timedOut = false;
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
@@ -54,11 +65,12 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
 
     let settle;
     const captured = new Promise((resolve) => { settle = resolve; });
-    clipboard.writeText = async (text) => { settle(String(text)); };
+    const offer = (text) => { if (looksLikeSvg(text)) settle(String(text)); };
+    clipboard.writeText = async (text) => { offer(text); };
     clipboard.write = async (items) => {
       for (const item of items || []) {
         const type = item?.types?.find?.((t) => t === "text/plain" || t === "image/svg+xml");
-        if (type) { settle(await (await item.getType(type)).text()); return; }
+        if (type) { offer(await (await item.getType(type)).text()); return; }
       }
     };
     const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
@@ -66,10 +78,22 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
     const done = Promise.resolve(app.actionManager.executeAction(action, "api"));
     done.catch(() => {});
     const svg = await Promise.race([captured, timeout, done.then(() => timeout)]);
-    if (!svg) throw new Error("[plexus] no SVG captured");
+    if (!svg) { timedOut = true; throw new Error("[plexus] no SVG captured"); }
     return svg;
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut && graceMs > 0) {
+      // The export may still finish: swallow only its SVG write for a short grace period, pass everything else through.
+      clipboard.writeText = async (text) => (looksLikeSvg(text) ? undefined : origWriteText.call(clipboard, text));
+      clipboard.write = async (items) => {
+        for (const item of items || []) {
+          const type = item?.types?.find?.((t) => t === "text/plain" || t === "image/svg+xml");
+          if (type && looksLikeSvg(await (await item.getType(type)).text())) return undefined;
+        }
+        return origWrite.call(clipboard, items);
+      };
+      await new Promise((resolve) => setTimeout(resolve, graceMs));
+    }
     clipboard.writeText = origWriteText;
     clipboard.write = origWrite;
     try {

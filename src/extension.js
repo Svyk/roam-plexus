@@ -65,6 +65,7 @@ export async function onload({ extensionAPI, extension }) {
         doc,
         clipboard: globalThis.navigator?.clipboard,
       });
+      lifecycle.add(() => actions.dispose());
       const regionref = createRegionRefRenderer({
         host,
         cache,

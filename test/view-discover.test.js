@@ -67,3 +67,30 @@ test("observer dispatches added buttons and editor unmount, and disconnects on d
   discovery.dispose();
   assert.equal(disconnected, true);
 });
+
+test("scanExisting claims buttons and editors already on the page and skips plexus output", () => {
+  const queries = [];
+  const btn = fakeNode({ classes: [REGION_BUTTON_CLASS] });
+  const own = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-root": 1 } });
+  const editor = fakeNode({ classes: ["excalidraw"] });
+  const root = {
+    querySelectorAll: (sel) => {
+      queries.push(sel);
+      return sel.includes("excalidraw-outer-container.full-screen") ? [editor] : [btn, own];
+    },
+  };
+  class FakeMO { observe() {} disconnect() {} }
+  const buttons = [];
+  const mounts = [];
+  const discovery = createDiscovery({ root, onRegionButton: (b) => buttons.push(b), onEditorMount: (e) => mounts.push(e), MutationObserverImpl: FakeMO });
+  discovery.scanExisting();
+  assert.deepEqual(buttons, [btn]);
+  assert.deepEqual(mounts, [editor]);
+  assert.ok(queries.includes(`.${REGION_BUTTON_CLASS}`));
+  assert.ok(queries.includes(".excalidraw-outer-container.full-screen .excalidraw"));
+});
+
+test("classifyAddedNode skips output inside .plexus-root", () => {
+  const own = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-root": 1 } });
+  assert.deepEqual(classifyAddedNode(own), { regionButtons: [], editors: [] });
+});

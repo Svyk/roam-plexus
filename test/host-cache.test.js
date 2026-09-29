@@ -131,3 +131,40 @@ test("persist=false ignores idb", async () => {
   await cache.put("a", blob(), { w: 1, h: 1 });
   assert.equal(idb.rows.size, 0);
 });
+
+test("dispose while an IndexedDB read is pending does not leak an object URL", async () => {
+  const idb = fakeIdb();
+  const urls = fakeUrls();
+  const writer = createCropCache({ graph: "g", idb, urls: fakeUrls() });
+  await writer.put("k", blob(), { w: 1, h: 1 });
+  const cache = createCropCache({ graph: "g", idb, urls });
+  const realGet = idb.rows.get.bind(idb.rows);
+  idb.rows.get = (key) => { cache.dispose(); return realGet(key); };
+  assert.equal(await cache.get("k"), null);
+  assert.equal(urls.live.size, 0);
+});
+
+test("put scans the store once, then only when the tracked size passes the limit", async () => {
+  const idb = fakeIdb();
+  const realTx = idb.db.transaction;
+  let transactions = 0;
+  idb.db.transaction = (...a) => { transactions += 1; return realTx(...a); };
+  const cache = createCropCache({ graph: "g", idb, urls: fakeUrls(), limitBytes: 1000 });
+  for (let i = 0; i < 5; i++) await cache.put(`k${i}`, blob(10), { w: 1, h: 1 });
+  assert.equal(transactions, 6);
+  const small = createCropCache({ graph: "g", idb, urls: fakeUrls(), limitBytes: 25 });
+  transactions = 0;
+  await small.put("z", blob(10), { w: 1, h: 1 });
+  assert.equal(transactions, 2);
+});
+
+test("delete drops the memory entry, revokes its URL, and removes the row", async () => {
+  const idb = fakeIdb();
+  const urls = fakeUrls();
+  const cache = createCropCache({ graph: "g", idb, urls });
+  await cache.put("k", blob(), { w: 1, h: 1 });
+  await cache.delete("k");
+  assert.equal(cache.peek("k"), null);
+  assert.equal(urls.live.size, 0);
+  assert.equal(idb.rows.has("g|k"), false);
+});

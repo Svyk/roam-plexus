@@ -71,11 +71,19 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
   async function ensureRegionContainer(drawingUid) {
     const existing = findContainer(pullBlock(drawingUid));
     if (existing) return existing.uid;
-    const uid = api.util.generateUID();
-    await api.data.block.create({
-      location: { "parent-uid": drawingUid, order: "last" },
-      block: { uid, string: CONTAINER_STRING, open: false },
-    });
+    // Deterministic uid: a second tab whose replica has not seen the container yet collides on
+    // this uid instead of creating a duplicate container.
+    const uid = `p${hashFn(drawingUid)}`;
+    try {
+      await api.data.block.create({
+        location: { "parent-uid": drawingUid, order: "last" },
+        block: { uid, string: CONTAINER_STRING, open: false },
+      });
+    } catch (error) {
+      const found = findContainer(pullBlock(drawingUid));
+      if (found) return found.uid;
+      if (!pullBlock(uid)) throw error;
+    }
     return uid;
   }
 

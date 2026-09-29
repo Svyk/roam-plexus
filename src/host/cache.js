@@ -21,6 +21,8 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
+  let knownBytes = 0;
+  let scanned = false;
 
   function revoke(entry) {
     try { urls?.revokeObjectURL?.(entry.url); } catch { /* ignore */ }
@@ -75,10 +77,13 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
       };
     });
     let total = rows.reduce((n, r) => n + r.size, 0);
+    scanned = true;
+    knownBytes = total;
     for (const row of rows) {
       if (total <= limitBytes) break;
       store.delete(row.key);
       total -= row.size;
+      knownBytes = total;
     }
     await txPromise(tx);
   }
@@ -102,7 +107,7 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
         const tx = db.transaction(STORE, "readwrite");
         const store = tx.objectStore(STORE);
         const row = await reqPromise(store.get(dbKey));
-        if (!row || !row.blob) return null;
+        if (disposed || !row || !row.blob) return null;
         store.put({ ...row, ts: Date.now() });
         const entry = { url: urls.createObjectURL(row.blob), w: row.w, h: row.h, type: row.type || row.blob.type, size: row.size || 0 };
         remember(key, entry);
@@ -123,13 +128,29 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
         const tx = db.transaction(STORE, "readwrite");
         tx.objectStore(STORE).put({ key: prefix + key, blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
         await txPromise(tx);
-        await evictDb(db);
+        knownBytes += entry.size;
+        if (!scanned || knownBytes > limitBytes) await evictDb(db);
       } catch (error) {
         console.warn("[plexus] cache write failed", error);
       }
     },
 
+    async delete(key) {
+      const entry = memory.get(key);
+      if (entry) { revoke(entry); memory.delete(key); }
+      try {
+        const db = await openDb();
+        if (!db) return;
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).delete(prefix + key);
+        await txPromise(tx);
+      } catch (error) {
+        console.warn("[plexus] cache delete failed", error);
+      }
+    },
+
     async clear() {
+      knownBytes = 0;
       for (const entry of memory.values()) revoke(entry);
       memory.clear();
       try {

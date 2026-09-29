@@ -99,6 +99,7 @@
   position: fixed;
   z-index: 100000;
   cursor: crosshair;
+  touch-action: none;
   outline: 1px dashed rgba(255, 255, 255, 0.8);
 }
 

@@ -142,3 +142,26 @@ test("blockUidFromNode: ref, input, none", () => {
   assert.equal(host.blockUidFromNode(mk({})), null);
   assert.equal(host.blockUidFromNode(null), null);
 });
+
+test("a tab with a stale replica reuses the container instead of creating a second one", async () => {
+  const blocks = { d: { string: "x", children: [] } };
+  const api1 = makeApi(blocks);
+  const first = await createRoamHost({ api: api1, withLockFn: passLock }).ensureRegionContainer("d");
+  assert.equal(blocks.d.children.length, 1);
+
+  const api2 = makeApi(blocks);
+  const realPull = api2.data.pull;
+  api2.data.pull = (pattern, ident) => {
+    const raw = realPull(pattern, ident);
+    if (raw && ident[1] === "d" && !api2.synced) raw[":block/children"] = [];
+    return raw;
+  };
+  const realCreate = api2.data.block.create;
+  api2.data.block.create = async (args) => {
+    if (blocks[args.block.uid]) { api2.synced = true; throw new Error("uid exists"); }
+    return realCreate(args);
+  };
+  const second = await createRoamHost({ api: api2, withLockFn: passLock }).ensureRegionContainer("d");
+  assert.equal(second, first);
+  assert.equal(blocks.d.children.length, 1);
+});

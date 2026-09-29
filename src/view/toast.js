@@ -1,6 +1,7 @@
 export function createToaster({ doc }) {
   let el = null;
   let timer = null;
+  let disposed = false;
 
   const hide = () => {
     if (timer != null) clearTimeout(timer);
@@ -11,6 +12,7 @@ export function createToaster({ doc }) {
 
   return {
     show(message, { kind = "info", ms = 2600 } = {}) {
+      if (disposed) return;
       if (timer != null) clearTimeout(timer);
       if (!el) {
         el = doc.createElement("div");
@@ -21,6 +23,9 @@ export function createToaster({ doc }) {
       el.textContent = message;
       timer = setTimeout(hide, ms);
     },
-    dispose: hide,
+    dispose() {
+      disposed = true;
+      hide();
+    },
   };
 }

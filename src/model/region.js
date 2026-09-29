@@ -6,6 +6,7 @@ export const SUPPORTED_KINDS = Object.freeze(["area", "rect"]);
 export const RESERVED_KINDS = Object.freeze(["group", "frame", "cframe", "poly"]);
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
+export const isId = (value) => typeof value === "string" && ID_RE.test(value);
 const HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:\s*([^}]*)\}\}(?: ([\s\S]*))?$/;
 const KNOWN_KEYS = new Set(["k", "d", "ids", "pad", "el", "f"]);
 

@@ -2,7 +2,8 @@ import { elementBounds, rectToFraction } from "../model/scene.js";
 import { viewportRectOf } from "../host/native.js";
 
 export function startImageRegionTool({ app, element, doc }) {
-  return new Promise((resolve) => {
+  let cancel = null;
+  const promise = new Promise((resolve) => {
     if (element?.angle) return resolve(null);
     const imageRect = viewportRectOf(app, elementBounds(element));
     const overlay = doc.createElement("div");
@@ -29,6 +30,7 @@ export function startImageRegionTool({ app, element, doc }) {
       overlay.remove();
       resolve(value);
     };
+    cancel = () => finish(null);
     const onKey = (e) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
@@ -66,8 +68,19 @@ export function startImageRegionTool({ app, element, doc }) {
       if (!start) return;
       finish(rectToFraction(drag, imageRect));
     });
+    const reset = () => {
+      start = null;
+      drag = null;
+      marquee.hidden = true;
+    };
+    overlay.addEventListener("pointercancel", reset);
+    overlay.addEventListener("lostpointercapture", (e) => {
+      if (start && e.buttons === 0 && !finished) reset();
+    });
     for (const type of ["click", "mousedown", "mouseup"]) overlay.addEventListener(type, (e) => e.stopPropagation());
     doc.addEventListener("keydown", onKey, true);
     doc.addEventListener("pointerdown", onOutside, true);
   });
+  promise.cancel = () => cancel?.();
+  return promise;
 }

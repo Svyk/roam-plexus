@@ -4,20 +4,34 @@ import { cropKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
 
 const CLAIMED = "data-plexus-claimed";
+const FAIL_TTL_MS = 60000;
+const PRUNE_FLOOR = 64;
 
 export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }) {
   const roots = new Map();
+  const failed = new Map();
+  let pruneAt = PRUNE_FLOOR;
+
+  const prune = () => {
+    if (roots.size < pruneAt) return;
+    for (const root of [...roots.keys()]) if (!root.isConnected) roots.delete(root);
+    pruneAt = Math.max(PRUNE_FLOOR, roots.size * 2);
+  };
 
   const chip = (root, text) => {
     root.className = "plexus-root plexus-regionref plexus-chip";
     root.textContent = text;
   };
 
-  const paint = (root, entry) => {
+  const paint = (root, entry, key) => {
     if (!root.isConnected) return;
     const img = doc.createElement("img");
     img.className = "plexus-crop";
     img.draggable = false;
+    img.onerror = () => {
+      if (key) Promise.resolve(cache.delete?.(key)).catch(() => {});
+      if (root.isConnected) finishChip(root);
+    };
     img.style.maxHeight = `${getSettings().maxCropHeight}px`;
     img.src = entry.url;
     root.className = "plexus-root plexus-regionref";
@@ -28,6 +42,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   const claim = (btn) => {
     try {
       if (btn.closest?.(".plexus-offscreen")) return;
+      if (btn.isConnected === false) return;
       if (btn.getAttribute(CLAIMED)) return;
       const uid = host.blockUidFromNode(btn);
       if (!uid) return;
@@ -41,6 +56,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       root.className = "plexus-root plexus-regionref";
       if (region.caption) root.title = region.caption;
       btn.parentNode.insertBefore(root, btn.nextSibling);
+      prune();
       roots.set(root, btn);
 
       if (!region.supported) {
@@ -71,8 +87,9 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       const svgKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" });
       const pngKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "png" });
 
-      const hot = cache.peek(svgKey) || cache.peek(pngKey);
-      if (hot) return paint(root, hot);
+      const hotSvg = cache.peek(svgKey);
+      const hot = hotSvg || cache.peek(pngKey);
+      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey);
 
       const [x1, y1, x2, y2] = sceneBox.bbox;
       const bw = Math.max(1, x2 - x1);
@@ -85,8 +102,15 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
       void (async () => {
         try {
-          let entry = (await cache.get(svgKey)) || (await cache.get(pngKey));
+          let entry = null;
+          let entryKey = svgKey;
+          entry = await cache.get(svgKey);
+          if (!entry) { entryKey = pngKey; entry = await cache.get(pngKey); }
           if (!entry) {
+            const failKey = `${region.drawingUid}|${drawing.hash}`;
+            const failedAt = failed.get(failKey);
+            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
+            if (!root.isConnected) return;
             const rendered = await cold.renderDrawing(region.drawingUid);
             if (!root.isConnected) return;
             const crop = rendered
@@ -97,7 +121,11 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
                   naturalHeight: rendered.naturalHeight,
                 })
               : { error: "no-render" };
-            if (crop.error) return finishChip(root);
+            if (crop.error) {
+              failed.set(failKey, Date.now());
+              return finishChip(root);
+            }
+            entryKey = pngKey;
             const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
             await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh });
             entry = cache.peek(pngKey) || (await cache.get(pngKey));
@@ -106,7 +134,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
           if (!entry) return finishChip(root);
           root.style.height = "";
           root.style.width = "";
-          paint(root, entry);
+          paint(root, entry, entryKey);
         } catch (error) {
           console.warn("[plexus] crop failed", error);
           finishChip(root);
@@ -132,6 +160,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         root.remove();
       }
       roots.clear();
+      failed.clear();
     },
   };
 }

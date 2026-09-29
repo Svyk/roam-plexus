@@ -179,6 +179,7 @@ var DEFAULT_PAD = 10;
 var SUPPORTED_KINDS = Object.freeze(["area", "rect"]);
 var RESERVED_KINDS = Object.freeze(["group", "frame", "cframe", "poly"]);
 var ID_RE = /^[A-Za-z0-9_-]+$/;
+var isId = (value) => typeof value === "string" && ID_RE.test(value);
 var HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:\s*([^}]*)\}\}(?: ([\s\S]*))?$/;
 var KNOWN_KEYS = /* @__PURE__ */ new Set(["k", "d", "ids", "pad", "el", "f"]);
 var clamp01 = (n) => Math.min(1, Math.max(0, n));
@@ -622,11 +623,17 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
   async function ensureRegionContainer(drawingUid) {
     const existing = findContainer(pullBlock(drawingUid));
     if (existing) return existing.uid;
-    const uid = api.util.generateUID();
-    await api.data.block.create({
-      location: { "parent-uid": drawingUid, order: "last" },
-      block: { uid, string: CONTAINER_STRING, open: false }
-    });
+    const uid = `p${hashFn(drawingUid)}`;
+    try {
+      await api.data.block.create({
+        location: { "parent-uid": drawingUid, order: "last" },
+        block: { uid, string: CONTAINER_STRING, open: false }
+      });
+    } catch (error) {
+      const found = findContainer(pullBlock(drawingUid));
+      if (found) return found.uid;
+      if (!pullBlock(uid)) throw error;
+    }
     return uid;
   }
   async function createRegion(drawingUid, regionString) {
@@ -681,8 +688,10 @@ __export(native_exports, {
   activeEditor: () => activeEditor,
   captureSelectionSvg: () => captureSelectionSvg,
   findApp: () => findApp,
+  looksLikeSvg: () => looksLikeSvg,
   selectedElementIds: () => selectedElementIds,
   viewportRectOf: () => viewportRectOf,
+  withClipboard: () => withClipboard,
   zoomTo: () => zoomTo
 });
 function findApp(excalidrawEl) {
@@ -699,7 +708,7 @@ function findApp(excalidrawEl) {
 }
 function activeEditor(doc = globalThis.document) {
   const el = doc?.querySelector?.(".excalidraw-outer-container.full-screen .excalidraw");
-  if (!el) return null;
+  if (!el || el.closest?.(".plexus-offscreen")) return null;
   const outer = el.closest(".excalidraw-outer-container");
   const app = findApp(el);
   if (!app) return null;
@@ -718,13 +727,22 @@ function captureSelectionSvg(app, ids, opts = {}) {
   });
   return run;
 }
-async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3 } = {}) {
+function withClipboard(fn) {
+  const run = captureTail.then(fn);
+  captureTail = run.catch(() => {
+  });
+  return run;
+}
+var SVG_RE = /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>/]/;
+var looksLikeSvg = (text) => SVG_RE.test(String(text));
+async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500 } = {}) {
   if (!clipboard) throw new Error("[plexus] clipboard unavailable");
   const prevIds = { ...app.state?.selectedElementIds || {} };
   const prevGroups = { ...app.state?.selectedGroupIds || {} };
   const origWriteText = clipboard.writeText;
   const origWrite = clipboard.write;
   let timer = null;
+  let timedOut = false;
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
@@ -734,14 +752,17 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
     const captured = new Promise((resolve) => {
       settle = resolve;
     });
+    const offer = (text) => {
+      if (looksLikeSvg(text)) settle(String(text));
+    };
     clipboard.writeText = async (text) => {
-      settle(String(text));
+      offer(text);
     };
     clipboard.write = async (items) => {
       for (const item of items || []) {
         const type = item?.types?.find?.((t) => t === "text/plain" || t === "image/svg+xml");
         if (type) {
-          settle(await (await item.getType(type)).text());
+          offer(await (await item.getType(type)).text());
           return;
         }
       }
@@ -754,10 +775,24 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
     done.catch(() => {
     });
     const svg = await Promise.race([captured, timeout, done.then(() => timeout)]);
-    if (!svg) throw new Error("[plexus] no SVG captured");
+    if (!svg) {
+      timedOut = true;
+      throw new Error("[plexus] no SVG captured");
+    }
     return svg;
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut && graceMs > 0) {
+      clipboard.writeText = async (text) => looksLikeSvg(text) ? void 0 : origWriteText.call(clipboard, text);
+      clipboard.write = async (items) => {
+        for (const item of items || []) {
+          const type = item?.types?.find?.((t) => t === "text/plain" || t === "image/svg+xml");
+          if (type && looksLikeSvg(await (await item.getType(type)).text())) return void 0;
+        }
+        return origWrite.call(clipboard, items);
+      };
+      await new Promise((resolve) => setTimeout(resolve, graceMs));
+    }
     clipboard.writeText = origWriteText;
     clipboard.write = origWrite;
     try {
@@ -800,6 +835,8 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
+  let knownBytes = 0;
+  let scanned = false;
   function revoke(entry) {
     try {
       urls?.revokeObjectURL?.(entry.url);
@@ -862,10 +899,13 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
       };
     });
     let total = rows.reduce((n, r) => n + r.size, 0);
+    scanned = true;
+    knownBytes = total;
     for (const row of rows) {
       if (total <= limitBytes) break;
       store.delete(row.key);
       total -= row.size;
+      knownBytes = total;
     }
     await txPromise(tx);
   }
@@ -887,7 +927,7 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
         const tx = db.transaction(STORE, "readwrite");
         const store = tx.objectStore(STORE);
         const row = await reqPromise(store.get(dbKey));
-        if (!row || !row.blob) return null;
+        if (disposed || !row || !row.blob) return null;
         store.put({ ...row, ts: Date.now() });
         const entry = { url: urls.createObjectURL(row.blob), w: row.w, h: row.h, type: row.type || row.blob.type, size: row.size || 0 };
         remember(key, entry);
@@ -907,12 +947,30 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
         const tx = db.transaction(STORE, "readwrite");
         tx.objectStore(STORE).put({ key: prefix + key, blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
         await txPromise(tx);
-        await evictDb(db);
+        knownBytes += entry.size;
+        if (!scanned || knownBytes > limitBytes) await evictDb(db);
       } catch (error) {
         console.warn("[plexus] cache write failed", error);
       }
     },
+    async delete(key) {
+      const entry = memory.get(key);
+      if (entry) {
+        revoke(entry);
+        memory.delete(key);
+      }
+      try {
+        const db = await openDb();
+        if (!db) return;
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).delete(prefix + key);
+        await txPromise(tx);
+      } catch (error) {
+        console.warn("[plexus] cache delete failed", error);
+      }
+    },
     async clear() {
+      knownBytes = 0;
       for (const entry of memory.values()) revoke(entry);
       memory.clear();
       try {
@@ -959,10 +1017,12 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
   const pending = /* @__PURE__ */ new Map();
   let tail = Promise.resolve();
   let disposed = false;
+  const inflight = /* @__PURE__ */ new Set();
   const findImg = (host) => host.querySelector("img.rm-inline-img--excalidraw");
   const isReady = (img) => !!img && img.complete && img.naturalWidth > 0;
   function waitForImage(host) {
     return new Promise((resolve) => {
+      let cancel = null;
       let observer = null;
       let timer = null;
       let poll = null;
@@ -974,8 +1034,11 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
         clearInterval(poll);
         observer?.disconnect?.();
         host.removeEventListener?.("load", check, true);
+        inflight.delete(cancel);
         resolve(img);
       };
+      cancel = () => finish(null);
+      inflight.add(cancel);
       function check() {
         const img = findImg(host);
         if (isReady(img)) finish(img);
@@ -1042,6 +1105,7 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
     dispose() {
       disposed = true;
       pending.clear();
+      for (const cancel of [...inflight]) cancel();
     }
   };
 }
@@ -1059,6 +1123,7 @@ async function cropCanvasToBlob(canvas, { sx, sy, sw, sh }, { doc = globalThis.d
 function createToaster({ doc }) {
   let el = null;
   let timer = null;
+  let disposed = false;
   const hide = () => {
     if (timer != null) clearTimeout(timer);
     timer = null;
@@ -1067,6 +1132,7 @@ function createToaster({ doc }) {
   };
   return {
     show(message, { kind = "info", ms = 2600 } = {}) {
+      if (disposed) return;
       if (timer != null) clearTimeout(timer);
       if (!el) {
         el = doc.createElement("div");
@@ -1077,7 +1143,10 @@ function createToaster({ doc }) {
       el.textContent = message;
       timer = setTimeout(hide, ms);
     },
-    dispose: hide
+    dispose() {
+      disposed = true;
+      hide();
+    }
   };
 }
 
@@ -1137,17 +1206,31 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
 
 // src/view/regionref.js
 var CLAIMED = "data-plexus-claimed";
+var FAIL_TTL_MS = 6e4;
+var PRUNE_FLOOR = 64;
 function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }) {
   const roots = /* @__PURE__ */ new Map();
+  const failed = /* @__PURE__ */ new Map();
+  let pruneAt = PRUNE_FLOOR;
+  const prune = () => {
+    if (roots.size < pruneAt) return;
+    for (const root of [...roots.keys()]) if (!root.isConnected) roots.delete(root);
+    pruneAt = Math.max(PRUNE_FLOOR, roots.size * 2);
+  };
   const chip = (root, text) => {
     root.className = "plexus-root plexus-regionref plexus-chip";
     root.textContent = text;
   };
-  const paint = (root, entry) => {
+  const paint = (root, entry, key) => {
     if (!root.isConnected) return;
     const img = doc.createElement("img");
     img.className = "plexus-crop";
     img.draggable = false;
+    img.onerror = () => {
+      if (key) Promise.resolve(cache.delete?.(key)).catch(() => {
+      });
+      if (root.isConnected) finishChip(root);
+    };
     img.style.maxHeight = `${getSettings().maxCropHeight}px`;
     img.src = entry.url;
     root.className = "plexus-root plexus-regionref";
@@ -1157,6 +1240,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
   const claim = (btn) => {
     try {
       if (btn.closest?.(".plexus-offscreen")) return;
+      if (btn.isConnected === false) return;
       if (btn.getAttribute(CLAIMED)) return;
       const uid = host.blockUidFromNode(btn);
       if (!uid) return;
@@ -1169,6 +1253,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
       root.className = "plexus-root plexus-regionref";
       if (region.caption) root.title = region.caption;
       btn.parentNode.insertBefore(root, btn.nextSibling);
+      prune();
       roots.set(root, btn);
       if (!region.supported) {
         chip(root, region.error ? `Invalid region: ${region.error}` : `Region kind ${region.kind} needs a newer Plexus`);
@@ -1194,8 +1279,9 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
       const gk = geometryKey(region);
       const svgKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" });
       const pngKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "png" });
-      const hot = cache.peek(svgKey) || cache.peek(pngKey);
-      if (hot) return paint(root, hot);
+      const hotSvg = cache.peek(svgKey);
+      const hot = hotSvg || cache.peek(pngKey);
+      if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey);
       const [x1, y1, x2, y2] = sceneBox.bbox;
       const bw = Math.max(1, x2 - x1);
       const bh = Math.max(1, y2 - y1);
@@ -1206,8 +1292,18 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
       root.style.width = `${Math.round(h * bw / bh)}px`;
       void (async () => {
         try {
-          let entry = await cache.get(svgKey) || await cache.get(pngKey);
+          let entry = null;
+          let entryKey = svgKey;
+          entry = await cache.get(svgKey);
           if (!entry) {
+            entryKey = pngKey;
+            entry = await cache.get(pngKey);
+          }
+          if (!entry) {
+            const failKey = `${region.drawingUid}|${drawing.hash}`;
+            const failedAt = failed.get(failKey);
+            if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
+            if (!root.isConnected) return;
             const rendered = await cold.renderDrawing(region.drawingUid);
             if (!root.isConnected) return;
             const crop = rendered ? viewPngCropRect({
@@ -1216,7 +1312,11 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
               naturalWidth: rendered.naturalWidth,
               naturalHeight: rendered.naturalHeight
             }) : { error: "no-render" };
-            if (crop.error) return finishChip(root);
+            if (crop.error) {
+              failed.set(failKey, Date.now());
+              return finishChip(root);
+            }
+            entryKey = pngKey;
             const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
             await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh });
             entry = cache.peek(pngKey) || await cache.get(pngKey);
@@ -1225,7 +1325,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
           if (!entry) return finishChip(root);
           root.style.height = "";
           root.style.width = "";
-          paint(root, entry);
+          paint(root, entry, entryKey);
         } catch (error) {
           console.warn("[plexus] crop failed", error);
           finishChip(root);
@@ -1249,6 +1349,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }
         root.remove();
       }
       roots.clear();
+      failed.clear();
     }
   };
 }
@@ -1377,7 +1478,8 @@ function captionFromElements(elements, ids) {
 
 // src/view/image-region-tool.js
 function startImageRegionTool({ app, element, doc }) {
-  return new Promise((resolve) => {
+  let cancel = null;
+  const promise = new Promise((resolve) => {
     if (element?.angle) return resolve(null);
     const imageRect = viewportRectOf(app, elementBounds(element));
     const overlay = doc.createElement("div");
@@ -1402,6 +1504,7 @@ function startImageRegionTool({ app, element, doc }) {
       overlay.remove();
       resolve(value);
     };
+    cancel = () => finish(null);
     const onKey = (e) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
@@ -1438,17 +1541,29 @@ function startImageRegionTool({ app, element, doc }) {
       if (!start) return;
       finish(rectToFraction(drag, imageRect));
     });
+    const reset = () => {
+      start = null;
+      drag = null;
+      marquee.hidden = true;
+    };
+    overlay.addEventListener("pointercancel", reset);
+    overlay.addEventListener("lostpointercapture", (e) => {
+      if (start && e.buttons === 0 && !finished) reset();
+    });
     for (const type of ["click", "mousedown", "mouseup"]) overlay.addEventListener(type, (e) => e.stopPropagation());
     doc.addEventListener("keydown", onKey, true);
     doc.addEventListener("pointerdown", onOutside, true);
   });
+  promise.cancel = () => cancel?.();
+  return promise;
 }
 
 // src/actions.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function waitFor(fn, timeoutMs, stepMs = 50) {
+async function waitFor(fn, timeoutMs, stepMs = 50, aborted = () => false) {
   const end = Date.now() + timeoutMs;
   for (; ; ) {
+    if (aborted()) return null;
     const value = fn();
     if (value) return value;
     if (Date.now() >= end) return null;
@@ -1461,6 +1576,20 @@ function svgSize(svg) {
   return { w: 0, h: 0 };
 }
 function createActions({ host, native, cache, cold, toaster, spotlight, getSettings, doc, clipboard }) {
+  let disposed = false;
+  let activeTool = null;
+  let stopSpotlight = null;
+  const busy = /* @__PURE__ */ new Set();
+  const aborted = () => disposed;
+  async function once(name, fn) {
+    if (busy.has(name)) return null;
+    busy.add(name);
+    try {
+      return await fn();
+    } finally {
+      busy.delete(name);
+    }
+  }
   const sceneElements = (app) => app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? [];
   async function putSvg(uid, region, svg) {
     const drawing = host.drawing(region.drawingUid);
@@ -1469,14 +1598,22 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
     await cache.put(key, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
   }
   async function finishCreate(region, svg) {
-    const uid = await host.createRegion(region.drawingUid, serializeRegion(region));
+    let uid;
+    try {
+      uid = await host.createRegion(region.drawingUid, serializeRegion(region));
+    } catch (error) {
+      console.warn("[plexus] create region failed", error);
+      toaster.show("Could not create region, try again", { kind: "error" });
+      return null;
+    }
     try {
       await putSvg(uid, region, svg);
     } catch (error) {
       console.warn("[plexus] cache put failed", error);
     }
     try {
-      await clipboard.writeText(`((${uid}))`);
+      const write = () => clipboard.writeText(`((${uid}))`);
+      await (native.withClipboard ? native.withClipboard(write) : write());
       toaster.show(`Region ((${uid})) copied`);
     } catch (error) {
       console.warn("[plexus] clipboard failed", error);
@@ -1492,8 +1629,20 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
       return null;
     }
   }
+  const badTarget = (drawingUid, ids) => {
+    if (isId(drawingUid) && ids.length && ids.every(isId)) return false;
+    toaster.show("Could not identify this drawing", { kind: "error" });
+    return true;
+  };
   return {
-    async createAreaRegion() {
+    dispose() {
+      disposed = true;
+      activeTool?.cancel?.();
+      activeTool = null;
+      stopSpotlight?.();
+      stopSpotlight = null;
+    },
+    createAreaRegion: () => once("area", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
         toaster.show("Open a drawing full-screen first", { kind: "error" });
@@ -1505,12 +1654,13 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
         toaster.show("Select some elements first", { kind: "error" });
         return null;
       }
+      if (badTarget(drawingUid, ids)) return null;
       const caption = captionFromElements(sceneElements(app), ids) || "Region";
       const region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD, caption };
       const svg = await captureSafe(app, ids);
       return finishCreate(region, svg);
-    },
-    async createImageRegion() {
+    }),
+    createImageRegion: () => once("image", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
         toaster.show("Open a drawing full-screen first", { kind: "error" });
@@ -1527,8 +1677,16 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
         toaster.show("Rotated images are not supported", { kind: "error" });
         return null;
       }
-      const f = await startImageRegionTool({ app, element, doc });
-      if (!f) return null;
+      if (badTarget(drawingUid, [element.id])) return null;
+      const tool = startImageRegionTool({ app, element, doc });
+      activeTool = tool;
+      let f;
+      try {
+        f = await tool;
+      } finally {
+        if (activeTool === tool) activeTool = null;
+      }
+      if (!f || disposed) return null;
       const region = { kind: "rect", drawingUid, el: element.id, f, caption: "Image region" };
       let svg = await captureSafe(app, [element.id]);
       if (svg) {
@@ -1540,54 +1698,8 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
         }
       }
       return finishCreate(region, svg);
-    },
-    async openRegion(regionUid, { sidebar = false } = {}) {
-      const block = host.pullBlock(regionUid);
-      const region = block ? parseRegion(block.string) : null;
-      if (!region || !region.supported) {
-        toaster.show("Region cannot be opened", { kind: "error" });
-        return null;
-      }
-      const uid = region.drawingUid;
-      const matches = () => {
-        const ed = native.activeEditor(doc);
-        return ed && ed.drawingUid === uid ? ed : null;
-      };
-      if (!matches()) {
-        await host.openBlock(uid, { sidebar });
-        const icon = await waitFor(() => {
-          for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-            if (!el.id.endsWith(uid)) continue;
-            const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
-            if (found) return found;
-          }
-          return null;
-        }, 3e3);
-        if (!icon) {
-          toaster.show("Could not find the drawing", { kind: "error" });
-          return null;
-        }
-        const View = doc.defaultView;
-        for (const type of ["mousedown", "mouseup", "click"]) {
-          icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
-        }
-      }
-      const editor = await waitFor(matches, 1e4);
-      if (!editor) {
-        toaster.show("Drawing did not open", { kind: "error" });
-        return null;
-      }
-      const { app } = editor;
-      const box = regionSceneBBox(region, sceneElements(app));
-      if (box.error) {
-        toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
-        return null;
-      }
-      native.zoomTo(app, box.bbox);
-      await sleep(60);
-      spotlight({ rect: native.viewportRectOf(app, box.bbox), doc });
-      return uid;
-    },
+    }),
+    openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
     async refreshCropsForOpenDrawing() {
       const editor = native.activeEditor(doc);
       if (!editor) {
@@ -1596,6 +1708,7 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
       }
       let count = 0;
       for (const { uid, region } of host.regionsOf(editor.drawingUid)) {
+        if (disposed || native.activeEditor(doc)?.app !== editor.app) break;
         if (!region?.supported) continue;
         try {
           const ids = region.kind === "area" ? region.ids : [region.el];
@@ -1615,6 +1728,63 @@ function createActions({ host, native, cache, cold, toaster, spotlight, getSetti
       toaster.show("Crop cache cleared");
     }
   };
+  async function openRegionOnce(regionUid, { sidebar = false } = {}) {
+    const block = host.pullBlock(regionUid);
+    const region = block ? parseRegion(block.string) : null;
+    if (!region || !region.supported) {
+      toaster.show("Region cannot be opened", { kind: "error" });
+      return null;
+    }
+    const uid = region.drawingUid;
+    const matches = () => {
+      const ed = native.activeEditor(doc);
+      return ed && ed.drawingUid === uid ? ed : null;
+    };
+    if (!matches()) {
+      try {
+        await host.openBlock(uid, { sidebar });
+      } catch (error) {
+        console.warn("[plexus] open block failed", error);
+        toaster.show("Could not open drawing", { kind: "error" });
+        return null;
+      }
+      const icon = await waitFor(() => {
+        for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+          if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+          const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+          if (found) return found;
+        }
+        return null;
+      }, 3e3, 50, aborted);
+      if (!icon) {
+        if (disposed) return null;
+        toaster.show("Could not find the drawing", { kind: "error" });
+        return null;
+      }
+      const View = doc.defaultView;
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+      }
+    }
+    const editor = await waitFor(matches, 1e4, 50, aborted);
+    if (!editor) {
+      if (disposed) return null;
+      toaster.show("Drawing did not open", { kind: "error" });
+      return null;
+    }
+    const { app } = editor;
+    const box = regionSceneBBox(region, sceneElements(app));
+    if (box.error) {
+      toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
+      return null;
+    }
+    native.zoomTo(app, box.bbox);
+    await sleep(60);
+    if (disposed) return null;
+    stopSpotlight?.();
+    stopSpotlight = spotlight({ rect: native.viewportRectOf(app, box.bbox), doc }) || null;
+    return uid;
+  }
 }
 
 // src/extension.js
@@ -1669,6 +1839,7 @@ async function onload({ extensionAPI, extension }) {
         doc,
         clipboard: globalThis.navigator?.clipboard
       });
+      lifecycle.add(() => actions.dispose());
       const regionref = createRegionRefRenderer({
         host,
         cache,

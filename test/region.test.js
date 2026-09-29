@@ -67,7 +67,8 @@ test("malformed regions carry an error and supported=false", () => {
     "{{[[plexus-region]]: k=rect d=u1 el=e f=0,0,1}}": /bad f/,
     "{{[[plexus-region]]: k=blob d=u1}}": /unknown kind/,
     "{{[[plexus-region]]: d=u1}}": /missing k/,
-    "{{[[plexus-region]]: k=area d=u 1 ids=a}}": /./,
+    "{{[[plexus-region]]: k=area d=u 1 ids=a}}": /bad token 1/,
+    "{{[[plexus-region]]: k=area d=u1 ids=a,}}": /bad ids/,
   };
   for (const [s, re] of Object.entries(cases)) {
     const r = parseRegion(s);
@@ -124,4 +125,16 @@ test("geometryKey is stable and sorts ids", () => {
   assert.equal(geometryKey(parseRegion("{{[[plexus-region]]: k=area d=u1 ids=b,a pad=10}}")), "area|u1|a,b|10");
   assert.equal(geometryKey(parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a,b}} cap")), "area|u1|a,b|10");
   assert.equal(geometryKey(parseRegion("{{[[plexus-region]]: k=rect d=u1 el=e f=0.5,0,0.5,1}}")), "rect|u1|e|0.5,0,0.5,1");
+});
+
+test("a caption glued to the head, or on the next line, is not a region (raw Roam button stays)", () => {
+  assert.equal(parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a}}caption"), null);
+  assert.equal(parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a}}\ncaption"), null);
+  assert.ok(parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a}} caption"));
+});
+
+test("a duplicate d= token keeps the first value and preserves the second as extra", () => {
+  const r = parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a d=u2}}");
+  assert.equal(r.drawingUid, "u1");
+  assert.deepEqual(r.extra, [["d", "u2"]]);
 });
