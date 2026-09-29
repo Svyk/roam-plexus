@@ -1,0 +1,37 @@
+# Plexus roadmap: phase checklist
+
+Source of truth for the phase loop. Specification: `docs/spec-plexus.md` (§7 feature list, §8 Compass contract, §10 phases, §13 measured Roam facts). Update this file at the end of every phase. Leave phase IDs unchanged. Do not mark a phase done until its gate passes.
+
+Each phase runs in this order:
+1. Write `docs/phaseN-contract.md`.
+2. Run the build workflow: `sonnet-worker` implementers, review lenses, Opus verify per finding, fix.
+3. Run live acceptance with trusted CDP input in the **Readwisenotes graph only**.
+4. Fix what live acceptance finds.
+5. `npm run check`.
+6. Push `main` and wait for Pages.
+7. `cmp` the published `extension.js` against the local build.
+8. Write a KB session learning (`~/openkb-roam-plugin/raw/session-learnings`).
+9. Update this file.
+
+Standing constraints:
+- No writes to the Svy graph without the user's explicit approval in that moment.
+- Before any A/B test, unload the dev build from any window another session is using (see project memory).
+- Re-list CDP targets and match windows by exact title or page uid.
+
+| Phase | Scope | Gate | Status |
+|---|---|---|---|
+| P0 | Spikes S1-S6 (spec §4, §13) | Unknowns answered | done 2026-09-28 |
+| P1 | Region refs `area` + `rect`, crop cache (hot SVG, cold settled PNG), click-to-zoom + spotlight, bottom toolbar | Live acceptance, typing +0, Pages | done 2026-09-28, 0.1.0 (`5c56d59`) |
+| P2 | Kinds `group`, `frame`, `cframe`, `poly` (lasso); regions on plain `![](url)` images (child block of the image block, crop from Roam's decrypted `<img>`); Roam-link interception in drawings (`[[page]]` / `((uid))`, shift = sidebar) + hover preview; thumbnails (whole-drawing cache); `window.RoamPlexus` v1 (spec §8); Compass changes in `~/roam-compass` (spec §8 table) | Every kind round-trips and crops within 1 px; link click navigates in-app; Compass shows thumbnails and offers "New drawing"; both repos green and published | pending |
+| P3 | Read-only block embeds on the canvas (`renderString` overlay tracking pan/zoom); frames as slides (presentation mode, keyboard, Esc); crop-to-region from Excalidraw 0.18 native crop | Overlay tracks pan/zoom within one frame; 5-frame deck; no leaked listeners | pending |
+| P4 | Mind-map builder (Tab child, Enter sibling, Alt+arrows, fold, layouts, pin, boundary) with two-way sync against real Roam child blocks | Outline edit updates node after echo; node add creates block; no echo duplicates; 200-node relayout < 16 ms | pending |
+| P5 | Legacy ExcalDATA migration (Svy has 9 legacy drawings; dry run lists them), automation API (`RoamPlexus.scene(uid)`), editable embeds via `renderBlock` (rules 13, 19) | Dry run writes nothing; **STOP: the user reviews the dry run before any apply on Svy** | pending |
+
+Resolved defaults (spec §12):
+- Text-element links do not get automatic region blocks; Roam's tail already makes them refs.
+- A cold cache renders through a hidden `renderBlock` (1x); it is not shown as a chip.
+- "New related drawing" from Compass creates the page `Drawings/<title>` with a drawing block.
+
+Open items carried forward:
+- 1x cold crops may be revisited (user, 2026-09-28).
+- Opening a drawing in the sidebar restores Roam's stored sidebar windows.
