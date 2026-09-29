@@ -11,6 +11,7 @@ const REFOCUS_WINDOW_MS = 1200;
 // Popups Roam opens from a block editor. Measured only for the [[ autocomplete so far; extend after the live menu survey.
 export const ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open";
 const POPUP_HOST_SELECTOR = ".bp3-portal";
+const MENU_KEYS = new Set(["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"]);
 const KEY_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];
 const POINTER_ALWAYS = ["pointerdown", "mousedown", "dblclick", "wheel"];
 const POINTER_GATED = ["pointerup", "mouseup", "click"];
@@ -474,7 +475,14 @@ export function createEmbedOverlay({
       root.addEventListener(type, fn);
       list.push(() => root.removeEventListener(type, fn));
     };
-    for (const type of KEY_EVENTS) on(s.keyOffs, type, stop);
+    // Roam handles its autocomplete navigation keys at document level, so while
+    // a menu is open those keys must bubble; Excalidraw's selection is cleared
+    // in edit mode, so its document handlers ignore them.
+    const stopKey = (e) => {
+      if (MENU_KEYS.has(e.key) && doc.querySelector?.(menuSelector)) return;
+      e.stopPropagation();
+    };
+    for (const type of KEY_EVENTS) on(s.keyOffs, type, type === "keydown" || type === "keyup" ? stopKey : stop);
     for (const type of POINTER_ALWAYS) {
       on(s.pointerOffs, type, (e) => {
         if (type === "pointerdown" || type === "mousedown") s.downInside = true;

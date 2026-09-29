@@ -365,6 +365,23 @@ test("watch callbacks mid-edit neither unmount the inner element nor render stri
   await t.overlay.dispose();
 });
 
+test("edit mode: menu-navigation keys reach the document only while a Roam menu is open", async () => {
+  const t = editSetup();
+  await entered(t);
+  const ta = t.doc.activeElement;
+  const seen = [];
+  t.doc.body.addEventListener("keydown", (e) => seen.push(e.key));
+  t.doc.menuOpen = true;
+  for (const k of ["Escape", "ArrowDown", "Enter"]) bubble(ta, "keydown", { key: k });
+  bubble(ta, "keydown", { key: "e" });
+  assert.deepEqual(seen, ["Escape", "ArrowDown", "Enter"]);
+  seen.length = 0;
+  t.doc.menuOpen = false;
+  for (const k of ["Escape", "ArrowDown", "Enter", "e"]) bubble(ta, "keydown", { key: k });
+  assert.deepEqual(seen, []);
+  await t.overlay.dispose();
+});
+
 test("Esc: with a menu open the key passes through, without one it leaves once", async () => {
   const t = editSetup();
   await entered(t);

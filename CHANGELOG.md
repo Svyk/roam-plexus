@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Legacy drawings: dry-run report of old ExcalDATA drawings (`Plexus: Legacy drawings (dry run)`) and migration into native drawings; the legacy block is never written.
 - Automation API v2: scene registry, `whenOpen`, `add`/`update`/`remove`/`exportSvg`.
 - Editable embeds: edit a drawing in place from an embed (Edit embed button, F2).
+- Editable embeds: Roam autocomplete navigation keys (Esc, arrows, Enter, Tab, ...) now reach Roam while a menu is open, so `[[` menus can be closed and navigated.
 
 ## [0.4.0]
 

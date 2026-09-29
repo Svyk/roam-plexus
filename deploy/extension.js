@@ -2062,6 +2062,7 @@ var FOCUS_WAIT_MS = 300;
 var REFOCUS_WINDOW_MS = 1200;
 var ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open";
 var POPUP_HOST_SELECTOR = ".bp3-portal";
+var MENU_KEYS = /* @__PURE__ */ new Set(["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"]);
 var KEY_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];
 var POINTER_ALWAYS = ["pointerdown", "mousedown", "dblclick", "wheel"];
 var POINTER_GATED = ["pointerup", "mouseup", "click"];
@@ -2536,7 +2537,11 @@ function createEmbedOverlay({
       root.addEventListener(type, fn);
       list.push(() => root.removeEventListener(type, fn));
     };
-    for (const type of KEY_EVENTS) on(s.keyOffs, type, stop);
+    const stopKey = (e) => {
+      if (MENU_KEYS.has(e.key) && doc.querySelector?.(menuSelector)) return;
+      e.stopPropagation();
+    };
+    for (const type of KEY_EVENTS) on(s.keyOffs, type, type === "keydown" || type === "keyup" ? stopKey : stop);
     for (const type of POINTER_ALWAYS) {
       on(s.pointerOffs, type, (e) => {
         if (type === "pointerdown" || type === "mousedown") s.downInside = true;
