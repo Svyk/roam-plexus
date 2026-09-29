@@ -119,3 +119,30 @@ test("toolbar has six buttons in contract order with independent enable rules", 
   assert.deepEqual(bar.children.map((b) => b.disabled), [false, false, true, false, false, true]);
   tb.hide();
 });
+
+test("Mind map button exists only when onMindMap is given and fires it", async () => {
+  const make = (withMap) => {
+    const buttons = [];
+    const { doc } = fakeDoc(36);
+    const create = doc.createElement;
+    doc.createElement = (tag) => {
+      const el = create(tag);
+      if (tag === "button") { el.handlers = {}; el.addEventListener = (t, f) => { el.handlers[t] = f; }; buttons.push(el); }
+      return el;
+    };
+    let fired = 0;
+    const tb = createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {}, ...(withMap ? { onMindMap: () => { fired += 1; } } : {}) });
+    tb.show(outerEl);
+    return { buttons, fired: () => fired, tb };
+  };
+  const off = make(false);
+  assert.equal(off.buttons.some((b) => /Mind map/.test(b.textContent || "")), false);
+  off.tb.hide();
+  const on = make(true);
+  const b = on.buttons.find((x) => /Mind map/.test(x.textContent || ""));
+  assert.ok(b);
+  b.handlers.click({ stopPropagation() {} });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(on.fired(), 1);
+  on.tb.hide();
+});

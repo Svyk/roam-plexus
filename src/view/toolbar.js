@@ -7,7 +7,7 @@ export function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap }) {
   const view = doc.defaultView;
   let bar = null;
   let outer = null;
@@ -73,7 +73,9 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       const cropButton = button("Region from crop", onCropRegion);
       const presentButton = button("Present", onPresent);
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
-      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton);
+      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton];
+      if (onMindMap) controls.push(button("Mind map", onMindMap));
+      bar.append(...controls);
       doc.body.append(bar);
       refresh();
       outerEl.addEventListener?.("pointerup", scheduleRefresh, true);

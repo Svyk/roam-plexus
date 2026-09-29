@@ -4,6 +4,7 @@ import { embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
 import { orderFrames } from "./model/slides.js";
 import { captionFromElements } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
+import { isExcludedString } from "./model/mindmap.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
 import { cropCanvasToBlob } from "./host/cold-render.js";
@@ -105,6 +106,7 @@ export function createActions({
   createBitmap = globalThis.createImageBitmap?.bind(globalThis),
   startTool = startImageRegionTool,
   presenter = null,
+  mindmap = null,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -475,6 +477,25 @@ export function createActions({
     // Cache only unless render is set; never touches Excalidraw when render is false.
     thumbnail: (uid, { maxWidth = 480, render = false } = {}) => thumbnailOnce(uid, { maxWidth, render }),
 
+    async startMindMap() {
+      const editor = native.activeEditor(doc);
+      if (!editor || !mindmap) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (mindmap.selectedNode(editor.app)) {
+        toaster.show("Use Tab / Enter to grow this map");
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      return mindmap.startRoot({ app: editor.app, drawingUid: editor.drawingUid });
+    },
+
+    mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
+
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
 
     async refreshCropsForOpenDrawing() {
@@ -490,7 +511,7 @@ export function createActions({
         try {
           if (isImageKind(region.kind)) continue;
           const svg = await hotSvg(editor.app, region);
-          if (!svg) { fail(i); continue; }
+          if (!svg) continue;
           await putSvg(uid, region, svg);
           count += 1;
         } catch (error) {
@@ -679,6 +700,83 @@ export function createActions({
     }
     await cache.put(key, blob, { ...dims, persist: settled !== false });
     return blob;
+  }
+
+  async function mindMapFromOutlineOnce(blockUid) {
+    if (!mindmap || !isId(blockUid)) {
+      toaster.show("Click into a block first", { kind: "error" });
+      return null;
+    }
+    const info = mindmap.outlineInfo(blockUid);
+    if (!info) {
+      toaster.show("Block not found", { kind: "error" });
+      return null;
+    }
+    if (isExcludedString(info.string)) {
+      toaster.show("Drawings cannot be a mind map root", { kind: "error" });
+      return null;
+    }
+    if (info.visible >= mindmap.NODE_CAP) {
+      toaster.show(`Collapse some branches first (${info.total} blocks)`, { kind: "error" });
+      return null;
+    }
+    let drawingUid;
+    try {
+      const at = api.data.pull("[:block/order {:block/parent [:block/uid]}]", [":block/uid", blockUid]);
+      const parent = at?.[":block/parent"]?.[":block/uid"];
+      if (!parent) throw new Error("no parent");
+      drawingUid = api.util.generateUID();
+      await api.data.block.create({
+        location: { "parent-uid": parent, order: (at[":block/order"] ?? 0) + 1 },
+        block: { uid: drawingUid, string: "{{[[excalidraw]]}}" },
+      });
+    } catch (error) {
+      console.warn("[plexus] mind map drawing create failed", error);
+      toaster.show("Could not create the drawing", { kind: "error" });
+      return null;
+    }
+    const opened = await openDrawingOnce(drawingUid);
+    if (!opened || disposed) return null;
+    const ok = await mindmap.showOutline({ app: opened.app, rootUid: blockUid });
+    if (!ok && !disposed) toaster.show("Could not build the mind map", { kind: "error" });
+    return ok ? drawingUid : null;
+  }
+
+  async function openDrawingOnce(uid) {
+    const matches = () => {
+      const ed = native.activeEditor(doc);
+      return ed && ed.drawingUid === uid ? ed : null;
+    };
+    const findIcon = () => {
+      for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+        if (found && found.isConnected !== false) return found;
+      }
+      return null;
+    };
+    try {
+      await host.openBlock(uid, {});
+    } catch (error) {
+      console.warn("[plexus] open block failed", error);
+      toaster.show("Could not open drawing", { kind: "error" });
+      return null;
+    }
+    const View = doc.defaultView;
+    const deadline = Date.now() + 10000;
+    let editor = matches();
+    for (let attempt = 0; attempt < 3 && !editor; attempt++) {
+      const icon = await waitFor(findIcon, Math.min(3000, Math.max(0, deadline - Date.now())), 50, aborted);
+      if (disposed) return null;
+      if (!icon) break;
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+      }
+      editor = await waitFor(matches, Math.min(1500, Math.max(0, deadline - Date.now())), 50, aborted);
+    }
+    if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
+    if (!editor && !disposed) toaster.show("Drawing did not open", { kind: "error" });
+    return editor || null;
   }
 
   async function openRegionOnce(regionUid, { sidebar = false } = {}) {

@@ -14,6 +14,9 @@ import { showSpotlight } from "./view/spotlight.js";
 import { createHoverPreview } from "./view/hover-preview.js";
 import { clearLinkTooltip, installLinkInterception } from "./host/links.js";
 import { createPublicApi, installPublicApi, uninstallPublicApi } from "./api.js";
+import { createMindMap } from "./view/mindmap.js";
+import { createMmWriter } from "./host/mmwrites.js";
+import { createMeasurer } from "./host/measure.js";
 import { createActions } from "./actions.js";
 import { clearImageMemo } from "./host/image-source.js";
 
@@ -22,6 +25,7 @@ let activeLifecycle = null;
 const THUMB_WIDTHS = [160, 480];
 const THUMB_WARM_DELAY_MS = 1500;
 const CONTEXT_MENU_LABEL = "Plexus: Region on image";
+const MINDMAP_MENU_LABEL = "Plexus: Mind map from outline";
 const PRESENT_MENU_LABEL = "Plexus: Present frames";
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 
@@ -88,10 +92,15 @@ export async function onload({ extensionAPI, extension }) {
         onEmbed: () => actions.insertEmbedFromClipboard(),
         onPresent: () => actions.presentDrawing(),
         canPresent: () => actions.hasFrames(),
+        onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
       });
       lifecycle.add(() => toolbar.dispose());
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
+      const mmWriter = createMmWriter({ api, graph: host.graphName() });
+      const measurer = createMeasurer({ doc });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
+      lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
         native,
@@ -105,6 +114,7 @@ export async function onload({ extensionAPI, extension }) {
         emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
         presenter,
+        mindmap,
       });
       lifecycle.add(() => actions.dispose());
 
@@ -124,6 +134,11 @@ export async function onload({ extensionAPI, extension }) {
           callback: (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }).catch((error) => console.warn("[plexus] present failed", error)),
         });
         lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: PRESENT_MENU_LABEL }));
+        api.ui.blockContextMenu.addCommand({
+          label: MINDMAP_MENU_LABEL,
+          callback: (e) => actions.mindMapFromOutline(e?.["block-uid"]).catch((error) => console.warn("[plexus] mind map failed", error)),
+        });
+        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: MINDMAP_MENU_LABEL }));
       }
 
       const regionref = createRegionRefRenderer({
@@ -189,6 +204,7 @@ export async function onload({ extensionAPI, extension }) {
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000 });
           mounted.disposers.push(() => overlay.dispose());
+          mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000 }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
@@ -218,6 +234,14 @@ export async function onload({ extensionAPI, extension }) {
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });
     }
+    await lifecycle.command(extensionAPI.ui.commandPalette, {
+      label: "Plexus: Mind map from outline",
+      callback: () => {
+        if (!actions) return console.warn("[plexus] unavailable outside Roam: mindMapFromOutline");
+        const uid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+        return actions.mindMapFromOutline(uid).catch((error) => console.warn("[plexus] mind map failed", error));
+      },
+    });
     console.info(`[plexus] Loaded v${extension?.version || "development"}`);
   } catch (error) {
     if (activeLifecycle === lifecycle) activeLifecycle = null;

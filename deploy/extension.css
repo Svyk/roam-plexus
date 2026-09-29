@@ -311,3 +311,18 @@ body.bt-theme-dark .plexus-portal.plexus-toast {
 .plexus-portal.plexus-present .plexus-present-slide[hidden] {
   display: none;
 }
+
+input.plexus-portal.plexus-mm-input {
+  position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 10px;
+  border: 2px solid #2d72d2;
+  border-radius: 8px;
+  outline: none;
+  font-family: Excalifont, Xiaolai, sans-serif, "Segoe UI Emoji";
+  text-align: center;
+  color: #1c2127;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(16, 22, 26, 0.3);
+}

@@ -1,4 +1,4 @@
-/* Plexus v0.3.1 | MIT | generated; edit src/ */
+/* Plexus v0.4.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -232,20 +232,20 @@ function parseRegion(blockString) {
   const kind = args.get("k") ?? "";
   const drawingUid = args.get("d") ?? "";
   const region = { kind, drawingUid, caption, extra, supported: false };
-  const fail2 = (error) => {
+  const fail = (error) => {
     region.error = error;
     return region;
   };
-  if (bad.length) return fail2(`bad token ${bad[0]}`);
-  if (!kind) return fail2("missing k");
+  if (bad.length) return fail(`bad token ${bad[0]}`);
+  if (!kind) return fail("missing k");
   if (RESERVED_KINDS.includes(kind)) {
     for (const key of ["f", "el", "pad", "ids"]) if (args.has(key)) extra.unshift([key, args.get(key)]);
-    if (drawingUid && !ID_RE.test(drawingUid)) return fail2("bad d");
+    if (drawingUid && !ID_RE.test(drawingUid)) return fail("bad d");
     return region;
   }
-  if (!SUPPORTED_KINDS.includes(kind)) return fail2(`unknown kind ${kind}`);
-  if (!drawingUid) return fail2("missing d");
-  if (!ID_RE.test(drawingUid)) return fail2("bad d");
+  if (!SUPPORTED_KINDS.includes(kind)) return fail(`unknown kind ${kind}`);
+  if (!drawingUid) return fail("missing d");
+  if (!ID_RE.test(drawingUid)) return fail("bad d");
   const parsePad = () => {
     if (!args.has("pad")) return DEFAULT_PAD;
     const raw = args.get("pad");
@@ -284,11 +284,11 @@ function parseRegion(blockString) {
   };
   let err = null;
   if (kind === "area") {
-    if (!args.has("ids")) return fail2("missing ids");
+    if (!args.has("ids")) return fail("missing ids");
     const ids = args.get("ids").split(",");
-    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail2("bad ids");
+    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail("bad ids");
     const pad = parsePad();
-    if (pad === null) return fail2("bad pad");
+    if (pad === null) return fail("bad pad");
     region.ids = ids;
     region.pad = pad;
   } else if (kind === "rect") {
@@ -319,7 +319,7 @@ function parseRegion(blockString) {
   } else if (kind === "imgpoly") {
     err = parseIndex() || parsePoly();
   }
-  if (err) return fail2(err);
+  if (err) return fail(err);
   region.supported = true;
   return region;
 }
@@ -384,22 +384,22 @@ function geometryKey(region) {
   if (region.kind === "rect") {
     return `rect|${region.drawingUid}|${region.el}|${(region.f ?? []).join(",")}`;
   }
-  const base2 = `${region.kind}|${region.drawingUid}`;
+  const base3 = `${region.kind}|${region.drawingUid}`;
   switch (region.kind) {
     case "group":
-      return `${base2}|${region.groupId ?? region.g}|${region.pad ?? DEFAULT_PAD}`;
+      return `${base3}|${region.groupId ?? region.g}|${region.pad ?? DEFAULT_PAD}`;
     case "frame":
-      return `${base2}|${region.frameId ?? region.fr}|${region.pad ?? DEFAULT_PAD}`;
+      return `${base3}|${region.frameId ?? region.fr}|${region.pad ?? DEFAULT_PAD}`;
     case "cframe":
-      return `${base2}|${region.frameId ?? region.fr}`;
+      return `${base3}|${region.frameId ?? region.fr}`;
     case "poly":
-      return `${base2}|${region.el}|${(region.p ?? []).join(",")}`;
+      return `${base3}|${region.el}|${(region.p ?? []).join(",")}`;
     case "imgrect":
-      return `${base2}|${region.i}|${(region.f ?? []).join(",")}`;
+      return `${base3}|${region.i}|${(region.f ?? []).join(",")}`;
     case "imgpoly":
-      return `${base2}|${region.i}|${(region.p ?? []).join(",")}`;
+      return `${base3}|${region.i}|${(region.p ?? []).join(",")}`;
     default:
-      return base2;
+      return base3;
   }
 }
 
@@ -408,8 +408,8 @@ var encoder = new TextEncoder();
 function fnv1a(str) {
   const bytes = encoder.encode(String(str ?? ""));
   let h = 2166136261;
-  for (let i2 = 0; i2 < bytes.length; i2++) {
-    h ^= bytes[i2];
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h.toString(16).padStart(8, "0");
@@ -440,17 +440,17 @@ function polyBBox(p) {
   const poly = normalizePoly(p);
   if (!poly) return null;
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-  for (let i2 = 0; i2 < poly.length; i2 += 2) {
-    x1 = Math.min(x1, poly[i2]);
-    x2 = Math.max(x2, poly[i2]);
-    y1 = Math.min(y1, poly[i2 + 1]);
-    y2 = Math.max(y2, poly[i2 + 1]);
+  for (let i = 0; i < poly.length; i += 2) {
+    x1 = Math.min(x1, poly[i]);
+    x2 = Math.max(x2, poly[i]);
+    y1 = Math.min(y1, poly[i + 1]);
+    y2 = Math.max(y2, poly[i + 1]);
   }
   return normalizeFrac([x1, y1, x2 - x1, y2 - y1]);
 }
 function clipPolyToUnit(flat) {
   let pts = [];
-  for (let i2 = 0; i2 + 1 < flat.length; i2 += 2) pts.push([flat[i2], flat[i2 + 1]]);
+  for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
   const edges = [
     [(q) => q[0], 0, true],
     [(q) => q[0], 1, false],
@@ -460,9 +460,9 @@ function clipPolyToUnit(flat) {
   for (const [get, lim, keepAbove] of edges) {
     const inside = (q) => keepAbove ? get(q) >= lim : get(q) <= lim;
     const next = [];
-    for (let i2 = 0; i2 < pts.length; i2++) {
-      const a = pts[i2];
-      const b = pts[(i2 + 1) % pts.length];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
       const ia = inside(a);
       const ib = inside(b);
       if (ia !== ib) {
@@ -476,9 +476,9 @@ function clipPolyToUnit(flat) {
   }
   if (pts.length < 3) return null;
   let area = 0;
-  for (let i2 = 0; i2 < pts.length; i2++) {
-    const a = pts[i2];
-    const b = pts[(i2 + 1) % pts.length];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
     area += a[0] * b[1] - b[0] * a[1];
   }
   if (Math.abs(area) / 2 < 1e-9) return null;
@@ -491,11 +491,11 @@ function rdp(pts, eps) {
   const dx = bx - ax, dy = by - ay;
   const len = Math.hypot(dx, dy);
   let idx = -1, max = -1;
-  for (let i2 = 1; i2 < pts.length - 1; i2++) {
-    const d = len > 0 ? Math.abs(dy * pts[i2][0] - dx * pts[i2][1] + bx * ay - by * ax) / len : Math.hypot(pts[i2][0] - ax, pts[i2][1] - ay);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = len > 0 ? Math.abs(dy * pts[i][0] - dx * pts[i][1] + bx * ay - by * ax) / len : Math.hypot(pts[i][0] - ax, pts[i][1] - ay);
     if (d > max) {
       max = d;
-      idx = i2;
+      idx = i;
     }
   }
   if (max <= eps) return [pts[0], pts[pts.length - 1]];
@@ -505,14 +505,14 @@ function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
   const poly = normalizePoly(p);
   if (!poly) return null;
   const pts = [];
-  for (let i2 = 0; i2 < poly.length; i2 += 2) pts.push([poly[i2], poly[i2 + 1]]);
+  for (let i = 0; i < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
   if (pts.length <= 3) return poly;
   let far = 1, best = -1;
-  for (let i2 = 1; i2 < pts.length; i2++) {
-    const d = Math.hypot(pts[i2][0] - pts[0][0], pts[i2][1] - pts[0][1]);
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
     if (d > best) {
       best = d;
-      far = i2;
+      far = i;
     }
   }
   const chainA = pts.slice(0, far + 1);
@@ -530,7 +530,7 @@ function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
   }
   if (result.length > maxPoints) {
     const step = result.length / maxPoints;
-    result = Array.from({ length: maxPoints }, (_, i2) => result[Math.floor(i2 * step)]);
+    result = Array.from({ length: maxPoints }, (_, i) => result[Math.floor(i * step)]);
   }
   return result.flat().map((n) => Math.round(n * 1e3) / 1e3);
 }
@@ -539,8 +539,8 @@ function polyToLocal(p, bboxFrac) {
   const bb = normalizeFrac(bboxFrac);
   if (!poly || !bb) return null;
   const out = [];
-  for (let i2 = 0; i2 < poly.length; i2 += 2) {
-    out.push(Math.round((poly[i2] - bb[0]) / bb[2] * 1e6) / 1e6, Math.round((poly[i2 + 1] - bb[1]) / bb[3] * 1e6) / 1e6);
+  for (let i = 0; i < poly.length; i += 2) {
+    out.push(Math.round((poly[i] - bb[0]) / bb[2] * 1e6) / 1e6, Math.round((poly[i + 1] - bb[1]) / bb[3] * 1e6) / 1e6);
   }
   return out;
 }
@@ -561,7 +561,7 @@ function clipSvgToPolygon(svgString, localPoints) {
   }
   if (!(w > 0) || !(h > 0)) throw new TypeError("clipSvgToPolygon: no size");
   const coords = [];
-  for (let i2 = 0; i2 < pts.length; i2 += 2) coords.push(`${num(minX + pts[i2] * w)},${num(minY + pts[i2 + 1] * h)}`);
+  for (let i = 0; i < pts.length; i += 2) coords.push(`${num(minX + pts[i] * w)},${num(minY + pts[i + 1] * h)}`);
   const attr = coords.join(" ");
   const id = `plexus-clip-${fnv1a(attr)}`;
   const head = svgString.slice(0, open.index + tag.length);
@@ -631,25 +631,25 @@ function curveToBezier(pointsIn) {
   const len = pointsIn.length;
   if (len === 3) return [pointsIn[0], pointsIn[1], pointsIn[2], pointsIn[2]];
   const pts = [pointsIn[0], pointsIn[0]];
-  for (let i2 = 1; i2 < len; i2++) {
-    pts.push(pointsIn[i2]);
-    if (i2 === len - 1) pts.push(pointsIn[i2]);
+  for (let i = 1; i < len; i++) {
+    pts.push(pointsIn[i]);
+    if (i === len - 1) pts.push(pointsIn[i]);
   }
   const s = 1;
   const b = [[pts[0][0], pts[0][1]]];
-  for (let i2 = 1; i2 + 2 < pts.length; i2++) {
-    const p = pts[i2];
-    b.push([p[0] + (s * pts[i2 + 1][0] - s * pts[i2 - 1][0]) / 6, p[1] + (s * pts[i2 + 1][1] - s * pts[i2 - 1][1]) / 6]);
-    b.push([pts[i2 + 1][0] + (s * pts[i2][0] - s * pts[i2 + 2][0]) / 6, pts[i2 + 1][1] + (s * pts[i2][1] - s * pts[i2 + 2][1]) / 6]);
-    b.push([pts[i2 + 1][0], pts[i2 + 1][1]]);
+  for (let i = 1; i + 2 < pts.length; i++) {
+    const p = pts[i];
+    b.push([p[0] + (s * pts[i + 1][0] - s * pts[i - 1][0]) / 6, p[1] + (s * pts[i + 1][1] - s * pts[i - 1][1]) / 6]);
+    b.push([pts[i + 1][0] + (s * pts[i][0] - s * pts[i + 2][0]) / 6, pts[i + 1][1] + (s * pts[i][1] - s * pts[i + 2][1]) / 6]);
+    b.push([pts[i + 1][0], pts[i + 1][1]]);
   }
   return b;
 }
 function sampleCurve(points) {
   const b = curveToBezier(points);
   const out = [];
-  for (let i2 = 0; i2 + 3 < b.length; i2 += 3) {
-    const [p0, p1, p2, p3] = [b[i2], b[i2 + 1], b[i2 + 2], b[i2 + 3]];
+  for (let i = 0; i + 3 < b.length; i += 3) {
+    const [p0, p1, p2, p3] = [b[i], b[i + 1], b[i + 2], b[i + 3]];
     for (let k = 0; k <= CURVE_SAMPLES; k++) {
       const t = k / CURVE_SAMPLES;
       const u = 1 - t;
@@ -771,18 +771,18 @@ function regionSceneBBox(region, elements, appState) {
     }
     if (region.kind === "poly") {
       const disp = [];
-      for (let i2 = 0; i2 + 1 < region.p.length; i2 += 2) {
-        const [sx, sy] = naturalToScene(el, [region.p[i2], region.p[i2 + 1]]);
+      for (let i = 0; i + 1 < region.p.length; i += 2) {
+        const [sx, sy] = naturalToScene(el, [region.p[i], region.p[i + 1]]);
         disp.push((sx - el.x) / el.width, (sy - el.y) / el.height);
       }
       const clipped = clipPolyToUnit(disp);
       if (!clipped) return { error: "outside-crop" };
       let cx1 = Infinity, cy1 = Infinity, cx2 = -Infinity, cy2 = -Infinity;
-      for (let i2 = 0; i2 < clipped.length; i2 += 2) {
-        cx1 = Math.min(cx1, clipped[i2]);
-        cx2 = Math.max(cx2, clipped[i2]);
-        cy1 = Math.min(cy1, clipped[i2 + 1]);
-        cy2 = Math.max(cy2, clipped[i2 + 1]);
+      for (let i = 0; i < clipped.length; i += 2) {
+        cx1 = Math.min(cx1, clipped[i]);
+        cx2 = Math.max(cx2, clipped[i]);
+        cy1 = Math.min(cy1, clipped[i + 1]);
+        cy2 = Math.max(cy2, clipped[i + 1]);
       }
       return { bbox: [el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height], missing: [] };
     }
@@ -1179,7 +1179,7 @@ function findApp(excalidrawEl) {
   const key = Object.keys(excalidrawEl).find((k) => k.startsWith("__reactFiber$"));
   if (!key) return null;
   let fiber = excalidrawEl[key];
-  for (let i2 = 0; fiber && i2 <= 6; i2++) {
+  for (let i = 0; fiber && i <= 6; i++) {
     const node = fiber.stateNode;
     if (node && typeof node.updateScene === "function" && typeof node.getSceneElementsIncludingDeleted === "function" && node.actionManager && typeof node.actionManager === "object") return node;
     fiber = fiber.return;
@@ -1607,7 +1607,7 @@ function polyPoints(poly) {
   let pts;
   if (typeof poly[0] === "number") {
     pts = [];
-    for (let i2 = 0; i2 + 1 < poly.length; i2 += 2) pts.push([poly[i2], poly[i2 + 1]]);
+    for (let i = 0; i + 1 < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
   } else pts = poly.map((p) => Array.isArray(p) ? [p[0], p[1]] : [p?.x, p?.y]);
   if (pts.length < 3 || pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
   return pts;
@@ -1620,7 +1620,7 @@ function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document }
   const pts = polyPoints(poly);
   if (pts) {
     ctx.beginPath();
-    pts.forEach(([x, y], i2) => i2 ? ctx.lineTo(x * sw, y * sh) : ctx.moveTo(x * sw, y * sh));
+    pts.forEach(([x, y], i) => i ? ctx.lineTo(x * sw, y * sh) : ctx.moveTo(x * sw, y * sh));
     ctx.closePath();
     ctx.clip();
   }
@@ -1829,7 +1829,7 @@ function baseZIndex(doc, outerEl) {
   }
   return 1e3;
 }
-function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent }) {
+function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap }) {
   const view2 = doc.defaultView;
   let bar = null;
   let outer = null;
@@ -1894,7 +1894,9 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
       const cropButton = button("Region from crop", onCropRegion);
       const presentButton = button("Present", onPresent);
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
-      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton);
+      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton];
+      if (onMindMap) controls.push(button("Mind map", onMindMap));
+      bar.append(...controls);
       doc.body.append(bar);
       refresh();
       outerEl.addEventListener?.("pointerup", scheduleRefresh, true);
@@ -1981,9 +1983,9 @@ function wrapLines(text, perLine) {
   if (cur || !lines.length) lines.push(cur);
   return lines;
 }
-function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
-  const rectId = rid(idPrefix);
-  const textId = rid(idPrefix);
+function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix: idPrefix2 = "plexus-embed-" } = {}) {
+  const rectId = rid(idPrefix2);
+  const textId2 = rid(idPrefix2);
   const text = embedLabel(label) || embedLabel(ref);
   const fontSize = 16;
   const lineHeight = 1.25;
@@ -1998,11 +2000,11 @@ function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 
     strokeStyle: "dashed",
     backgroundColor: "transparent",
     link: ref,
-    boundElements: [{ id: textId, type: "text" }],
+    boundElements: [{ id: textId2, type: "text" }],
     customData: { plexus: { embed: ref } }
   };
   const t = {
-    ...base(textId, "text", x + (width - tw) / 2, y + (height - th) / 2, tw, th),
+    ...base(textId2, "text", x + (width - tw) / 2, y + (height - th) / 2, tw, th),
     text: wrapped,
     originalText: text,
     fontSize,
@@ -2108,7 +2110,7 @@ function createEmbedOverlay({
       renderInto(portal, portal.body, content.string, "plexus-embed-block");
       budget -= 1;
     }
-    const walk = (children, depth, parent) => {
+    const walk2 = (children, depth, parent) => {
       for (const child of children || []) {
         if (budget <= 0) return;
         budget -= 1;
@@ -2117,10 +2119,10 @@ function createEmbedOverlay({
         parent.append(row);
         portal.hosts.add(row);
         renderInto(portal, row, child.string ?? "", "plexus-embed-block");
-        if (depth < CHILD_DEPTH && content.kind !== "page") walk(child.children, depth + 1, row);
+        if (depth < CHILD_DEPTH && content.kind !== "page") walk2(child.children, depth + 1, row);
       }
     };
-    walk(content.children, 1, portal.body);
+    walk2(content.children, 1, portal.body);
   };
   const watchUid = (portal, uid) => {
     if (!uid || !host.watchEmbed || portal.uid === uid) return;
@@ -2276,7 +2278,7 @@ var NEXT_KEYS = /* @__PURE__ */ new Set(["ArrowRight", "PageDown", " ", "Spaceba
 var PREV_KEYS = /* @__PURE__ */ new Set(["ArrowLeft", "PageUp", "Backspace"]);
 function createPresenter({ doc }) {
   let current = null;
-  const close = () => {
+  const close2 = () => {
     const state = current;
     if (!state) return;
     current = null;
@@ -2300,11 +2302,11 @@ function createPresenter({ doc }) {
   };
   return {
     isOpen: () => !!current,
-    close,
-    dispose: close,
+    close: close2,
+    dispose: close2,
     // slides: [{ name, url|null }]. Returns a handle; setSlide fills a slide that was not ready yet.
     open({ slides, index = 0, onClose } = {}) {
-      close();
+      close2();
       const list = slides.map((s) => ({ name: s.name ?? "", url: s.url ?? null }));
       const dialog = doc.createElement("dialog");
       dialog.className = "plexus-portal plexus-present";
@@ -2366,9 +2368,9 @@ function createPresenter({ doc }) {
       };
       const onCancel = (e) => {
         e.preventDefault?.();
-        close();
+        close2();
       };
-      const onClosed = () => close();
+      const onClosed = () => close2();
       dialog.addEventListener("keydown", onKey);
       dialog.addEventListener("keyup", onKeyUp);
       dialog.addEventListener("click", onClick);
@@ -2381,14 +2383,14 @@ function createPresenter({ doc }) {
       dialog.focus?.();
       const state = current;
       return {
-        setSlide(i2, patch) {
-          if (current !== state || !list[i2]) return;
-          Object.assign(list[i2], patch);
-          if (i2 === at || i2 === at + 1) show();
+        setSlide(i, patch) {
+          if (current !== state || !list[i]) return;
+          Object.assign(list[i], patch);
+          if (i === at || i === at + 1) show();
         },
         isOpen: () => current === state,
         close: () => {
-          if (current === state) close();
+          if (current === state) close2();
         }
       };
     }
@@ -2418,8 +2420,8 @@ function displayedRect(el, f) {
 function displayedPoly(el, p) {
   if (!el?.crop) return p;
   const out = [];
-  for (let i2 = 0; i2 + 1 < p.length; i2 += 2) {
-    const [sx, sy] = pt(naturalToScene(el, [p[i2], p[i2 + 1]]));
+  for (let i = 0; i + 1 < p.length; i += 2) {
+    const [sx, sy] = pt(naturalToScene(el, [p[i], p[i + 1]]));
     out.push((sx - el.x) / el.width, (sy - el.y) / el.height);
   }
   return clipPolyToUnit(out);
@@ -2433,7 +2435,7 @@ function displayedToNatural(el, picked) {
     return [x1, y1, x2 - x1, y2 - y1];
   }
   const p = [];
-  for (let i2 = 0; i2 + 1 < picked.p.length; i2 += 2) p.push(...toNat(picked.p[i2], picked.p[i2 + 1]));
+  for (let i = 0; i + 1 < picked.p.length; i += 2) p.push(...toNat(picked.p[i], picked.p[i + 1]));
   return { p };
 }
 var OUTSIDE_CROP_TEXT = "Region is outside the image's crop";
@@ -2644,14 +2646,14 @@ function classifyAddedNode(node) {
   if (!node || node.nodeType !== 1 || skipped(node)) return out;
   if (node.classList?.contains(REGION_BUTTON_CLASS)) out.regionButtons.push(node);
   const buttons = node.getElementsByClassName?.(REGION_BUTTON_CLASS);
-  if (buttons) for (let i2 = 0; i2 < buttons.length; i2++) out.regionButtons.push(buttons[i2]);
+  if (buttons) for (let i = 0; i < buttons.length; i++) out.regionButtons.push(buttons[i]);
   if (node.classList?.contains("excalidraw")) {
     if (underFullScreen(node)) out.editors.push(node);
   } else {
     const editors = node.getElementsByClassName?.("excalidraw");
     if (editors) {
-      for (let i2 = 0; i2 < editors.length; i2++) {
-        if (underFullScreen(editors[i2])) out.editors.push(editors[i2]);
+      for (let i = 0; i < editors.length; i++) {
+        if (underFullScreen(editors[i])) out.editors.push(editors[i]);
       }
     }
   }
@@ -3100,6 +3102,1873 @@ function uninstallPublicApi(api, { win = globalThis.window ?? globalThis, Custom
   return ours;
 }
 
+// src/model/mindmap.js
+var MAX_TEXT_WIDTH = 240;
+var PAD_X = 14;
+var PAD_Y = 10;
+var LINE_HEIGHT = 1.25;
+var SIBLING_GAP = 18;
+var LEVEL_GAP = 70;
+var RADIAL_RADIUS = 220;
+var RADIAL_STEP = 180;
+var MAX_DISPLAY = 280;
+var REF_MAX = 60;
+var ROOT_COLOR = "#ffec99";
+var BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
+var LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
+var EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
+var isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);
+var fontSizeForDepth = (depth) => depth === 0 ? 24 : depth === 1 ? 20 : 16;
+function pick2(obj, name) {
+  if (!obj || typeof obj !== "object") return void 0;
+  const v = obj[`:block/${name}`];
+  return v !== void 0 ? v : obj[name];
+}
+function treeFromPull(pull, opts = {}) {
+  const prune = opts.prune instanceof Set ? opts.prune : null;
+  const cap = Number.isFinite(opts.maxVisible) ? opts.maxVisible : Infinity;
+  let visible = 0;
+  let truncated = false;
+  function conv(p, isRoot) {
+    const uid = pick2(p, "uid");
+    if (typeof uid !== "string") return null;
+    const string = pick2(p, "string");
+    const str = typeof string === "string" ? string : "";
+    if (isExcludedString(str)) return null;
+    if (!isRoot && prune && prune.has(uid)) return null;
+    if (visible >= cap) {
+      truncated = true;
+      return null;
+    }
+    visible += 1;
+    const open = pick2(p, "open") !== false;
+    const raw = pick2(p, "children");
+    const kids2 = Array.isArray(raw) ? raw.slice() : [];
+    kids2.sort((a, b) => (pick2(a, "order") ?? 0) - (pick2(b, "order") ?? 0));
+    const node = { uid, string: str, open, children: [] };
+    for (const k of kids2) {
+      const c = conv(k, false);
+      if (c) node.children.push(c);
+    }
+    return node;
+  }
+  if (!pull || typeof pull !== "object") return null;
+  const tree = conv(pull, true);
+  if (tree && truncated) tree.truncated = true;
+  return tree;
+}
+var isFolded = (node) => node.open === false && node.children.length > 0;
+function countHidden(node) {
+  let n = 0;
+  const stack = [...node.children];
+  while (stack.length) {
+    const c = stack.pop();
+    n += 1;
+    for (const k of c.children) stack.push(k);
+  }
+  return n;
+}
+var visibleChildren = (node) => node.open === false ? [] : node.children;
+function visibleNodes(tree) {
+  const out = [];
+  function walk2(node, parent, depth, branch, branchIndex) {
+    out.push({ node, parent, depth, branch, branchIndex });
+    const kids2 = visibleChildren(node);
+    for (let i = 0; i < kids2.length; i++) {
+      const k = kids2[i];
+      if (depth === 0) walk2(k, node, 1, k.uid, i);
+      else walk2(k, node, depth + 1, branch, branchIndex);
+    }
+  }
+  if (tree) walk2(tree, null, 0, null, -1);
+  return out;
+}
+var allUids = (tree) => {
+  const set = /* @__PURE__ */ new Set();
+  const stack = tree ? [tree] : [];
+  while (stack.length) {
+    const n = stack.pop();
+    set.add(n.uid);
+    for (const c of n.children) stack.push(c);
+  }
+  return set;
+};
+var RE_IMG = /!\[([^\]]*)\]\([^)]*\)/g;
+var RE_LINK = /\[([^\]]*)\]\([^)]*\)/g;
+var RE_REF = /\(\(([^()\s]+)\)\)/g;
+var RE_TAG_BR = /#\[\[([^\]]+)\]\]/g;
+var RE_PAGE = /\[\[([^\]]+)\]\]/g;
+var RE_TAG = /(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
+var RE_BOLD = /\*\*(.+?)\*\*/g;
+var RE_ITAL = /__(.+?)__/g;
+var RE_HL = /\^\^(.+?)\^\^/g;
+var RE_STRIKE = /~~(.+?)~~/g;
+function hasComponent(s) {
+  return s.indexOf("{{") !== -1 && s.indexOf("}}", s.indexOf("{{")) !== -1;
+}
+function replaceComponents(s) {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === "{" && s[i + 1] === "{") {
+      let depth = 0;
+      let j = i;
+      let end = -1;
+      while (j < s.length) {
+        if (s[j] === "{" && s[j + 1] === "{") {
+          depth += 1;
+          j += 2;
+          continue;
+        }
+        if (s[j] === "}" && s[j + 1] === "}") {
+          depth -= 1;
+          j += 2;
+          if (depth === 0) {
+            end = j;
+            break;
+          }
+          continue;
+        }
+        j += 1;
+      }
+      if (end === -1) {
+        out += s.slice(i);
+        break;
+      }
+      out += "⧉";
+      i = end;
+    } else {
+      out += s[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+function fresh(re) {
+  re.lastIndex = 0;
+  return re;
+}
+function hasMarkup(s) {
+  if (typeof s !== "string" || s === "" || s.length > MAX_DISPLAY) return true;
+  if (hasComponent(s) && replaceComponents(s) !== s) return true;
+  for (const re of [RE_IMG, RE_LINK, RE_REF, RE_TAG_BR, RE_PAGE, RE_TAG, RE_BOLD, RE_ITAL, RE_HL, RE_STRIKE]) {
+    if (fresh(re).test(s)) return true;
+  }
+  return false;
+}
+function rewrite(s, resolveRef, depthLimit) {
+  let t = s;
+  if (hasComponent(t)) t = replaceComponents(t);
+  t = t.replace(RE_IMG, (_, alt) => `▣ ${alt}`);
+  t = t.replace(RE_LINK, (_, txt) => txt);
+  t = t.replace(RE_REF, (_, uid) => {
+    if (depthLimit <= 0) return "…";
+    let ref;
+    try {
+      ref = resolveRef ? resolveRef(uid) : null;
+    } catch {
+      ref = null;
+    }
+    if (typeof ref !== "string") return "…";
+    let r = rewrite(ref, () => "…", 0);
+    if (r.length > REF_MAX) r = `${r.slice(0, REF_MAX - 1)}…`;
+    return r;
+  });
+  t = t.replace(RE_TAG_BR, (_, x) => x);
+  t = t.replace(RE_PAGE, (_, x) => x);
+  t = t.replace(RE_TAG, (_, pre, x) => pre + x);
+  t = t.replace(RE_BOLD, (_, x) => x);
+  t = t.replace(RE_ITAL, (_, x) => x);
+  t = t.replace(RE_HL, (_, x) => x);
+  t = t.replace(RE_STRIKE, (_, x) => x);
+  return t;
+}
+function plainText(s, resolveRef) {
+  if (typeof s !== "string" || s === "") return "·";
+  let t = rewrite(s, resolveRef, 1);
+  if (t.length > MAX_DISPLAY) t = `${t.slice(0, MAX_DISPLAY - 1)}…`;
+  if (t === "") return "·";
+  return t;
+}
+function wrapLines2(text, maxWidth, measure) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    if (para === "") {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    const flush = () => {
+      out.push(line);
+      line = "";
+    };
+    for (const word of para.split(" ")) {
+      const cand = line === "" ? word : `${line} ${word}`;
+      if (measure(cand) <= maxWidth) {
+        line = cand;
+        continue;
+      }
+      if (line !== "") flush();
+      if (measure(word) <= maxWidth) {
+        line = word;
+        continue;
+      }
+      let chunk = "";
+      for (const ch of Array.from(word)) {
+        if (chunk !== "" && measure(chunk + ch) > maxWidth) {
+          out.push(chunk);
+          chunk = ch;
+        } else chunk += ch;
+      }
+      line = chunk;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function nodeSize(text, fontSize, measure) {
+  const m = (s) => measure(s, fontSize);
+  const lines = wrapLines2(text, MAX_TEXT_WIDTH, m);
+  let tw = 0;
+  for (const l of lines) tw = Math.max(tw, m(l));
+  const textWidth = Math.max(1, Math.ceil(tw));
+  const textHeight = lines.length * fontSize * LINE_HEIGHT;
+  return {
+    width: textWidth + 2 * PAD_X,
+    height: textHeight + 2 * PAD_Y,
+    textWidth,
+    textHeight,
+    lines,
+    text: lines.join("\n")
+  };
+}
+function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 } }) {
+  const pos = {};
+  if (!tree) return pos;
+  const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
+  const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
+  if (layout === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
+  const horizontal = layout === "right" || layout === "left";
+  const cross = (n) => horizontal ? sz(n).height : sz(n).width;
+  const ext = /* @__PURE__ */ new Map();
+  const free = (n) => visibleChildren(n).filter((k) => !isPinned(k));
+  function extent(n) {
+    let span = 0;
+    const kids2 = free(n);
+    for (let i = 0; i < kids2.length; i++) span += extent(kids2[i]) + (i ? SIBLING_GAP : 0);
+    for (const k of visibleChildren(n)) if (isPinned(k)) extent(k);
+    const e = Math.max(cross(n), span);
+    ext.set(n, { e, span });
+    return e;
+  }
+  function place(n, x, y) {
+    pos[n.uid] = { x, y };
+    const s = sz(n);
+    const { span } = ext.get(n);
+    const kids2 = free(n);
+    let cursor = (horizontal ? y + s.height / 2 : x + s.width / 2) - span / 2;
+    for (const k of kids2) {
+      const ks = sz(k);
+      const e = ext.get(k).e;
+      const c = cursor + (e - cross(k)) / 2;
+      let kx;
+      let ky;
+      if (layout === "right") {
+        kx = x + s.width + LEVEL_GAP;
+        ky = c;
+      } else if (layout === "left") {
+        kx = x - LEVEL_GAP - ks.width;
+        ky = c;
+      } else if (layout === "down") {
+        kx = c;
+        ky = y + s.height + LEVEL_GAP;
+      } else {
+        kx = c;
+        ky = y - LEVEL_GAP - ks.height;
+      }
+      place(k, kx, ky);
+      cursor += e + SIBLING_GAP;
+    }
+    for (const k of visibleChildren(n)) if (isPinned(k)) place(k, pinned[k.uid].x, pinned[k.uid].y);
+  }
+  extent(tree);
+  place(tree, root.x, root.y);
+  return pos;
+}
+function radial(tree, sz, isPinned, pinned, rootPos, pos) {
+  const rs = sz(tree);
+  const cx = rootPos.x + rs.width / 2;
+  const cy = rootPos.y + rs.height / 2;
+  pos[tree.uid] = { x: rootPos.x, y: rootPos.y };
+  function fan(n, ncx, ncy, angle, width, first) {
+    const kids2 = visibleChildren(n);
+    const m = kids2.length;
+    for (let i = 0; i < m; i++) {
+      const k = kids2[i];
+      const ks = sz(k);
+      const a = first ? -Math.PI / 2 + 2 * Math.PI * i / m : angle - width / 2 + width * (i + 0.5) / m;
+      const w = first ? 2 * Math.PI / m : width / m;
+      let kcx;
+      let kcy;
+      let dirA = a;
+      if (isPinned(k)) {
+        kcx = pinned[k.uid].x + ks.width / 2;
+        kcy = pinned[k.uid].y + ks.height / 2;
+        dirA = Math.atan2(kcy - cy, kcx - cx);
+        pos[k.uid] = { x: pinned[k.uid].x, y: pinned[k.uid].y };
+        fan(k, kcx, kcy, dirA, w, false);
+        continue;
+      }
+      const r = first ? RADIAL_RADIUS : RADIAL_STEP;
+      kcx = ncx + r * Math.cos(a);
+      kcy = ncy + r * Math.sin(a);
+      pos[k.uid] = { x: kcx - ks.width / 2, y: kcy - ks.height / 2 };
+      fan(k, kcx, kcy, a, w, false);
+    }
+  }
+  fan(tree, cx, cy, 0, 2 * Math.PI, true);
+  return pos;
+}
+function nearestInDirection(from, candidates, dir) {
+  const fx = from.x + from.width / 2;
+  const fy = from.y + from.height / 2;
+  let best = null;
+  let bestD = Infinity;
+  for (const c of candidates) {
+    if (c.id === from.id) continue;
+    const dx = c.x + c.width / 2 - fx;
+    const dy = c.y + c.height / 2 - fy;
+    const inCone = dir === "right" ? dx > 0 && Math.abs(dy) <= dx : dir === "left" ? dx < 0 && Math.abs(dy) <= -dx : dir === "down" ? dy > 0 && Math.abs(dx) <= dy : dir === "up" ? dy < 0 && Math.abs(dx) <= -dy : false;
+    if (!inCone) continue;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = c.id;
+    }
+  }
+  return best;
+}
+
+// src/model/mmsync.js
+var FONT_FAMILY = 5;
+var BOUNDARY_PAD = 12;
+var EDGE_GAP = 4;
+var TOL = 0.5;
+var idPrefix = (root) => `pmm-${root}-`;
+var nodeId = (root, uid) => `pmm-${root}-${uid}`;
+var textId = (root, uid) => `pmm-${root}-${uid}-t`;
+var edgeId = (root, childUid) => `pmm-${root}-${childUid}-e`;
+var boundaryId = (root, uid) => `pmm-${root}-${uid}-b`;
+var rnd2 = () => Math.floor(Math.random() * 2147483646) + 1;
+var mmOf = (el) => el && el.customData && el.customData.plexus && el.customData.plexus.mm || void 0;
+function withMM(customData, mm) {
+  const cd = customData && typeof customData === "object" ? customData : {};
+  const plexus = cd.plexus && typeof cd.plexus === "object" ? cd.plexus : {};
+  return { ...cd, plexus: { ...plexus, mm } };
+}
+function withoutMM(customData) {
+  const cd = { ...customData };
+  const plexus = { ...cd.plexus || {} };
+  delete plexus.mm;
+  if (Object.keys(plexus).length) cd.plexus = plexus;
+  else delete cd.plexus;
+  return Object.keys(cd).length ? cd : null;
+}
+function bump(el, patch) {
+  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd2(), updated: Date.now() };
+}
+function patchMarker(el, mmPatch) {
+  const next = { ...mmOf(el) || {}, ...mmPatch };
+  for (const k of Object.keys(next)) if (next[k] === void 0) delete next[k];
+  return bump(el, { customData: withMM(el.customData, next) });
+}
+function base2(id, type, x, y, width, height, extra) {
+  return {
+    id,
+    type,
+    x,
+    y,
+    width,
+    height,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "solid",
+    roughness: 1,
+    opacity: 100,
+    groupIds: [],
+    frameId: null,
+    index: null,
+    roundness: null,
+    seed: rnd2(),
+    version: 1,
+    versionNonce: rnd2(),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    customData: void 0,
+    ...extra
+  };
+}
+function buildNode({ map, uid, x, y, width, height, backgroundColor, mm, boundElements }) {
+  return base2(nodeId(map, uid), "rectangle", x, y, width, height, {
+    backgroundColor,
+    roundness: { type: 3 },
+    boundElements: boundElements || [],
+    customData: withMM(null, mm)
+  });
+}
+function buildText({ map, uid, x, y, width, height, text, originalText, fontSize }) {
+  return base2(textId(map, uid), "text", x, y, width, height, {
+    text,
+    originalText,
+    fontSize,
+    fontFamily: 5,
+    textAlign: "center",
+    verticalAlign: "middle",
+    containerId: nodeId(map, uid),
+    autoResize: true,
+    lineHeight: LINE_HEIGHT
+  });
+}
+function buildEdge({ map, parentUid, childUid, x, y, points }) {
+  const [, [dx, dy]] = points;
+  return base2(edgeId(map, childUid), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
+    points,
+    lastCommittedPoint: null,
+    startBinding: { elementId: nodeId(map, parentUid), focus: 0, gap: EDGE_GAP },
+    endBinding: { elementId: nodeId(map, childUid), focus: 0, gap: EDGE_GAP },
+    startArrowhead: null,
+    endArrowhead: null,
+    elbowed: false,
+    customData: withMM(null, { edge: [parentUid, childUid], map })
+  });
+}
+function buildBoundary({ map, uid, x, y, width, height }) {
+  return base2(boundaryId(map, uid), "rectangle", x, y, width, height, {
+    strokeStyle: "dashed",
+    strokeWidth: 1,
+    roundness: { type: 3 },
+    customData: withMM(null, { boundary: uid, map })
+  });
+}
+function edgeGeometry(p, c, layout) {
+  let sx;
+  let sy;
+  let ex;
+  let ey;
+  if (layout === "right") {
+    sx = p.x + p.width;
+    sy = p.y + p.height / 2;
+    ex = c.x;
+    ey = c.y + c.height / 2;
+  } else if (layout === "left") {
+    sx = p.x;
+    sy = p.y + p.height / 2;
+    ex = c.x + c.width;
+    ey = c.y + c.height / 2;
+  } else if (layout === "down") {
+    sx = p.x + p.width / 2;
+    sy = p.y + p.height;
+    ex = c.x + c.width / 2;
+    ey = c.y;
+  } else if (layout === "up") {
+    sx = p.x + p.width / 2;
+    sy = p.y;
+    ex = c.x + c.width / 2;
+    ey = c.y + c.height;
+  } else {
+    sx = p.x + p.width / 2;
+    sy = p.y + p.height / 2;
+    ex = c.x + c.width / 2;
+    ey = c.y + c.height / 2;
+  }
+  return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
+}
+function textRect(node, textWidth, textHeight) {
+  return { x: node.x + (node.width - textWidth) / 2, y: node.y + (node.height - textHeight) / 2 };
+}
+var makeSizer = (measure) => (text, fontSize) => nodeSize(text, fontSize, measure);
+var close = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= TOL;
+function stable(v) {
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stable(v[k])}`).join(",")}}`;
+  return JSON.stringify(v ?? null);
+}
+var same = (a, b) => stable(a) === stable(b);
+function mergeBound(existing, prefix, desired) {
+  const want = new Set(desired.map((d) => d.id));
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const b of Array.isArray(existing) ? existing : []) {
+    if (!b || typeof b.id !== "string") continue;
+    if (b.id.startsWith(prefix)) {
+      if (!want.has(b.id) || seen.has(b.id)) continue;
+      seen.add(b.id);
+    }
+    out.push(b);
+  }
+  for (const d of desired) if (!seen.has(d.id)) out.push(d);
+  return out;
+}
+var colorFor = (v) => v.depth === 0 ? ROOT_COLOR : BRANCH_COLORS[v.branchIndex % BRANCH_COLORS.length];
+function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
+  const root = tree.uid;
+  const pre = idPrefix(root);
+  const byId = /* @__PURE__ */ new Map();
+  const textByContainer = /* @__PURE__ */ new Map();
+  for (const el of elements || []) {
+    if (!el || typeof el.id !== "string") continue;
+    byId.set(el.id, el);
+  }
+  for (const el of byId.values()) {
+    if (el.type !== "text" || typeof el.containerId !== "string" || !el.containerId.startsWith(pre)) continue;
+    const cur = textByContainer.get(el.containerId);
+    if (!cur || cur.isDeleted && !el.isDeleted || el.id === `${el.containerId}-t`) textByContainer.set(el.containerId, el);
+  }
+  const rootEl = byId.get(nodeId(root, root));
+  const rootMM = mmOf(rootEl) || {};
+  const dir = rootMM.layout || layout;
+  const nodes = visibleNodes(tree);
+  const uids = allUids(tree);
+  const bounds = (Array.isArray(rootMM.bounds) ? rootMM.bounds : []).filter((u) => uids.has(u));
+  const info = /* @__PURE__ */ new Map();
+  const sizeMap = {};
+  const pinned = {};
+  for (const v of nodes) {
+    const n = v.node;
+    const fs = fontSizeForDepth(v.depth);
+    const base3 = textOf ? textOf(n.uid, n) : plainText(n.string, () => "…");
+    const text = isFolded(n) ? `${base3} (+${countHidden(n)})` : base3;
+    const s = typeof sizes === "function" ? { ...sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
+    if (!Array.isArray(s.lines)) s.lines = String(s.text ?? text).split("\n");
+    if (s.text === void 0) s.text = s.lines.join("\n");
+    if (s.textWidth === void 0) s.textWidth = s.width - 2 * PAD_X;
+    if (s.textHeight === void 0) s.textHeight = s.lines.length * fs * LINE_HEIGHT;
+    if (s.height === void 0) s.height = s.textHeight + 2 * PAD_Y;
+    sizeMap[n.uid] = s;
+    const el = byId.get(nodeId(root, n.uid));
+    const mm = mmOf(el);
+    if (v.depth > 0 && el && mm && mm.pinned === true) pinned[n.uid] = { x: el.x, y: el.y };
+    info.set(n.uid, { fs, text, size: s, el, mm });
+  }
+  const anchor = rootEl && Number.isFinite(rootEl.x) ? { x: rootEl.x, y: rootEl.y } : rootPos || { x: 0, y: 0 };
+  const positions = layoutTree({ tree, sizes: sizeMap, layout: dir, pinned, root: anchor });
+  return { root, dir, bounds, nodes, info, positions, byId, textByContainer };
+}
+function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
+  const ops = { add: [], update: [], remove: [] };
+  if (!tree) return ops;
+  const { root, dir, bounds, nodes, info, positions, byId, textByContainer } = planMap({ elements, tree, sizes, layout, textOf, rootPos });
+  const pre = idPrefix(root);
+  const desiredIds = /* @__PURE__ */ new Set();
+  const patches = /* @__PURE__ */ new Map();
+  const patchOf = (id) => {
+    if (!patches.has(id)) patches.set(id, {});
+    return patches.get(id);
+  };
+  for (const el of elements || []) {
+    const mm = mmOf(el);
+    if (!el || !mm || mm.map !== root) continue;
+    let canon = null;
+    if (mm.boundary) canon = boundaryId(root, mm.boundary);
+    else if (Array.isArray(mm.edge)) canon = edgeId(root, mm.edge[1]);
+    else if (mm.uid) canon = nodeId(root, mm.uid);
+    if (canon !== null && el.id !== canon) patchOf(el.id).customData = withoutMM(el.customData);
+  }
+  const kidEdges = /* @__PURE__ */ new Map();
+  const finalRect = /* @__PURE__ */ new Map();
+  for (const v of nodes) {
+    if (v.parent) {
+      if (!kidEdges.has(v.parent.uid)) kidEdges.set(v.parent.uid, []);
+      kidEdges.get(v.parent.uid).push(v.node.uid);
+    }
+    const p = positions[v.node.uid];
+    const s = info.get(v.node.uid).size;
+    finalRect.set(v.node.uid, { x: p.x, y: p.y, width: s.width, height: s.height });
+  }
+  const addEdges = [];
+  const addBodies = [];
+  for (const v of nodes) {
+    const uid = v.node.uid;
+    const i = info.get(uid);
+    const rect = finalRect.get(uid);
+    const nid = nodeId(root, uid);
+    const isRoot = v.depth === 0;
+    const branch = isRoot ? void 0 : v.branch;
+    const txtEl = textByContainer.get(nid);
+    const tid = txtEl ? txtEl.id : textId(root, uid);
+    desiredIds.add(nid);
+    desiredIds.add(tid);
+    const ownBound = [{ id: tid, type: "text" }];
+    if (!isRoot) ownBound.push({ id: edgeId(root, uid), type: "arrow" });
+    for (const c of kidEdges.get(uid) || []) ownBound.push({ id: edgeId(root, c), type: "arrow" });
+    const tr = textRect(rect, i.size.textWidth, i.size.textHeight);
+    const want = {
+      x: tr.x,
+      y: tr.y,
+      width: i.size.textWidth,
+      height: i.size.textHeight,
+      text: i.size.text,
+      originalText: i.text,
+      fontSize: i.fs
+    };
+    const curMM = i.mm || {};
+    const wantMM = isRoot ? { ...curMM, uid, map: root, root: true, layout: curMM.layout || dir, bounds } : { ...curMM, uid, map: root, ...branch !== void 0 ? { branch } : {} };
+    if (!i.el) {
+      addBodies.push(
+        buildNode({ map: root, uid, x: rect.x, y: rect.y, width: rect.width, height: rect.height, backgroundColor: colorFor(v), mm: wantMM, boundElements: ownBound }),
+        buildText({ map: root, uid, ...want })
+      );
+    } else {
+      const el = i.el;
+      const p = patchOf(nid);
+      if (el.isDeleted) p.isDeleted = false;
+      for (const k of ["x", "y", "width", "height"]) if (!close(el[k], rect[k])) p[k] = rect[k];
+      if (Math.abs(el.angle || 0) > 1e-6) p.angle = 0;
+      if (!isRoot && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = colorFor(v);
+      if (!same(curMM, wantMM)) p.customData = withMM(el.customData, wantMM);
+      const mb = mergeBound(el.boundElements, pre, ownBound);
+      if (!same(mb, el.boundElements || [])) p.boundElements = mb;
+      if (!txtEl) {
+        addBodies.push(buildText({ map: root, uid, ...want }));
+      } else {
+        const tp = patchOf(txtEl.id);
+        if (txtEl.isDeleted) tp.isDeleted = false;
+        for (const k of ["x", "y", "width", "height"]) if (!close(txtEl[k], want[k])) tp[k] = want[k];
+        if (Math.abs(txtEl.angle || 0) > 1e-6) tp.angle = 0;
+        if (txtEl.text !== want.text) tp.text = want.text;
+        if (txtEl.originalText !== want.originalText) tp.originalText = want.originalText;
+        if (txtEl.fontSize !== want.fontSize) tp.fontSize = want.fontSize;
+        if (txtEl.fontFamily !== FONT_FAMILY) tp.fontFamily = FONT_FAMILY;
+        if (Math.abs((txtEl.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) tp.lineHeight = LINE_HEIGHT;
+        if (txtEl.containerId !== nid) tp.containerId = nid;
+      }
+    }
+    if (!isRoot) {
+      const eid = edgeId(root, uid);
+      desiredIds.add(eid);
+      const pid = nodeId(root, v.parent.uid);
+      const g = edgeGeometry(finalRect.get(v.parent.uid), rect, dir);
+      const e = byId.get(eid);
+      if (!e) {
+        addEdges.push(buildEdge({ map: root, parentUid: v.parent.uid, childUid: uid, ...g }));
+      } else {
+        const ep = patchOf(eid);
+        const [, [dx, dy]] = g.points;
+        if (e.isDeleted) ep.isDeleted = false;
+        if (!close(e.x, g.x)) ep.x = g.x;
+        if (!close(e.y, g.y)) ep.y = g.y;
+        if (!close(e.width, Math.abs(dx))) ep.width = Math.abs(dx);
+        if (!close(e.height, Math.abs(dy))) ep.height = Math.abs(dy);
+        const pts = Array.isArray(e.points) ? e.points : [];
+        const ok = pts.length === 2 && close(pts[0][0], 0) && close(pts[0][1], 0) && close(pts[1][0], dx) && close(pts[1][1], dy);
+        if (!ok) ep.points = g.points;
+        if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
+        if (!e.endBinding || e.endBinding.elementId !== nid) ep.endBinding = { elementId: nid, focus: 0, gap: EDGE_GAP };
+      }
+    }
+  }
+  const bb = /* @__PURE__ */ new Map();
+  for (let k = nodes.length - 1; k >= 0; k--) {
+    const v = nodes[k];
+    const r = finalRect.get(v.node.uid);
+    const own = bb.get(v.node.uid);
+    const b = {
+      x1: Math.min(r.x, own ? own.x1 : Infinity),
+      y1: Math.min(r.y, own ? own.y1 : Infinity),
+      x2: Math.max(r.x + r.width, own ? own.x2 : -Infinity),
+      y2: Math.max(r.y + r.height, own ? own.y2 : -Infinity)
+    };
+    bb.set(v.node.uid, b);
+    if (v.parent) {
+      const pb = bb.get(v.parent.uid) || { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity };
+      bb.set(v.parent.uid, { x1: Math.min(pb.x1, b.x1), y1: Math.min(pb.y1, b.y1), x2: Math.max(pb.x2, b.x2), y2: Math.max(pb.y2, b.y2) });
+    }
+  }
+  const addBoundaries = [];
+  for (const uid of bounds) {
+    const b = bb.get(uid);
+    if (!b) continue;
+    const want = { x: b.x1 - BOUNDARY_PAD, y: b.y1 - BOUNDARY_PAD, width: b.x2 - b.x1 + 2 * BOUNDARY_PAD, height: b.y2 - b.y1 + 2 * BOUNDARY_PAD };
+    const id = boundaryId(root, uid);
+    desiredIds.add(id);
+    const e = byId.get(id);
+    if (!e) {
+      addBoundaries.push(buildBoundary({ map: root, uid, ...want }));
+      continue;
+    }
+    const p = patchOf(id);
+    if (e.isDeleted) p.isDeleted = false;
+    for (const k of ["x", "y", "width", "height"]) if (!close(e[k], want[k])) p[k] = want[k];
+    if (Math.abs(e.angle || 0) > 1e-6) p.angle = 0;
+    const m = mmOf(e);
+    if (!m || m.boundary !== uid || m.map !== root) p.customData = withMM(e.customData, { boundary: uid, map: root });
+  }
+  ops.add = [...addEdges, ...addBodies, ...addBoundaries];
+  const removed = /* @__PURE__ */ new Set();
+  for (const el of elements || []) {
+    if (!el || el.isDeleted || typeof el.id !== "string" || !el.id.startsWith(pre) || desiredIds.has(el.id)) continue;
+    removed.add(el.id);
+  }
+  for (const el of elements || []) {
+    if (el && !el.isDeleted && el.type === "text" && removed.has(el.containerId)) removed.add(el.id);
+  }
+  ops.remove = [...removed];
+  for (const [id, patch] of patches) {
+    if (removed.has(id) || Object.keys(patch).length === 0) continue;
+    ops.update.push({ id, patch });
+  }
+  return ops;
+}
+function applyOps(elements, ops) {
+  const upd = new Map(ops.update.map((u) => [u.id, u.patch]));
+  const rem = new Set(ops.remove);
+  const out = elements.map((el) => {
+    if (rem.has(el.id)) return bump(el, { isDeleted: true });
+    const p = upd.get(el.id);
+    return p ? bump(el, p) : el;
+  });
+  const have = new Set(out.map((e) => e.id));
+  for (const a of ops.add) if (!have.has(a.id)) out.push(a);
+  return out;
+}
+var isEmptyOps = (ops) => !ops.add.length && !ops.update.length && !ops.remove.length;
+function projectionIds(elements, root) {
+  const pre = idPrefix(root);
+  return (elements || []).filter((el) => el && !el.isDeleted && typeof el.id === "string" && el.id.startsWith(pre)).map((el) => el.id);
+}
+
+// src/view/mindmap.js
+var NODE_CAP = 500;
+var DELETE_WINDOW_MS = 3e3;
+var LOAD_WAIT_MS = 5e3;
+var PLACEHOLDER_CHILD = "New idea";
+var PLACEHOLDER_ROOT = "Central idea";
+var GROW_HINT = "Use Tab / Enter to grow this map";
+var FOLLOW_HINT = "Mind-map nodes follow the outline; Alt+Backspace deletes a branch";
+var MARKUP_HINT = "Edit this node in the outline (it has links or formatting)";
+var WRITE_FAILED = "Could not update the outline";
+var CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
+var GESTURE_FIELDS = ["editingTextElement", "newElement", "resizingElement", "multiElement", "editingLinearElement"];
+var INPUT_ISOLATED = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
+var ARROWS = { ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up" };
+var LETTERS = /* @__PURE__ */ new Set(["KeyF", "KeyL", "KeyP", "KeyB", "KeyX", "KeyC", "KeyV"]);
+var defaultRaf = (fn) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16);
+var defaultCaf = (id) => typeof globalThis.cancelAnimationFrame === "function" ? globalThis.cancelAnimationFrame(id) : clearTimeout(id);
+function findNode(tree, uid) {
+  if (!tree) return null;
+  const stack = [{ node: tree, parent: null }];
+  while (stack.length) {
+    const { node, parent } = stack.pop();
+    if (node.uid === uid) return { node, parent };
+    for (const c of node.children) stack.push({ node: c, parent: node });
+  }
+  return null;
+}
+function rawWalk(raw, fn) {
+  const stack = raw ? [raw] : [];
+  while (stack.length) {
+    const n = stack.pop();
+    fn(n);
+    for (const c of n[":block/children"] || []) stack.push(c);
+  }
+}
+function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3 }) {
+  const sessions = /* @__PURE__ */ new Map();
+  let disposed = false;
+  const warn = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
+  const toast = (message, opts) => {
+    try {
+      toaster.show(message, opts);
+    } catch (error) {
+      warn("toast", error);
+    }
+  };
+  const failToast = () => toast(WRITE_FAILED, { kind: "error" });
+  function blockString(uid) {
+    try {
+      const raw = api.data.pull("[:block/string]", [":block/uid", uid]);
+      return typeof raw?.[":block/string"] === "string" ? raw[":block/string"] : null;
+    } catch {
+      return null;
+    }
+  }
+  const textOf = (uid, node) => plainText(node.string, blockString);
+  const sizer = makeSizer((text, size) => measurer.measure(text, size));
+  function mount({ app, containerEl, outerEl, zIndex } = {}) {
+    if (disposed || !app || !containerEl) return () => {
+    };
+    const s = createSession({ app, containerEl, outerEl, zIndex });
+    sessions.set(app, s);
+    return () => {
+      s.dispose();
+      if (sessions.get(app) === s) sessions.delete(app);
+    };
+  }
+  function createSession({ app, containerEl, outerEl, zIndex }) {
+    let alive = true;
+    const trees = /* @__PURE__ */ new Map();
+    const watches = /* @__PURE__ */ new Map();
+    const rootPos = /* @__PURE__ */ new Map();
+    const pendingRefresh = /* @__PURE__ */ new Set();
+    const truncatedToast = /* @__PURE__ */ new Set();
+    const offs = [];
+    let snapshot = /* @__PURE__ */ new Map();
+    let lastNonce = null;
+    let prevEditingId = null;
+    let dirty = false;
+    let scheduled = null;
+    let deleteToasted = false;
+    let clip = null;
+    let pendingDelete = null;
+    let input = null;
+    let fontSig = "";
+    let loadedTimer = null;
+    const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
+    const guard = () => alive && !disposed && native.activeEditor(doc)?.app === app;
+    const state = () => app.state || {};
+    function takeSnapshot() {
+      snapshot = /* @__PURE__ */ new Map();
+      for (const el of els()) if (typeof el.id === "string" && el.id.startsWith("pmm-")) snapshot.set(el.id, el.version);
+    }
+    function commit(mutate, roots) {
+      if (!guard()) return false;
+      let next = els();
+      if (mutate) next = mutate(next);
+      let changed = next !== els();
+      const staged = [];
+      for (const root of roots) {
+        const tree = trees.get(root);
+        if (!tree) continue;
+        const ops = reconcile({ elements: next, tree, sizes: sizer, textOf, rootPos: rootPos.get(root) });
+        if (!isEmptyOps(ops)) {
+          next = applyOps(next, ops);
+          changed = true;
+        }
+        staged.push(tree);
+      }
+      if (!changed) return false;
+      app.updateScene({ elements: next, captureUpdate: "NEVER" });
+      takeSnapshot();
+      afterApply(roots);
+      return true;
+    }
+    function afterApply(roots) {
+      for (const root of roots) {
+        const tree = trees.get(root);
+        if (!tree) continue;
+        if (tree.truncated && !truncatedToast.has(root)) {
+          truncatedToast.add(root);
+          toast(`Showing the first ${NODE_CAP} nodes of this map`);
+        }
+        const texts = visibleNodes(tree).map((v) => textOf(v.node.uid, v.node));
+        const sig = texts.join("\n");
+        if (sig !== fontSig && typeof measurer.ensureFonts === "function") {
+          fontSig = sig;
+          Promise.resolve(measurer.ensureFonts(texts)).then((cleared) => {
+            if (cleared && alive) commit(null, [root]);
+          }).catch((error) => warn("fonts", error));
+        }
+      }
+      if (input) {
+        if (liveNode(input.rootUid, input.uid)) placeInput();
+        else commitInput();
+      }
+    }
+    function liveNode(root, uid) {
+      const el = els().find((e) => e.id === nodeId(root, uid));
+      return !!el && !el.isDeleted;
+    }
+    function buildTree(root, raw) {
+      const prune = new Set(trees.keys());
+      prune.delete(root);
+      return treeFromPull(raw, { prune, maxVisible: NODE_CAP });
+    }
+    function detach(root) {
+      const ids = new Set(projectionIds(els(), root));
+      watches.get(root)?.();
+      watches.delete(root);
+      trees.delete(root);
+      rootPos.delete(root);
+      pendingRefresh.delete(root);
+      if (ids.size && guard()) {
+        app.updateScene({ elements: els().map((el) => ids.has(el.id) ? bump(el, { isDeleted: true }) : el), captureUpdate: "NEVER" });
+        takeSnapshot();
+      }
+    }
+    function onRaw(root, raw) {
+      if (!alive) return;
+      if (!raw) {
+        detach(root);
+        return;
+      }
+      if (gestureActive()) {
+        pendingRefresh.add(root);
+        dirty = true;
+        return;
+      }
+      trees.set(root, buildTree(root, raw));
+      commit(null, [root]);
+    }
+    function refreshRoot(root) {
+      let raw = null;
+      try {
+        raw = writer.pullTree(root);
+      } catch (error) {
+        warn("pull", error);
+        return;
+      }
+      onRaw(root, raw);
+    }
+    function ensureRoot(root) {
+      if (watches.has(root)) return;
+      watches.set(root, writer.watchTree(root, (raw) => onRaw(root, raw)));
+      if (!trees.has(root)) trees.set(root, null);
+    }
+    function discoverRoots() {
+      const found = /* @__PURE__ */ new Set();
+      for (const el of els()) {
+        const mm = mmOf(el);
+        if (el.isDeleted || !mm || typeof mm.map !== "string") continue;
+        const ok = mm.uid && el.id === nodeId(mm.map, mm.uid) || mm.boundary && el.id === boundaryId(mm.map, mm.boundary) || Array.isArray(mm.edge) && el.id === edgeId(mm.map, mm.edge[1]);
+        if (ok) found.add(mm.map);
+      }
+      return found;
+    }
+    function start() {
+      const deadline = now() + LOAD_WAIT_MS;
+      const poll = () => {
+        loadedTimer = null;
+        if (!alive) return;
+        if (state().isLoading && now() < deadline) {
+          loadedTimer = raf(poll);
+          return;
+        }
+        const roots = discoverRoots();
+        for (const root of roots) trees.set(root, null);
+        for (const root of roots) {
+          ensureRoot(root);
+          refreshRoot(root);
+        }
+        takeSnapshot();
+      };
+      poll();
+    }
+    function selectedNode() {
+      const ids = native.selectedElementIds(app);
+      if (ids.length !== 1) return null;
+      const el = els().find((e) => e.id === ids[0]);
+      const mm = mmOf(el);
+      if (!el || el.isDeleted || !mm || !mm.uid || mm.edge || mm.boundary) return null;
+      if (el.id !== nodeId(mm.map, mm.uid) || !trees.get(mm.map) || !findNode(trees.get(mm.map), mm.uid)) return null;
+      return { el, uid: mm.uid, root: mm.map, isRoot: mm.root === true };
+    }
+    function select(root, uid) {
+      app.updateScene({ appState: { selectedElementIds: { [nodeId(root, uid)]: true }, selectedGroupIds: {} }, captureUpdate: "NEVER" });
+    }
+    const refocus = () => {
+      try {
+        containerEl.focus({ preventScroll: true });
+      } catch {
+      }
+    };
+    function gestureActive() {
+      const st = state();
+      if (st.cursorButton === "down") return true;
+      for (const key of GESTURE_FIELDS) if (key in st && st[key]) return true;
+      return !!(st.isResizing || st.isRotating);
+    }
+    function onChange() {
+      if (!alive || scheduled != null) return;
+      scheduled = raf(pass);
+    }
+    function onPointerUp() {
+      dirty = true;
+      onChange();
+    }
+    function pass() {
+      scheduled = null;
+      if (!alive) return;
+      const st = state();
+      const editingId = st.editingTextElement?.id ?? null;
+      const finished = prevEditingId && !editingId ? prevEditingId : null;
+      prevEditingId = editingId;
+      const nonce = app.scene?.getSceneNonce?.();
+      if (!finished && !dirty && nonce !== void 0 && nonce === lastNonce) {
+        if (input) placeInput();
+        return;
+      }
+      if (gestureActive()) {
+        dirty = true;
+        if (input) placeInput();
+        return;
+      }
+      dirty = false;
+      lastNonce = nonce;
+      try {
+        if (finished) nativeTextEdit(finished);
+        nativeChanges();
+      } catch (error) {
+        warn("change pass", error);
+      }
+      if (input) placeInput();
+    }
+    function nativeTextEdit(textId2) {
+      const txt = els().find((e) => e.id === textId2);
+      if (!txt || typeof txt.containerId !== "string" || !txt.containerId.startsWith("pmm-")) return;
+      if (snapshot.get(txt.id) === txt.version) return;
+      const container = els().find((e) => e.id === txt.containerId);
+      const mm = mmOf(container);
+      if (!mm || !mm.uid) return;
+      const tree = trees.get(mm.map);
+      const found = tree ? findNode(tree, mm.uid) : null;
+      if (!found) return;
+      const node = found.node;
+      if (hasMarkup(node.string)) {
+        toast(MARKUP_HINT);
+        return;
+      }
+      let text = typeof txt.originalText === "string" ? txt.originalText : txt.text;
+      if (isFolded(node)) {
+        const suffix = ` (+${countHidden(node)})`;
+        if (!text.endsWith(suffix)) return;
+        text = text.slice(0, -suffix.length);
+      }
+      if (text === "" || text === "·" || text === node.string) return;
+      writeString(mm.map, mm.uid, text, node.string);
+    }
+    function nativeChanges() {
+      const live = els();
+      let restored = false;
+      for (const root of trees.keys()) {
+        const tree = trees.get(root);
+        if (!tree) continue;
+        for (const v of visibleNodes(tree)) {
+          const el = live.find((e) => e.id === nodeId(root, v.node.uid));
+          if (el && el.isDeleted && snapshot.get(el.id) !== el.version) restored = true;
+        }
+      }
+      if (restored && !deleteToasted) {
+        deleteToasted = true;
+        toast(FOLLOW_HINT);
+      }
+      const pinPatch = /* @__PURE__ */ new Map();
+      for (const root of trees.keys()) {
+        const tree = trees.get(root);
+        if (!tree) continue;
+        const plan = planMap({ elements: live, tree, sizes: sizer, textOf });
+        for (const v of plan.nodes) {
+          if (v.depth === 0) continue;
+          const info = plan.info.get(v.node.uid);
+          const pos = plan.positions[v.node.uid];
+          if (!info.el || info.el.isDeleted || info.mm && info.mm.pinned === true || !pos) continue;
+          if (Math.abs(info.el.x - pos.x) > 2 || Math.abs(info.el.y - pos.y) > 2) pinPatch.set(info.el.id, true);
+        }
+      }
+      const roots = [...trees.keys()].filter((r) => trees.get(r));
+      commit(pinPatch.size ? (list) => list.map((el) => pinPatch.has(el.id) ? patchMarker(el, { pinned: true }) : el) : null, roots);
+    }
+    function writeString(root, uid, value, base3) {
+      const tree = trees.get(root);
+      const found = tree ? findNode(tree, uid) : null;
+      if (found) {
+        found.node.string = value;
+        commit(null, [root]);
+      }
+      writer.updateString(root, uid, value, base3).then((result) => {
+        if (result && result.ok === false) {
+          if (result.reason === "changed") toast(CHANGED_ELSEWHERE, { kind: "error" });
+          refreshRoot(root);
+        }
+      }).catch((error) => {
+        warn("write", error);
+        failToast();
+        refreshRoot(root);
+      });
+    }
+    function newNode(root, anchorUid, kind) {
+      const tree = trees.get(root);
+      const found = tree ? findNode(tree, anchorUid) : null;
+      if (!found) return;
+      const uid = api.util.generateUID();
+      const node = { uid, string: PLACEHOLDER_CHILD, open: true, children: [] };
+      let job;
+      if (kind === "sibling" && found.parent) {
+        const at = found.parent.children.indexOf(found.node);
+        found.parent.children.splice(at + 1, 0, node);
+        job = writer.createSiblingAfter(root, anchorUid, { uid, string: PLACEHOLDER_CHILD });
+      } else {
+        found.node.open = true;
+        found.node.children.push(node);
+        job = writer.createChild(root, anchorUid, { uid, string: PLACEHOLDER_CHILD });
+      }
+      commit(null, [root]);
+      select(root, uid);
+      openInput({ root, uid, base: PLACEHOLDER_CHILD, placeholder: PLACEHOLDER_CHILD });
+      Promise.resolve(job).catch((error) => {
+        warn("create", error);
+        closeInput({ write: false });
+        failToast();
+        refreshRoot(root);
+      });
+    }
+    function inputRect() {
+      const el = els().find((e) => e.id === nodeId(input.rootUid, input.uid));
+      if (!el) return null;
+      return native.viewportRectOf(app, [el.x, el.y, el.x + el.width, el.y + el.height]);
+    }
+    function placeInput() {
+      if (!input) return;
+      const r = inputRect();
+      if (!r) return;
+      const st = state();
+      const zoom = st.zoom?.value || 1;
+      const s = input.el.style;
+      s.left = `${r.left}px`;
+      s.top = `${r.top}px`;
+      s.width = `${Math.max(r.width, 80 * zoom)}px`;
+      s.height = `${r.height}px`;
+      s.fontSize = `${16 * zoom}px`;
+    }
+    function openInput({ root, uid, base: base3, placeholder = null }) {
+      closeInput({ write: true });
+      const el = doc.createElement("input");
+      el.type = "text";
+      el.className = "plexus-portal plexus-mm-input";
+      el.value = base3;
+      el.style.zIndex = String((zIndex ?? zIndexFor(outerEl)) + 2);
+      const handle = { el, rootUid: root, uid, base: base3, placeholder, composing: false, listeners: [], done: false };
+      const on = (type, fn) => {
+        el.addEventListener(type, fn);
+        handle.listeners.push([type, fn]);
+      };
+      on("keydown", (e) => {
+        e.stopPropagation();
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commitInput();
+        } else if (e.key === "Tab" && !e.shiftKey) {
+          e.preventDefault();
+          const target = { root: handle.rootUid, uid: handle.uid };
+          commitInput();
+          newNode(target.root, target.uid, "child");
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cancelInput();
+        }
+      });
+      for (const type of INPUT_ISOLATED) on(type, (e) => e.stopPropagation());
+      on("blur", () => commitInput());
+      input = handle;
+      doc.body.append(el);
+      placeInput();
+      el.focus?.();
+      el.select?.();
+    }
+    function removeInput(handle) {
+      handle.done = true;
+      for (const [type, fn] of handle.listeners.splice(0)) handle.el.removeEventListener?.(type, fn);
+      handle.el.remove?.();
+      if (input === handle) input = null;
+    }
+    function closeInput({ write }) {
+      const handle = input;
+      if (!handle) return;
+      const value = handle.el.value;
+      removeInput(handle);
+      if (write) finishInput(handle, value);
+    }
+    function finishInput(handle, value) {
+      const { rootUid, uid, base: base3, placeholder } = handle;
+      if (value === "") {
+        if (placeholder) discard(rootUid, uid, placeholder);
+        return;
+      }
+      if (value === base3) return;
+      writeString(rootUid, uid, value, base3);
+    }
+    function discard(root, uid, placeholder) {
+      const tree = trees.get(root);
+      const found = tree ? findNode(tree, uid) : null;
+      if (found?.parent) {
+        found.parent.children = found.parent.children.filter((c) => c.uid !== uid);
+        commit(null, [root]);
+      }
+      writer.discardPlaceholder(root, uid, placeholder).then(() => refreshRoot(root)).catch((error) => {
+        warn("discard", error);
+        refreshRoot(root);
+      });
+    }
+    function commitInput() {
+      if (!input) return;
+      closeInput({ write: true });
+      refocus();
+    }
+    function cancelInput() {
+      const handle = input;
+      if (!handle) return;
+      removeInput(handle);
+      if (handle.placeholder) discard(handle.rootUid, handle.uid, handle.placeholder);
+      refocus();
+    }
+    function onKeyDown(e) {
+      if (!alive || e.isComposing || e.keyCode === 229 || e.target !== containerEl || input) return;
+      const st = state();
+      if (st.editingTextElement) return;
+      if (st.openDialog || st.openMenu || st.openPopup || st.contextMenu) return;
+      const sel = selectedNode();
+      if (!sel) return;
+      const swallow = () => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      };
+      if (e.metaKey || e.ctrlKey) {
+        if (e.altKey) return;
+        if (e.key in ARROWS) {
+          swallow();
+          toast(GROW_HINT);
+        } else if (e.code === "KeyZ") {
+          swallow();
+          toast("Undo mind-map edits in the outline");
+        }
+        return;
+      }
+      const alt = e.altKey && !e.shiftKey;
+      const plain = !e.altKey && !e.shiftKey;
+      let action = null;
+      let repeatSafe = true;
+      if (plain && e.key === "Tab") {
+        action = () => newNode(sel.root, sel.uid, "child");
+        repeatSafe = false;
+      } else if (plain && e.key === "Enter") {
+        action = () => newNode(sel.root, sel.uid, sel.isRoot ? "child" : "sibling");
+        repeatSafe = false;
+      } else if (plain && e.key === "F2") action = () => editSelected(sel);
+      else if (alt && e.key in ARROWS) {
+        swallow();
+        moveSelection(sel, ARROWS[e.key]);
+        return;
+      } else if (alt && e.key === "Backspace") {
+        action = () => deleteBranch(sel);
+        repeatSafe = false;
+      } else if (alt && LETTERS.has(e.code)) {
+        const letter = e.code.slice(3);
+        action = () => letterAction(letter, sel);
+        repeatSafe = letter !== "V";
+      }
+      if (!action) return;
+      swallow();
+      if (e.repeat && !repeatSafe) return;
+      if (e.altKey && e.key !== "Backspace") pendingDelete = null;
+      else if (!(e.key === "Backspace")) pendingDelete = null;
+      if (st.viewModeEnabled) return;
+      try {
+        const out = action();
+        if (out && typeof out.catch === "function") out.catch((error) => {
+          warn("hotkey", error);
+          failToast();
+        });
+      } catch (error) {
+        warn("hotkey", error);
+      }
+    }
+    function editSelected(sel) {
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      if (!node) return;
+      if (hasMarkup(node.string)) {
+        toast(MARKUP_HINT);
+        return;
+      }
+      openInput({ root: sel.root, uid: sel.uid, base: node.string });
+    }
+    function moveSelection(sel, dir) {
+      const tree = trees.get(sel.root);
+      const rects = [];
+      for (const v of visibleNodes(tree)) {
+        const el = els().find((e) => e.id === nodeId(sel.root, v.node.uid));
+        if (el && !el.isDeleted) rects.push({ id: v.node.uid, x: el.x, y: el.y, width: el.width, height: el.height });
+      }
+      const from = rects.find((r) => r.id === sel.uid);
+      if (!from) return;
+      const target = nearestInDirection(from, rects, dir);
+      if (!target) return;
+      const to = rects.find((r) => r.id === target);
+      select(sel.root, target);
+      const st = state();
+      const zoom = st.zoom?.value || 1;
+      const vr = native.viewportRectOf(app, [to.x, to.y, to.x + to.width, to.y + to.height]);
+      const left = st.offsetLeft || 0;
+      const top = st.offsetTop || 0;
+      const off = vr.left < left || vr.top < top || vr.left + vr.width > left + (st.width || 0) || vr.top + vr.height > top + (st.height || 0);
+      if (off) {
+        app.updateScene({ appState: { scrollX: (st.width || 0) / (2 * zoom) - (to.x + to.width / 2), scrollY: (st.height || 0) / (2 * zoom) - (to.y + to.height / 2) }, captureUpdate: "NEVER" });
+      }
+    }
+    function letterAction(letter, sel) {
+      if (letter === "F") return toggleFold(sel);
+      if (letter === "L") return cycleLayout(sel);
+      if (letter === "P") return togglePin(sel);
+      if (letter === "B") return toggleBoundary(sel);
+      if (letter === "X" || letter === "C") return copyOrCut(letter === "X" ? "cut" : "copy", sel);
+      return paste(sel);
+    }
+    function toggleFold(sel) {
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      if (!node) return null;
+      if (!node.children.length) {
+        toast("No children to fold");
+        return null;
+      }
+      const open = node.open === false;
+      node.open = open;
+      commit(null, [sel.root]);
+      return writer.setOpen(sel.root, sel.uid, open).catch((error) => {
+        warn("fold", error);
+        failToast();
+        refreshRoot(sel.root);
+      });
+    }
+    function rootElement(root) {
+      return els().find((e) => e.id === nodeId(root, root));
+    }
+    function cycleLayout(sel) {
+      const rootEl = rootElement(sel.root);
+      if (!rootEl) return null;
+      const cur = mmOf(rootEl)?.layout || "right";
+      const next = LAYOUTS[(LAYOUTS.indexOf(cur) + 1) % LAYOUTS.length];
+      commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: next }) : e), [sel.root]);
+      toast(`Layout: ${next}`);
+      return null;
+    }
+    function togglePin(sel) {
+      if (sel.isRoot) return null;
+      const pinned = mmOf(sel.el)?.pinned === true;
+      commit((list) => list.map((e) => e.id === sel.el.id ? patchMarker(e, { pinned: pinned ? void 0 : true }) : e), [sel.root]);
+      return null;
+    }
+    function toggleBoundary(sel) {
+      const rootEl = rootElement(sel.root);
+      if (!rootEl) return null;
+      const bounds = new Set(mmOf(rootEl)?.bounds || []);
+      if (bounds.has(sel.uid)) bounds.delete(sel.uid);
+      else bounds.add(sel.uid);
+      commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { bounds: [...bounds] }) : e), [sel.root]);
+      return null;
+    }
+    function copyOrCut(mode, sel) {
+      if (mode === "cut" && sel.isRoot) {
+        toast("The root cannot be cut");
+        return null;
+      }
+      clip = { mode, uid: sel.uid, root: sel.root };
+      toast(mode === "cut" ? "Branch cut" : "Branch copied");
+      return null;
+    }
+    async function paste(sel) {
+      if (!clip) {
+        toast("Cut or copy a branch first");
+        return null;
+      }
+      const source = clip;
+      const opts = source.root !== sel.root ? { targetRootUid: sel.root } : {};
+      const result = source.mode === "cut" ? await writer.moveBranch(source.root, source.uid, sel.uid, opts) : await writer.copyBranch(source.root, source.uid, sel.uid, opts);
+      if (!result || result.ok === false) {
+        const reason = result?.reason;
+        if (reason === "inside-source") toast("Cannot paste a branch into itself");
+        else if (reason === "too-large") toast(`That branch is too large to copy (${result.count} blocks)`);
+        else if (reason === "excluded") toast("Drawings cannot be copied here");
+        else toast(WRITE_FAILED, { kind: "error" });
+      } else {
+        if (source.mode === "cut") clip = null;
+        if (result.skipped) toast(`Skipped ${result.skipped} drawing block${result.skipped === 1 ? "" : "s"}`);
+      }
+      refreshRoot(sel.root);
+      if (source.root !== sel.root && trees.has(source.root)) refreshRoot(source.root);
+      return null;
+    }
+    function branchCheck(uid) {
+      const raw = writer.pullTree(uid);
+      if (!raw) return null;
+      const uids = /* @__PURE__ */ new Set();
+      let excluded = false;
+      rawWalk(raw, (n) => {
+        uids.add(n[":block/uid"]);
+        if (isExcludedString(n[":block/string"] ?? "")) excluded = true;
+      });
+      let referenced = false;
+      for (const id of uids) {
+        const r = api.data.pull("[:block/uid {:block/_refs [:block/uid]}]", [":block/uid", id]);
+        if ((r?.[":block/_refs"] || []).some((x) => !uids.has(x[":block/uid"]))) {
+          referenced = true;
+          break;
+        }
+      }
+      return { count: uids.size, excluded, referenced, string: raw[":block/string"] ?? "" };
+    }
+    async function deleteBranch(sel) {
+      const t = now();
+      const armed = pendingDelete && pendingDelete.uid === sel.uid && t - pendingDelete.at <= DELETE_WINDOW_MS ? pendingDelete : null;
+      if (sel.isRoot) {
+        if (!armed) {
+          pendingDelete = { uid: sel.uid, at: t };
+          toast("Press Alt+Backspace again to detach this mind map (the outline stays)");
+          return;
+        }
+        pendingDelete = null;
+        detach(sel.root);
+        return;
+      }
+      const info = branchCheck(sel.uid);
+      if (!info) {
+        refreshRoot(sel.root);
+        return;
+      }
+      if (!armed) {
+        if (info.excluded) {
+          toast("This branch contains drawings; delete it in the outline", { kind: "error" });
+          return;
+        }
+        if (info.referenced) {
+          toast("A block in this branch is referenced elsewhere; delete it in the outline", { kind: "error" });
+          return;
+        }
+        pendingDelete = { uid: sel.uid, at: t, count: info.count, string: info.string };
+        toast(`Press Alt+Backspace again to delete ${info.count} block${info.count === 1 ? "" : "s"}`);
+        return;
+      }
+      pendingDelete = null;
+      if (armed.count !== info.count || armed.string !== info.string) {
+        toast("The branch changed; press Alt+Backspace again", { kind: "error" });
+        return;
+      }
+      const result = await writer.deleteBranch(sel.root, sel.uid, { count: armed.count, string: armed.string });
+      if (!result || result.ok === false) toast(WRITE_FAILED, { kind: "error" });
+      refreshRoot(sel.root);
+    }
+    function startRoot({ drawingUid }) {
+      const root = api.util.generateUID();
+      const st = state();
+      const zoom = st.zoom?.value || 1;
+      const cx = (st.width || 0) / (2 * zoom) - (st.scrollX || 0);
+      const cy = (st.height || 0) / (2 * zoom) - (st.scrollY || 0);
+      rootPos.set(root, { x: cx - 70, y: cy - 24 });
+      trees.set(root, { uid: root, string: PLACEHOLDER_ROOT, open: true, children: [] });
+      const job = writer.createChild(root, drawingUid, { uid: root, string: PLACEHOLDER_ROOT });
+      ensureRoot(root);
+      commit(null, [root]);
+      select(root, root);
+      openInput({ root, uid: root, base: PLACEHOLDER_ROOT, placeholder: PLACEHOLDER_ROOT });
+      Promise.resolve(job).catch((error) => {
+        warn("start", error);
+        closeInput({ write: false });
+        detach(root);
+        failToast();
+      });
+      return root;
+    }
+    function showOutline(root) {
+      rootPos.set(root, { x: 0, y: 0 });
+      trees.set(root, null);
+      ensureRoot(root);
+      refreshRoot(root);
+      if (!trees.get(root)) return false;
+      select(root, root);
+      const rect = els().filter((e) => !e.isDeleted && e.id.startsWith(`pmm-${root}-`) && !e.containerId);
+      if (rect.length) {
+        const box = [Math.min(...rect.map((e) => e.x)), Math.min(...rect.map((e) => e.y)), Math.max(...rect.map((e) => e.x + e.width)), Math.max(...rect.map((e) => e.y + e.height))];
+        native.zoomTo(app, box);
+      }
+      return true;
+    }
+    const listen = (target, type, fn, opts) => {
+      target.addEventListener(type, fn, opts);
+      offs.push(() => target.removeEventListener(type, fn, opts));
+    };
+    listen(containerEl, "keydown", onKeyDown, true);
+    for (const name of ["onChangeEmitter", "onScrollChangeEmitter"]) {
+      try {
+        const off = app[name]?.on?.(() => onChange());
+        if (typeof off === "function") offs.push(off);
+      } catch (error) {
+        warn("subscribe", error);
+      }
+    }
+    try {
+      const off = app.onPointerUpEmitter?.on?.(onPointerUp);
+      if (typeof off === "function") offs.push(off);
+    } catch (error) {
+      warn("subscribe", error);
+    }
+    start();
+    return {
+      app,
+      selectedNode,
+      startRoot,
+      showOutline,
+      dispose() {
+        alive = false;
+        if (loadedTimer != null) caf(loadedTimer);
+        if (scheduled != null) caf(scheduled);
+        loadedTimer = null;
+        scheduled = null;
+        if (input) removeInput(input);
+        for (const off of offs.splice(0)) {
+          try {
+            off();
+          } catch (error) {
+            warn("cleanup", error);
+          }
+        }
+        for (const off of watches.values()) {
+          try {
+            off();
+          } catch (error) {
+            warn("cleanup", error);
+          }
+        }
+        watches.clear();
+        trees.clear();
+        clip = null;
+        pendingDelete = null;
+        measurer.clear?.();
+      }
+    };
+  }
+  const sessionFor = (app) => sessions.get(app) || null;
+  async function waitForSession(app, ms = 2e3) {
+    const end = now() + ms;
+    for (; ; ) {
+      const s = sessionFor(app);
+      if (s || disposed || now() >= end) return s;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  function outlineInfo(blockUid) {
+    const raw = writer.pullTree(blockUid);
+    if (!raw) return null;
+    const full = treeFromPull(raw);
+    return { string: raw[":block/string"] ?? "", visible: full ? visibleNodes(full).length : 0, total: full ? countHidden(full) + 1 : 0 };
+  }
+  return {
+    mount,
+    selectedNode: (app) => sessionFor(app)?.selectedNode() ?? null,
+    startRoot: ({ app, drawingUid }) => sessionFor(app)?.startRoot({ drawingUid }) ?? null,
+    async showOutline({ app, rootUid }) {
+      const s = await waitForSession(app);
+      return s ? s.showOutline(rootUid) : false;
+    },
+    outlineInfo,
+    NODE_CAP,
+    hasSession: (app) => sessions.has(app),
+    dispose() {
+      disposed = true;
+      for (const s of [...sessions.values()]) s.dispose();
+      sessions.clear();
+    }
+  };
+}
+
+// src/host/mmwrites.js
+var TREE_PATTERN = "[:block/uid :block/string :block/open :block/order {:block/children ...}]";
+var EXCLUDED = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
+var COPY_CAP = 200;
+var byOrder2 = (a, b) => (a[":block/order"] ?? 0) - (b[":block/order"] ?? 0);
+var kids = (node) => (node?.[":block/children"] || []).slice().sort(byOrder2);
+var quote = (uid) => String(uid).replace(/["\\]/g, "");
+function walk(node, fn) {
+  fn(node);
+  for (const child of kids(node)) walk(child, fn);
+}
+function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, graph, raf } = {}) {
+  const queues = /* @__PURE__ */ new Map();
+  const drainHooks = /* @__PURE__ */ new Map();
+  const created = /* @__PURE__ */ new Set();
+  const schedule = raf || ((fn) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16));
+  const graphName = () => graph ?? api.graph?.name;
+  const state = (root) => {
+    let s = queues.get(root);
+    if (!s) {
+      s = { tail: Promise.resolve(), pending: 0 };
+      queues.set(root, s);
+    }
+    return s;
+  };
+  const busy = (root) => (queues.get(root)?.pending || 0) > 0;
+  function pullRaw(pattern, uid) {
+    if (!uid) return null;
+    const raw = api.data.pull(pattern, [":block/uid", uid]);
+    return raw && raw[":block/uid"] ? raw : null;
+  }
+  const pullTree = (rootUid) => pullRaw(TREE_PATTERN, rootUid);
+  async function underLocks(roots, fn) {
+    const sorted = [...new Set(roots)].sort();
+    const step = async (i) => {
+      if (i >= sorted.length) return fn();
+      const lock = await withLockFn(lockName(graphName(), `mm:${sorted[i]}`), () => step(i + 1));
+      if (!lock.acquired) throw new Error("[plexus] could not acquire mind-map lock");
+      return lock.value;
+    };
+    return step(0);
+  }
+  function run(rootUid, fn, extraRoots = []) {
+    const s = state(rootUid);
+    s.pending += 1;
+    const job = s.tail.then(() => underLocks([rootUid, ...extraRoots], fn));
+    s.tail = job.then(() => {
+    }, () => {
+    });
+    return job.finally(() => {
+      s.pending -= 1;
+      if (s.pending === 0) for (const hook of [...drainHooks.get(rootUid) || []]) hook();
+    });
+  }
+  async function createAt(parentUid, order, uid, string) {
+    await api.data.block.create({ location: { "parent-uid": parentUid, order }, block: { uid, string } });
+    created.add(uid);
+  }
+  async function unfold(uid) {
+    const raw = pullRaw("[:block/uid :block/open]", uid);
+    if (raw && raw[":block/open"] === false) await api.data.block.update({ block: { uid, open: true } });
+  }
+  function createChild(rootUid, parentUid, { uid = api.util.generateUID(), string = "" } = {}) {
+    return run(rootUid, async () => {
+      await unfold(parentUid);
+      await createAt(parentUid, "last", uid, string);
+      return uid;
+    });
+  }
+  function createSiblingAfter(rootUid, siblingUid, { uid = api.util.generateUID(), string = "" } = {}) {
+    return run(rootUid, async () => {
+      if (siblingUid === rootUid) {
+        await unfold(rootUid);
+        await createAt(rootUid, "last", uid, string);
+        return uid;
+      }
+      const raw = api.data.pull("[:block/uid :block/order {:block/_children [:block/uid]}]", [":block/uid", siblingUid]);
+      const parent = raw?.[":block/_children"]?.[0]?.[":block/uid"];
+      if (!raw?.[":block/uid"] || !parent) throw new Error("[plexus] sibling block not found");
+      await createAt(parent, (raw[":block/order"] ?? 0) + 1, uid, string);
+      return uid;
+    });
+  }
+  function updateString(rootUid, uid, string, baseString) {
+    return run(rootUid, async () => {
+      const raw = pullRaw("[:block/uid :block/string]", uid);
+      if (!raw) return { ok: false, reason: "missing" };
+      if ((raw[":block/string"] ?? "") !== baseString) return { ok: false, reason: "changed" };
+      if (string === baseString) return { ok: true, written: false };
+      await api.data.block.update({ block: { uid, string } });
+      return { ok: true, written: true };
+    });
+  }
+  function setOpen(rootUid, uid, open) {
+    return run(rootUid, async () => {
+      await api.data.block.update({ block: { uid, open: !!open } });
+      return { ok: true };
+    });
+  }
+  async function insideBranch(sourceUid, targetUid) {
+    if (sourceUid === targetUid) return true;
+    const raw = api.data.pull("[:block/uid {:block/parents [:block/uid]}]", [":block/uid", targetUid]);
+    return (raw?.[":block/parents"] || []).some((p) => p[":block/uid"] === sourceUid);
+  }
+  function moveBranch(rootUid, uid, targetParentUid, { targetRootUid } = {}) {
+    return run(rootUid, async () => {
+      if (!pullRaw("[:block/uid]", uid)) return { ok: false, reason: "missing" };
+      if (!pullRaw("[:block/uid]", targetParentUid)) return { ok: false, reason: "missing-target" };
+      if (await insideBranch(uid, targetParentUid)) return { ok: false, reason: "inside-source" };
+      await unfold(targetParentUid);
+      await api.data.block.move({ location: { "parent-uid": targetParentUid, order: "last" }, block: { uid } });
+      return { ok: true };
+    }, targetRootUid && targetRootUid !== rootUid ? [targetRootUid] : []);
+  }
+  function copyBranch(rootUid, sourceUid, targetParentUid, { targetRootUid, cap = COPY_CAP } = {}) {
+    return run(rootUid, async () => {
+      const source = pullTree(sourceUid);
+      if (!source) return { ok: false, reason: "missing" };
+      if (!pullRaw("[:block/uid]", targetParentUid)) return { ok: false, reason: "missing-target" };
+      if (await insideBranch(sourceUid, targetParentUid)) return { ok: false, reason: "inside-source" };
+      let total = 0;
+      let skipped2 = 0;
+      const plan = (node) => {
+        const string = node[":block/string"] ?? "";
+        if (EXCLUDED.test(string)) {
+          walk(node, () => {
+            skipped2 += 1;
+          });
+          return null;
+        }
+        total += 1;
+        return { string, open: node[":block/open"], children: kids(node).map(plan).filter(Boolean) };
+      };
+      const tree = plan(source);
+      if (!tree) return { ok: false, reason: "excluded", skipped: skipped2 };
+      if (total > cap) return { ok: false, reason: "too-large", count: total };
+      await unfold(targetParentUid);
+      let made = 0;
+      const emit = async (node, parent) => {
+        const uid2 = api.util.generateUID();
+        await createAt(parent, "last", uid2, node.string);
+        made += 1;
+        for (const child of node.children) await emit(child, uid2);
+        if (node.children.length && node.open === false) await api.data.block.update({ block: { uid: uid2, open: false } });
+        return uid2;
+      };
+      const uid = await emit(tree, targetParentUid);
+      return { ok: true, uid, created: made, skipped: skipped2 };
+    }, targetRootUid && targetRootUid !== rootUid ? [targetRootUid] : []);
+  }
+  function deleteBranch(rootUid, uid, expect = {}) {
+    return run(rootUid, async () => {
+      if (uid === rootUid) return { ok: false, reason: "root" };
+      const tree = pullTree(uid);
+      if (!tree) return { ok: false, reason: "missing" };
+      const uids = /* @__PURE__ */ new Set();
+      let excluded = false;
+      walk(tree, (n) => {
+        uids.add(n[":block/uid"]);
+        if (EXCLUDED.test(n[":block/string"] ?? "")) excluded = true;
+      });
+      if (excluded) return { ok: false, reason: "excluded", count: uids.size };
+      if (expect.count != null && expect.count !== uids.size) return { ok: false, reason: "changed", count: uids.size };
+      if (expect.string != null && expect.string !== (tree[":block/string"] ?? "")) return { ok: false, reason: "changed", count: uids.size };
+      for (const id of uids) {
+        const raw = api.data.pull("[:block/uid {:block/_refs [:block/uid]}]", [":block/uid", id]);
+        if ((raw?.[":block/_refs"] || []).some((r) => !uids.has(r[":block/uid"]))) return { ok: false, reason: "referenced", count: uids.size };
+      }
+      await api.data.block.delete({ block: { uid } });
+      return { ok: true, count: uids.size };
+    });
+  }
+  function discardPlaceholder(rootUid, uid, placeholder) {
+    return run(rootUid, async () => {
+      if (!created.has(uid)) return { ok: false, reason: "not-created" };
+      const raw = pullRaw("[:block/uid :block/string {:block/children [:block/uid]}]", uid);
+      if (!raw) return { ok: false, reason: "missing" };
+      if ((raw[":block/string"] ?? "") !== placeholder || (raw[":block/children"] || []).length) return { ok: false, reason: "changed" };
+      await api.data.block.delete({ block: { uid } });
+      created.delete(uid);
+      return { ok: true };
+    });
+  }
+  function watchTree(rootUid, cb) {
+    if (!rootUid || typeof api.data?.addPullWatch !== "function") return () => {
+    };
+    const ident = `[:block/uid "${quote(rootUid)}"]`;
+    let dirty = false;
+    let scheduled = false;
+    let done = false;
+    const flush = () => {
+      scheduled = false;
+      if (done || !dirty) return;
+      if (busy(rootUid)) return;
+      dirty = false;
+      try {
+        cb(pullTree(rootUid));
+      } catch (error) {
+        console.warn("[plexus] mind-map watch callback failed", error);
+      }
+    };
+    const mark = () => {
+      dirty = true;
+      if (busy(rootUid) || scheduled) return;
+      scheduled = true;
+      schedule(flush);
+    };
+    const handler = () => {
+      if (!done) mark();
+    };
+    const onDrain = () => {
+      if (dirty && !done && !scheduled) {
+        scheduled = true;
+        schedule(flush);
+      }
+    };
+    let hooks = drainHooks.get(rootUid);
+    if (!hooks) {
+      hooks = /* @__PURE__ */ new Set();
+      drainHooks.set(rootUid, hooks);
+    }
+    hooks.add(onDrain);
+    api.data.addPullWatch(TREE_PATTERN, ident, handler);
+    return () => {
+      if (done) return;
+      done = true;
+      hooks.delete(onDrain);
+      if (!hooks.size) drainHooks.delete(rootUid);
+      try {
+        api.data.removePullWatch(TREE_PATTERN, ident, handler);
+      } catch (error) {
+        console.warn("[plexus] removePullWatch failed", error);
+      }
+    };
+  }
+  return { createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+}
+
+// src/host/measure.js
+var MEMO_CAP = 2e3;
+var fontString = (size) => `${size}px Excalifont, Xiaolai, sans-serif, Segoe UI Emoji`;
+function createMeasurer({ doc = globalThis.document } = {}) {
+  const memo2 = /* @__PURE__ */ new Map();
+  let ctx = null;
+  function context() {
+    if (ctx) return ctx;
+    try {
+      ctx = doc?.createElement?.("canvas")?.getContext?.("2d") || null;
+    } catch {
+      ctx = null;
+    }
+    return ctx;
+  }
+  function measure(text, fontSize) {
+    const str = String(text ?? "");
+    const font = fontString(fontSize);
+    const key = `${font}|${str}`;
+    if (memo2.has(key)) {
+      const hit = memo2.get(key);
+      memo2.delete(key);
+      memo2.set(key, hit);
+      return hit;
+    }
+    const c = context();
+    let width;
+    if (c) {
+      c.font = font;
+      width = c.measureText(str).width;
+    } else {
+      width = str.length * fontSize * 0.6;
+    }
+    memo2.set(key, width);
+    if (memo2.size > MEMO_CAP) memo2.delete(memo2.keys().next().value);
+    return width;
+  }
+  async function ensureFonts(texts, fontSize = 20) {
+    const fonts = doc?.fonts;
+    if (!fonts || typeof fonts.load !== "function") return false;
+    try {
+      const font = fontString(fontSize);
+      const text = (texts || []).join("");
+      const wasLoaded = typeof fonts.check === "function" ? fonts.check(font, text) : false;
+      const loaded = await fonts.load(font, text);
+      if (!wasLoaded && loaded && loaded.length) {
+        memo2.clear();
+        return true;
+      }
+    } catch (error) {
+      console.warn("[plexus] font load failed", error);
+    }
+    return false;
+  }
+  return { measure, ensureFonts, clear: () => memo2.clear(), size: () => memo2.size };
+}
+
 // src/model/slides.js
 var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 var orderOf = (el) => {
@@ -3348,7 +5217,8 @@ function createActions({
   fetchBlob = (url) => globalThis.fetch(url).then((r) => r.blob()),
   createBitmap = globalThis.createImageBitmap?.bind(globalThis),
   startTool = startImageRegionTool,
-  presenter = null
+  presenter = null,
+  mindmap = null
 }) {
   let disposed = false;
   let activeTool = null;
@@ -3692,6 +5562,23 @@ function createActions({
     }),
     // Cache only unless render is set; never touches Excalidraw when render is false.
     thumbnail: (uid, { maxWidth = 480, render = false } = {}) => thumbnailOnce(uid, { maxWidth, render }),
+    async startMindMap() {
+      const editor = native.activeEditor(doc);
+      if (!editor || !mindmap) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (mindmap.selectedNode(editor.app)) {
+        toaster.show("Use Tab / Enter to grow this map");
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      return mindmap.startRoot({ app: editor.app, drawingUid: editor.drawingUid });
+    },
+    mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
     async refreshCropsForOpenDrawing() {
       const editor = native.activeEditor(doc);
@@ -3706,10 +5593,7 @@ function createActions({
         try {
           if (isImageKind(region.kind)) continue;
           const svg = await hotSvg(editor.app, region);
-          if (!svg) {
-            fail(i);
-            continue;
-          }
+          if (!svg) continue;
           await putSvg(uid, region, svg);
           count += 1;
         } catch (error) {
@@ -3761,39 +5645,39 @@ function createActions({
       slide.url = entry?.url ?? null;
     }
     const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0, onClose: release });
-    const missing = slides.map((s, i2) => [s, i2]).filter(([s]) => !s.url);
+    const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
     if (!missing.length) return uid;
-    const fail2 = (i2) => {
-      if (handle.isOpen()) handle.setSlide(i2, { error: true });
+    const fail = (i) => {
+      if (handle.isOpen()) handle.setSlide(i, { error: true });
     };
-    const fill = (i2, entry) => {
-      if (entry?.url && handle.isOpen()) handle.setSlide(i2, { url: entry.url });
+    const fill = (i, entry) => {
+      if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url });
     };
     try {
       if (mounted) {
-        for (const [slide, i2] of missing) {
+        for (const [slide, i] of missing) {
           if (disposed || !handle.isOpen()) break;
           let svg = await captureSafe(mounted.app, [slide.frame.id]);
           if (!svg) continue;
           svg = normalizeSvgSize(svg);
           await cache.put(slide.svgKey, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
-          fill(i2, cache.peek?.(slide.svgKey) || await cache.get(slide.svgKey));
+          fill(i, cache.peek?.(slide.svgKey) || await cache.get(slide.svgKey));
         }
       } else {
         const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
         const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
         if (!rendered || disposed || !handle.isOpen()) {
           if (!rendered && !disposed && handle.isOpen()) {
-            for (const [, i2] of missing) fail2(i2);
+            for (const [, i] of missing) fail(i);
             toaster.show("Could not render this drawing", { kind: "error" });
           }
           return uid;
         }
-        for (const [slide, i2] of missing) {
+        for (const [slide, i] of missing) {
           if (disposed || !handle.isOpen()) break;
           const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
           if (box.error) {
-            fail2(i2);
+            fail(i);
             continue;
           }
           const crop = viewPngCropRect({
@@ -3804,17 +5688,17 @@ function createActions({
             naturalHeight: rendered.naturalHeight
           });
           if (crop.error) {
-            fail2(i2);
+            fail(i);
             continue;
           }
           const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
           await cache.put(slide.pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
-          fill(i2, cache.peek?.(slide.pngKey) || await cache.get(slide.pngKey));
+          fill(i, cache.peek?.(slide.pngKey) || await cache.get(slide.pngKey));
         }
       }
     } catch (error) {
       console.warn("[plexus] present fill failed", error);
-      for (const [slide, i2] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail2(i2);
+      for (const [slide, i] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail(i);
     }
     return uid;
   }
@@ -3901,6 +5785,81 @@ function createActions({
     }
     await cache.put(key, blob, { ...dims, persist: settled !== false });
     return blob;
+  }
+  async function mindMapFromOutlineOnce(blockUid) {
+    if (!mindmap || !isId(blockUid)) {
+      toaster.show("Click into a block first", { kind: "error" });
+      return null;
+    }
+    const info = mindmap.outlineInfo(blockUid);
+    if (!info) {
+      toaster.show("Block not found", { kind: "error" });
+      return null;
+    }
+    if (isExcludedString(info.string)) {
+      toaster.show("Drawings cannot be a mind map root", { kind: "error" });
+      return null;
+    }
+    if (info.visible >= mindmap.NODE_CAP) {
+      toaster.show(`Collapse some branches first (${info.total} blocks)`, { kind: "error" });
+      return null;
+    }
+    let drawingUid;
+    try {
+      const at = api.data.pull("[:block/order {:block/parent [:block/uid]}]", [":block/uid", blockUid]);
+      const parent = at?.[":block/parent"]?.[":block/uid"];
+      if (!parent) throw new Error("no parent");
+      drawingUid = api.util.generateUID();
+      await api.data.block.create({
+        location: { "parent-uid": parent, order: (at[":block/order"] ?? 0) + 1 },
+        block: { uid: drawingUid, string: "{{[[excalidraw]]}}" }
+      });
+    } catch (error) {
+      console.warn("[plexus] mind map drawing create failed", error);
+      toaster.show("Could not create the drawing", { kind: "error" });
+      return null;
+    }
+    const opened = await openDrawingOnce(drawingUid);
+    if (!opened || disposed) return null;
+    const ok = await mindmap.showOutline({ app: opened.app, rootUid: blockUid });
+    if (!ok && !disposed) toaster.show("Could not build the mind map", { kind: "error" });
+    return ok ? drawingUid : null;
+  }
+  async function openDrawingOnce(uid) {
+    const matches = () => {
+      const ed = native.activeEditor(doc);
+      return ed && ed.drawingUid === uid ? ed : null;
+    };
+    const findIcon = () => {
+      for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+        if (found && found.isConnected !== false) return found;
+      }
+      return null;
+    };
+    try {
+      await host.openBlock(uid, {});
+    } catch (error) {
+      console.warn("[plexus] open block failed", error);
+      toaster.show("Could not open drawing", { kind: "error" });
+      return null;
+    }
+    const View = doc.defaultView;
+    const deadline = Date.now() + 1e4;
+    let editor = matches();
+    for (let attempt = 0; attempt < 3 && !editor; attempt++) {
+      const icon = await waitFor(findIcon, Math.min(3e3, Math.max(0, deadline - Date.now())), 50, aborted);
+      if (disposed) return null;
+      if (!icon) break;
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        icon.dispatchEvent(new View.MouseEvent(type, { bubbles: true, cancelable: true, view: View }));
+      }
+      editor = await waitFor(matches, Math.min(1500, Math.max(0, deadline - Date.now())), 50, aborted);
+    }
+    if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
+    if (!editor && !disposed) toaster.show("Drawing did not open", { kind: "error" });
+    return editor || null;
   }
   async function openRegionOnce(regionUid, { sidebar = false } = {}) {
     const block = host.pullBlock(regionUid);
@@ -4012,6 +5971,7 @@ var activeLifecycle = null;
 var THUMB_WIDTHS = [160, 480];
 var THUMB_WARM_DELAY_MS = 1500;
 var CONTEXT_MENU_LABEL = "Plexus: Region on image";
+var MINDMAP_MENU_LABEL = "Plexus: Mind map from outline";
 var PRESENT_MENU_LABEL = "Plexus: Present frames";
 var DRAWING_START2 = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 function createEmitter() {
@@ -4077,11 +6037,16 @@ async function onload({ extensionAPI, extension }) {
         canCrop: () => actions.hasCroppedImageSelected(),
         onEmbed: () => actions.insertEmbedFromClipboard(),
         onPresent: () => actions.presentDrawing(),
-        canPresent: () => actions.hasFrames()
+        canPresent: () => actions.hasFrames(),
+        onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error))
       });
       lifecycle.add(() => toolbar.dispose());
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
+      const mmWriter = createMmWriter({ api, graph: host.graphName() });
+      const measurer = createMeasurer({ doc });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3 });
+      lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
         native: native_exports,
@@ -4094,7 +6059,8 @@ async function onload({ extensionAPI, extension }) {
         api,
         emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
-        presenter
+        presenter,
+        mindmap
       });
       lifecycle.add(() => actions.dispose());
       const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development" });
@@ -4112,6 +6078,11 @@ async function onload({ extensionAPI, extension }) {
           callback: (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }).catch((error) => console.warn("[plexus] present failed", error))
         });
         lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: PRESENT_MENU_LABEL }));
+        api.ui.blockContextMenu.addCommand({
+          label: MINDMAP_MENU_LABEL,
+          callback: (e) => actions.mindMapFromOutline(e?.["block-uid"]).catch((error) => console.warn("[plexus] mind map failed", error))
+        });
+        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: MINDMAP_MENU_LABEL }));
       }
       const regionref = createRegionRefRenderer({
         host,
@@ -4188,6 +6159,7 @@ async function onload({ extensionAPI, extension }) {
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1e3 });
           mounted.disposers.push(() => overlay.dispose());
+          mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1e3 }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
@@ -4216,6 +6188,14 @@ async function onload({ extensionAPI, extension }) {
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });
     }
+    await lifecycle.command(extensionAPI.ui.commandPalette, {
+      label: "Plexus: Mind map from outline",
+      callback: () => {
+        if (!actions) return console.warn("[plexus] unavailable outside Roam: mindMapFromOutline");
+        const uid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+        return actions.mindMapFromOutline(uid).catch((error) => console.warn("[plexus] mind map failed", error));
+      }
+    });
     console.info(`[plexus] Loaded v${extension?.version || "development"}`);
   } catch (error) {
     if (activeLifecycle === lifecycle) activeLifecycle = null;

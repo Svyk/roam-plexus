@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.4.0]
+
+- Mind-map builder: create a mind map from an outline block, with two-way sync between the canvas and the Roam outline (add, edit, move, copy, delete, fold).
+- Layouts: right tree and radial (Alt+L), pinned nodes (Alt+P), boundaries (Alt+B).
+- Fix: opening several drawings from a region list no longer aborts on a single failure.
+
 ## [0.3.1]
 
 - Fix: presenter no longer leaves "Rendering..." over a loaded slide; the HUD shows only the slide count and frame name.
