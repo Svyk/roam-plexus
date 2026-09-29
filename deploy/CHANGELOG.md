@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Mind-map builder: create a mind map from an outline block, with two-way sync between the canvas and the Roam outline (add, edit, move, copy, delete, fold).
 - Layouts: right tree and radial (Alt+L), pinned nodes (Alt+P), boundaries (Alt+B).
 - Fix: opening several drawings from a region list no longer aborts on a single failure.
+- Mind map from outline finds the block's parent through `:block/_children` (Roam has no `:block/parent`); found in live acceptance.
 
 ## [0.3.1]
 

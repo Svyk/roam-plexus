@@ -33,6 +33,33 @@ test("startMindMap with a map node selected only toasts; otherwise starts a root
   assert.equal(await t.actions.startMindMap(), null);
 });
 
+test("mindMapFromOutline finds the parent through :block/_children (Roam has no :block/parent) and creates the drawing next to the block", async () => {
+  const creates = [];
+  const app = {};
+  const api = {
+    data: {
+      pull: (pattern) => {
+        if (pattern.includes(":block/parent ") || pattern.includes("{:block/parent")) {
+          throw new Error("Expected attribute having :db.type/ref, got: :block/parent");
+        }
+        if (pattern.includes(":block/_children")) return { ":block/order": 3, ":block/_children": [{ ":block/uid": "parent001" }] };
+        return null;
+      },
+      block: { create: async (arg) => { creates.push(arg); } },
+    },
+    util: { generateUID: () => "newdraw01" },
+  };
+  const mindmap = { NODE_CAP: 500, selectedNode: () => false, startRoot: () => null, outlineInfo: () => ({ string: "Topic", visible: 3, total: 3 }), showOutline: async () => true };
+  const toasts = [];
+  const actions = createActions({
+    host: { openBlock: async () => {} }, native: { activeEditor: () => ({ app, drawingUid: "newdraw01" }) }, cache: {}, cold: {},
+    toaster: { show: (m) => toasts.push(m) }, spotlight() {}, getSettings: () => ({}), doc: { querySelectorAll: () => [] }, mindmap, api,
+  });
+  assert.equal(await actions.mindMapFromOutline("abcdefghi"), "newdraw01");
+  assert.deepEqual(creates, [{ location: { "parent-uid": "parent001", order: 4 }, block: { uid: "newdraw01", string: "{{[[excalidraw]]}}" } }]);
+  assert.deepEqual(toasts, []);
+});
+
 test("mindMapFromOutline refuses a missing block, an excluded block, and an oversized tree", async () => {
   let t = setup();
   assert.equal(await t.actions.mindMapFromOutline(null), null);

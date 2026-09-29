@@ -722,8 +722,8 @@ export function createActions({
     }
     let drawingUid;
     try {
-      const at = api.data.pull("[:block/order {:block/parent [:block/uid]}]", [":block/uid", blockUid]);
-      const parent = at?.[":block/parent"]?.[":block/uid"];
+      const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", blockUid]);
+      const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
       if (!parent) throw new Error("no parent");
       drawingUid = api.util.generateUID();
       await api.data.block.create({
