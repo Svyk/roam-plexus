@@ -492,6 +492,10 @@ function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
     if (ring.length <= maxPoints) break;
     eps *= 1.3;
   }
+  if (result.length > maxPoints) {
+    const step = result.length / maxPoints;
+    result = Array.from({ length: maxPoints }, (_, i) => result[Math.floor(i * step)]);
+  }
   return result.flat().map((n) => Math.round(n * 1e3) / 1e3);
 }
 function polyToLocal(p, bboxFrac) {
@@ -725,7 +729,7 @@ function regionSceneBBox(region, elements, appState) {
     const b = elementBounds(frame);
     const pad = region.kind === "cframe" ? 0 : region.pad ?? 10;
     let top = b[1] - pad;
-    if (region.kind === "frame" && showsFrameLabel(appState)) top = Math.min(top, b[1] - FRAME_LABEL_HEIGHT);
+    if (region.kind === "frame" && showsFrameLabel(appState)) top = b[1] - pad - FRAME_LABEL_HEIGHT;
     return { bbox: [b[0] - pad, top, b[2] + pad, b[3] + pad], missing: [] };
   }
   return { error: "unsupported-kind" };
@@ -2862,10 +2866,10 @@ function createActions({
       toaster.show("Crop cache cleared");
     }
   };
-  function findRenderedImage(blockUid) {
+  function findRenderedImage(blockUid, index = 0) {
     for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
       if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen")) continue;
-      const img = el.querySelector("img.rm-inline-img:not(.rm-inline-img--excalidraw)");
+      const img = el.querySelectorAll("img.rm-inline-img:not(.rm-inline-img--excalidraw)")[index];
       if (img) return img;
     }
     return null;
@@ -2962,7 +2966,17 @@ function createActions({
         toaster.show("Could not open image", { kind: "error" });
         return null;
       }
-      const img = await waitFor(() => findRenderedImage(uid), 3e3, 50, aborted);
+      const settled = (img2) => {
+        if (!img2 || !(img2.naturalWidth > 0)) return null;
+        const r = img2.getBoundingClientRect?.();
+        return r && r.width > 0 && r.height > 0 ? img2 : null;
+      };
+      const index = region.i || 0;
+      let img = await waitFor(() => settled(findRenderedImage(uid, index)), 3e3, 50, aborted);
+      if (img) {
+        await sleep(100);
+        img = settled(findRenderedImage(uid, index)) || img;
+      }
       if (img && !disposed) {
         const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
         if (f) {
