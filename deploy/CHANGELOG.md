@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.3.1]
+
+- Fix: presenter no longer leaves "Rendering..." over a loaded slide; the HUD shows only the slide count and frame name.
+- Fix: canvas embed overlay follows the Excalidraw editor theme instead of Roam's.
+- Fix: block embeds show the containing page title as a muted header instead of repeating the block text.
+
 ## [0.3.0]
 
 - Crop-aware regions: regions on cropped images map through the image crop; a region fully outside the crop reports "outside crop".

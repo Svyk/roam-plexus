@@ -58,12 +58,14 @@ function embedApi(raw) {
 
 test("pullEmbedContent block: depth 2, sorted, capped at 30", () => {
   const many = Array.from({ length: 40 }, (_, i) => kid(`c${i}`, i));
-  const api = embedApi(() => ({ ":block/uid": "blk000001", ":block/string": "root", ":block/children": [kid("b", 2), kid("a", 1, [kid("a1", 0, [kid("deep", 0)])]), ...many.slice(3)] }));
+  const api = embedApi(() => ({ ":block/uid": "blk000001", ":block/string": "root", ":block/page": { ":node/title": "Host Page" }, ":block/children": [kid("b", 2), kid("a", 1, [kid("a1", 0, [kid("deep", 0)])]), ...many.slice(3)] }));
   const host = createRoamHost({ api });
   const r = host.pullEmbedContent("((blk000001))");
   assert.deepEqual(api.pulls[0], [":block/uid", "blk000001"]);
   assert.equal(r.kind, "block");
   assert.equal(r.string, "root");
+  assert.equal(r.title, "");
+  assert.equal(r.pageTitle, "Host Page");
   assert.equal(r.children[0].string, "a");
   assert.equal(r.children[0].children[0].string, "a1");
   assert.deepEqual(r.children[0].children[0].children, []);

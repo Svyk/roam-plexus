@@ -1,4 +1,4 @@
-/* Plexus v0.3.0 | MIT | generated; edit src/ */
+/* Plexus v0.3.1 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -924,7 +924,7 @@ var DRAWING_STRING = "{{[[excalidraw]]}}";
 var DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
 var DRAWINGS_CAP = 50;
 var EMBED_CAP = 30;
-var EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
+var EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/page [:node/title]} {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
 var EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
 function parseEmbedTarget(ref) {
   const text = String(ref ?? "").trim();
@@ -1109,6 +1109,7 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       kind: isPage ? "page" : "block",
       uid: raw[":block/uid"],
       title: isPage ? raw[":node/title"] : "",
+      pageTitle: isPage ? "" : raw[":block/page"]?.[":node/title"] ?? "",
       string: isPage ? "" : raw[":block/string"] ?? "",
       children: take(raw[":block/children"], isPage ? 1 : 2)
     };
@@ -2100,7 +2101,7 @@ function createEmbedOverlay({
   const paint = (portal, content) => {
     unmountHosts(portal);
     portal.body.textContent = "";
-    portal.title.textContent = content ? content.title || content.string || "" : "Block not found";
+    portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
     if (!content) return;
     let budget = EMBED_BLOCK_CAP;
     if (content.kind !== "page" && content.string) {
@@ -2163,6 +2164,12 @@ function createEmbedOverlay({
     const uid = content?.uid ?? parseEmbedRef(portal.ref)?.uid;
     if (uid) watchUid(portal, uid);
   };
+  const applyTheme = (portal) => {
+    const theme = app.state?.theme === "dark" ? "dark" : "light";
+    if (portal.theme === theme) return;
+    portal.theme = theme;
+    portal.root.setAttribute?.("data-theme", theme);
+  };
   const create = (el) => {
     const root = doc.createElement("div");
     root.className = "plexus-portal plexus-embed";
@@ -2174,7 +2181,8 @@ function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false };
+    const portal = { root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null };
+    applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
     return portal;
@@ -2215,6 +2223,7 @@ function createEmbedOverlay({
       s.transform = place.transform;
       s.clipPath = place.clip || "";
       s.display = place.hidden ? "none" : "";
+      applyTheme(portal);
     }
   };
   function schedule() {
@@ -2310,6 +2319,9 @@ function createPresenter({ doc }) {
       wait.textContent = "Rendering...";
       const hud = doc.createElement("div");
       hud.className = "plexus-present-hud";
+      img.addEventListener?.("load", () => {
+        if (list[at]?.url) wait.hidden = true;
+      });
       dialog.append(img, wait, hud);
       const preload = doc.createElement("img");
       let at = Math.min(Math.max(0, index), list.length - 1);

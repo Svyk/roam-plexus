@@ -113,3 +113,37 @@ test("Enter, PageDown, Spacebar advance and ArrowLeft goes back", () => {
   d.listeners.keydown(key("ArrowLeft"));
   assert.equal(t.hud().textContent, "1 / 3 · A");
 });
+
+test("loading text is hidden once a slide has an image, and the HUD carries only the count and name", () => {
+  const t = setup();
+  t.presenter.open({ slides: [{ name: "A", url: "u1" }, { name: "B", url: null }] });
+  const wait = () => t.dialog().children.find((c) => c.className === "plexus-present-wait");
+  assert.equal(wait().hidden, true);
+  assert.equal(t.hud().textContent, "1 / 2 · A");
+  t.dialog().listeners.keydown(key("ArrowRight"));
+  assert.equal(wait().hidden, false);
+  assert.equal(wait().textContent, "Rendering...");
+  assert.equal(t.hud().textContent, "2 / 2 · B");
+  const handle = t.presenter.isOpen();
+  assert.equal(handle, true);
+});
+
+test("setSlide with a url hides loading; img load also hides it; error keeps its message", () => {
+  const t = setup();
+  const h = t.presenter.open({ slides: [{ name: "A", url: null }] });
+  const wait = t.dialog().children.find((c) => c.className === "plexus-present-wait");
+  h.setSlide(0, { error: true });
+  assert.equal(wait.hidden, false);
+  assert.equal(wait.textContent, "Could not render this slide");
+  h.setSlide(0, { url: "u", error: false });
+  assert.equal(wait.hidden, true);
+  wait.hidden = false;
+  t.img().listeners.load();
+  assert.equal(wait.hidden, true);
+});
+
+test("CSS lets [hidden] beat the flex/block display on the loading text and slide", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../src/extension.css", import.meta.url), "utf8");
+  assert.match(css, /\.plexus-present-wait\[hidden\][\s\S]*?display:\s*none/);
+});

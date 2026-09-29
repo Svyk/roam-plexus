@@ -5,8 +5,8 @@ import { createEmbedOverlay, embedPlacement } from "../src/view/embeds.js";
 
 function fakeEl() {
   const el = {
-    style: {}, children: [], className: "", textContent: "", removed: false,
-    setAttribute() {},
+    style: {}, children: [], className: "", textContent: "", removed: false, attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
     append(...c) { this.children.push(...c); },
     remove() { this.removed = true; },
   };
@@ -121,4 +121,36 @@ test("no anchors means no portals and no reads", async () => {
   await t.flush();
   assert.equal(t.body.children.length, 0);
   t.overlay.dispose();
+});
+
+test("portal data-theme follows the editor theme and updates on change", async () => {
+  const t = setup();
+  t.app.state.theme = "light";
+  await t.flush();
+  const root = t.body.children[0];
+  assert.equal(root.attrs["data-theme"], "light");
+  t.app.state.theme = "dark";
+  t.subs.cb();
+  await t.flush();
+  assert.equal(root.attrs["data-theme"], "dark");
+});
+
+test("CSS keys the embed theme on data-theme, not on Roam classes", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../src/extension.css", import.meta.url), "utf8");
+  assert.match(css, /\.plexus-portal\.plexus-embed\[data-theme="light"\]/);
+  assert.match(css, /\.plexus-portal\.plexus-embed\[data-theme="dark"\]/);
+  assert.doesNotMatch(css, /bp3-dark \.plexus-portal\.plexus-embed|bt-theme-dark \.plexus-portal\.plexus-embed|not\(\.bp3-light\) \.plexus-portal\.plexus-embed/);
+});
+
+test("block embed header is the containing page title, not the block text; page embed keeps its title", async () => {
+  const block = setup({ content: { kind: "block", uid: "abcdefghi", title: "", pageTitle: "Host Page", string: "the block text", children: [] } });
+  await block.flush();
+  assert.equal(block.body.children[0].children[0].textContent, "Host Page");
+  const noPage = setup({ content: { kind: "block", uid: "abcdefghi", title: "", pageTitle: "", string: "the block text", children: [] } });
+  await noPage.flush();
+  assert.equal(noPage.body.children[0].children[0].textContent, "");
+  const page = setup({ content: { kind: "page", uid: "abcdefghi", title: "My Page", string: "", children: [] } });
+  await page.flush();
+  assert.equal(page.body.children[0].children[0].textContent, "My Page");
 });

@@ -9,7 +9,7 @@ const DRAWING_STRING = "{{[[excalidraw]]}}";
 const DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
 const DRAWINGS_CAP = 50;
 const EMBED_CAP = 30;
-const EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
+const EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/page [:node/title]} {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
 const EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
 
 function parseEmbedTarget(ref) {
@@ -220,6 +220,7 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
       kind: isPage ? "page" : "block",
       uid: raw[":block/uid"],
       title: isPage ? raw[":node/title"] : "",
+      pageTitle: isPage ? "" : (raw[":block/page"]?.[":node/title"] ?? ""),
       string: isPage ? "" : (raw[":block/string"] ?? ""),
       children: take(raw[":block/children"], isPage ? 1 : 2),
     };

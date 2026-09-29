@@ -88,7 +88,7 @@ export function createEmbedOverlay({
   const paint = (portal, content) => {
     unmountHosts(portal);
     portal.body.textContent = "";
-    portal.title.textContent = content ? content.title || content.string || "" : "Block not found";
+    portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
     if (!content) return;
     let budget = EMBED_BLOCK_CAP;
     if (content.kind !== "page" && content.string) {
@@ -151,6 +151,14 @@ export function createEmbedOverlay({
     if (uid) watchUid(portal, uid);
   };
 
+  // The overlay follows the editor's theme, not Roam's.
+  const applyTheme = (portal) => {
+    const theme = app.state?.theme === "dark" ? "dark" : "light";
+    if (portal.theme === theme) return;
+    portal.theme = theme;
+    portal.root.setAttribute?.("data-theme", theme);
+  };
+
   const create = (el) => {
     const root = doc.createElement("div");
     root.className = "plexus-portal plexus-embed";
@@ -162,7 +170,8 @@ export function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false };
+    const portal = { root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null };
+    applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
     return portal;
@@ -206,6 +215,7 @@ export function createEmbedOverlay({
       s.transform = place.transform;
       s.clipPath = place.clip || "";
       s.display = place.hidden ? "none" : "";
+      applyTheme(portal);
     }
   };
 

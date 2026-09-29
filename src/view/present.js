@@ -41,6 +41,8 @@ export function createPresenter({ doc }) {
       wait.textContent = "Rendering...";
       const hud = doc.createElement("div");
       hud.className = "plexus-present-hud";
+      // Loading text shows only while the current slide has no image; a loaded image always clears it.
+      img.addEventListener?.("load", () => { if (list[at]?.url) wait.hidden = true; });
       dialog.append(img, wait, hud);
       const preload = doc.createElement("img");
       let at = Math.min(Math.max(0, index), list.length - 1);
