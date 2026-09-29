@@ -1,4 +1,156 @@
-/* Roam injects this stylesheet on load and removes it on unload. */
 .plexus-hidden {
   display: none !important;
+}
+
+.plexus-root.plexus-regionref {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 100%;
+}
+
+.plexus-root .plexus-crop {
+  display: block;
+  max-width: 100%;
+  max-height: var(--plexus-max-h, 360px);
+  border-radius: 4px;
+  cursor: zoom-in;
+  vertical-align: middle;
+}
+
+.plexus-root.plexus-placeholder {
+  max-width: 100%;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.12);
+  cursor: zoom-in;
+}
+
+.plexus-root.plexus-chip {
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: #5c7080;
+  background: rgba(92, 112, 128, 0.12);
+  cursor: default;
+}
+
+.plexus-offscreen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 1200px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-toolbar {
+  position: fixed;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid rgba(16, 22, 26, 0.2);
+  box-shadow: 0 2px 8px rgba(16, 22, 26, 0.2);
+}
+
+.plexus-portal .plexus-toolbar-button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #182026;
+  background: transparent;
+  cursor: pointer;
+}
+
+.plexus-portal .plexus-toolbar-button:hover {
+  background: rgba(92, 112, 128, 0.15);
+}
+
+.plexus-portal.plexus-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  z-index: 100000;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #fff;
+  background: #394b59;
+  box-shadow: 0 2px 8px rgba(16, 22, 26, 0.3);
+}
+
+.plexus-portal.plexus-toast-error {
+  background: #a82a2a;
+}
+
+.plexus-portal.plexus-spotlight {
+  position: fixed;
+  z-index: 100000;
+  pointer-events: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+}
+
+.plexus-portal.plexus-image-tool {
+  position: fixed;
+  z-index: 100000;
+  cursor: crosshair;
+  outline: 1px dashed rgba(255, 255, 255, 0.8);
+}
+
+.plexus-portal .plexus-marquee {
+  position: absolute;
+  border: 1px solid #2d72d2;
+  background: rgba(45, 114, 210, 0.2);
+  pointer-events: none;
+}
+
+:root.bp3-dark .plexus-root.plexus-chip,
+body.bt-theme-dark .plexus-root.plexus-chip {
+  color: #abb3bf;
+  background: transparent;
+  border: 1px solid rgba(171, 179, 191, 0.5);
+}
+
+:root.bp3-dark .plexus-portal.plexus-toolbar,
+body.bt-theme-dark .plexus-portal.plexus-toolbar {
+  background: #252a31;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+:root.bp3-dark .plexus-portal .plexus-toolbar-button,
+body.bt-theme-dark .plexus-portal .plexus-toolbar-button {
+  color: #f6f7f9;
+}
+
+:root.bp3-dark .plexus-portal.plexus-toast,
+body.bt-theme-dark .plexus-portal.plexus-toast {
+  background: #252a31;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.bp3-light) .plexus-root.plexus-chip {
+    color: #abb3bf;
+    background: transparent;
+    border: 1px solid rgba(171, 179, 191, 0.5);
+  }
+
+  :root:not(.bp3-light) .plexus-portal.plexus-toolbar {
+    background: #252a31;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  :root:not(.bp3-light) .plexus-portal .plexus-toolbar-button {
+    color: #f6f7f9;
+  }
+
+  :root:not(.bp3-light) .plexus-portal.plexus-toast {
+    background: #252a31;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+  }
 }

@@ -1,0 +1,217 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  parseDrawingProps, liveElements, elementBounds, commonBounds, regionSceneBBox,
+  viewPngCropRect, fitZoom, sceneToViewport, viewportToScene, rectToFraction, cropSvgToFraction,
+} from "../src/model/scene.js";
+
+const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} vs ${b}`);
+const nearAll = (a, b, eps) => a.forEach((v, i) => near(v, b[i], eps));
+
+const rect = (id, x, y, width, height, extra = {}) => ({ id, type: "rectangle", x, y, width, height, angle: 0, ...extra });
+const fixture = () => [
+  rect("rect-a", 100, 100, 220, 140),
+  rect("rect-b", 420, 120, 160, 100),
+  { id: "text-a", type: "text", x: 130, y: 150, width: 160, height: 25, angle: 0, text: "hi" },
+];
+
+test("parseDrawingProps accepts pull, q and bare keys", () => {
+  const els = JSON.stringify([rect("a", 0, 0, 1, 1)]);
+  const state = JSON.stringify({ zoom: { value: 2 } });
+  for (const props of [
+    { ":excalidraw/elements-json": els, ":excalidraw/state-json": state, ":excalidraw/version": 3, ":excalidraw/instance-id": "i" },
+    { "elements-json": els, "state-json": state, version: 3, "instance-id": "i" },
+    { "excalidraw/elements-json": els, "excalidraw/state-json": state, "excalidraw/version": 3, "excalidraw/instance-id": "i" },
+  ]) {
+    const d = parseDrawingProps(props);
+    assert.equal(d.elements.length, 1);
+    assert.equal(d.appState.zoom.value, 2);
+    assert.equal(d.version, 3);
+    assert.equal(d.instanceId, "i");
+    assert.equal(d.elementsJson, els);
+  }
+});
+
+test("parseDrawingProps returns null for non-drawings and bad JSON", () => {
+  assert.equal(parseDrawingProps(null), null);
+  assert.equal(parseDrawingProps({}), null);
+  assert.equal(parseDrawingProps({ ":excalidraw/elements-json": "{oops" }), null);
+  assert.equal(parseDrawingProps({ ":excalidraw/elements-json": "{}" }), null);
+  const d = parseDrawingProps({ ":excalidraw/elements-json": "[]", ":excalidraw/state-json": "nope" });
+  assert.deepEqual(d.appState, {});
+});
+
+test("liveElements drops deleted", () => {
+  assert.deepEqual(liveElements([{ id: "a" }, { id: "b", isDeleted: true }, null]).map((e) => e.id), ["a"]);
+  assert.deepEqual(liveElements(null), []);
+});
+
+test("Phase 0 fixture: commonBounds and PNG crop", () => {
+  const els = fixture();
+  assert.deepEqual(commonBounds(els), [100, 100, 580, 240]);
+  const { bbox, missing } = regionSceneBBox({ kind: "area", ids: ["rect-a", "text-a"], pad: 10 }, els);
+  assert.deepEqual(missing, []);
+  assert.deepEqual(bbox, [90, 90, 330, 250]);
+  // The hot SVG is 240x160; in the 500x160 view PNG (origin 90,90) it starts at 0,0.
+  assert.deepEqual(viewPngCropRect({ elements: els, bbox, naturalWidth: 500, naturalHeight: 160 }), { sx: 0, sy: 0, sw: 240, sh: 160 });
+});
+
+test("viewPngCropRect: unpadded bbox of the fixture lands at 10,10", () => {
+  const r = viewPngCropRect({ elements: fixture(), bbox: [100, 100, 320, 240], naturalWidth: 500, naturalHeight: 160 });
+  assert.deepEqual(r, { sx: 10, sy: 10, sw: 220, sh: 140 });
+});
+
+test("viewPngCropRect: mismatch rule allows +-2 px and reports expected/actual", () => {
+  const args = { elements: fixture(), bbox: [100, 100, 320, 240] };
+  assert.ok(!viewPngCropRect({ ...args, naturalWidth: 502, naturalHeight: 158 }).error);
+  const bad = viewPngCropRect({ ...args, naturalWidth: 503, naturalHeight: 160 });
+  assert.deepEqual(bad, { error: "bounds-mismatch", expected: [500, 160], actual: [503, 160] });
+  assert.equal(viewPngCropRect({ ...args, naturalWidth: 500, naturalHeight: 157 }).error, "bounds-mismatch");
+});
+
+test("viewPngCropRect clamps to the image and ignores deleted elements in bounds", () => {
+  const els = [...fixture(), rect("ghost", -500, -500, 10, 10, { isDeleted: true })];
+  const r = viewPngCropRect({ elements: els, bbox: [0, 0, 1000, 1000], naturalWidth: 500, naturalHeight: 160 });
+  assert.deepEqual(r, { sx: 0, sy: 0, sw: 500, sh: 160 });
+  assert.deepEqual(commonBounds(els), [100, 100, 580, 240]);
+  assert.equal(commonBounds([]), null);
+  assert.equal(commonBounds([rect("x", 0, 0, 1, 1, { isDeleted: true })]), null);
+});
+
+test("regionSceneBBox reports missing ids and errors", () => {
+  const els = fixture();
+  const r = regionSceneBBox({ kind: "area", ids: ["rect-b", "nope"], pad: 0 }, els);
+  assert.deepEqual(r, { bbox: [420, 120, 580, 220], missing: ["nope"] });
+  assert.equal(regionSceneBBox({ kind: "area", ids: ["nope"], pad: 10 }, els).error, "no-elements");
+  assert.equal(regionSceneBBox({ kind: "area", ids: ["a"], pad: 10 }, []).error, "no-elements");
+  assert.equal(regionSceneBBox({ kind: "group", ids: ["a"] }, els).error, "unsupported-kind");
+});
+
+test("regionSceneBBox rect kind", () => {
+  const img = { id: "img", type: "image", x: 100, y: 200, width: 400, height: 200, angle: 0 };
+  const r = regionSceneBBox({ kind: "rect", el: "img", f: [0.25, 0.5, 0.5, 0.25] }, [img]);
+  assert.deepEqual(r, { bbox: [200, 300, 400, 350], missing: [] });
+  assert.equal(regionSceneBBox({ kind: "rect", el: "img", f: [0, 0, 1, 1] }, [{ ...img, angle: 0.3 }]).error, "rotated-image");
+  assert.equal(regionSceneBBox({ kind: "rect", el: "r", f: [0, 0, 1, 1] }, [rect("r", 0, 0, 1, 1)]).error, "not-image");
+  assert.equal(regionSceneBBox({ kind: "rect", el: "zz", f: [0, 0, 1, 1] }, [img]).error, "no-elements");
+});
+
+test("elementBounds: rotated rectangle", () => {
+  // 100x50 rect rotated 90deg about its center (150,125): becomes 50 wide, 100 tall.
+  const b = elementBounds(rect("r", 100, 100, 100, 50, { angle: Math.PI / 2 }));
+  nearAll(b, [125, 75, 175, 175]);
+  nearAll(elementBounds(rect("r", 0, 0, 10, 20)), [0, 0, 10, 20]);
+});
+
+test("elementBounds: diamond uses edge midpoints", () => {
+  nearAll(elementBounds({ type: "diamond", x: 0, y: 0, width: 100, height: 50, angle: 0 }), [0, 0, 100, 50]);
+  // 45deg rotation about (50,25): midpoints (50,0),(100,25),(50,50),(0,25)
+  const c = Math.SQRT1_2;
+  const pts = [[0, -25], [50, 0], [0, 25], [-50, 0]].map(([dx, dy]) => [50 + dx * c - dy * c, 25 + dx * c + dy * c]);
+  nearAll(elementBounds({ type: "diamond", x: 0, y: 0, width: 100, height: 50, angle: Math.PI / 4 }),
+    [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))]);
+});
+
+test("elementBounds: rotated ellipse is tighter than rotated corners", () => {
+  const el = { type: "ellipse", x: 0, y: 0, width: 200, height: 100, angle: Math.PI / 4 };
+  const hx = Math.sqrt((100 * Math.SQRT1_2) ** 2 + (50 * Math.SQRT1_2) ** 2);
+  nearAll(elementBounds(el), [100 - hx, 50 - hx, 100 + hx, 50 + hx]);
+  const cornersHalf = (200 + 100) * Math.SQRT1_2 / 2;
+  assert.ok(hx < cornersHalf);
+  nearAll(elementBounds({ ...el, angle: 0 }), [0, 0, 200, 100]);
+});
+
+test("elementBounds: straight line/arrow, rotated about the local bbox center", () => {
+  const line = { type: "line", x: 10, y: 20, width: 100, height: 0, angle: 0, points: [[0, 0], [100, 0]], roundness: null };
+  nearAll(elementBounds(line), [10, 20, 110, 20]);
+  // rotated 90deg about the local center (60,20): vertical segment
+  nearAll(elementBounds({ ...line, angle: Math.PI / 2 }), [60, -30, 60, 70]);
+  nearAll(elementBounds({ type: "freedraw", x: 0, y: 0, angle: 0, points: [[0, 0], [5, -3], [10, 4]] }), [0, -3, 10, 4]);
+  nearAll(elementBounds({ type: "arrow", x: 5, y: 5, width: 0, height: 0, angle: 0, points: [] }), [5, 5, 5, 5]);
+});
+
+test("elementBounds: curved arrow is at least the straight bbox and bows out", () => {
+  const points = [[0, 0], [50, 100], [100, 0]];
+  const straight = elementBounds({ type: "arrow", x: 0, y: 0, angle: 0, points, roundness: null });
+  const curved = elementBounds({ type: "arrow", x: 0, y: 0, angle: 0, points, roundness: { type: 2 } });
+  assert.ok(curved[0] <= straight[0] && curved[1] <= straight[1] && curved[2] >= straight[2] && curved[3] >= straight[3]);
+  // 4 points with an overshooting middle: strictly larger on some side
+  const pts4 = [[0, 0], [40, 80], [80, -20], [120, 60]];
+  const s4 = elementBounds({ type: "line", x: 0, y: 0, angle: 0, points: pts4, roundness: null });
+  const c4 = elementBounds({ type: "line", x: 0, y: 0, angle: 0, points: pts4, roundness: { type: 2 } });
+  assert.ok(c4[0] <= s4[0] && c4[1] <= s4[1] && c4[2] >= s4[2] && c4[3] >= s4[3]);
+  assert.ok(c4[1] < s4[1] || c4[3] > s4[3] || c4[0] < s4[0] || c4[2] > s4[2]);
+  // elbowed arrows stay polyline, 2 points stay straight
+  assert.deepEqual(elementBounds({ type: "arrow", x: 0, y: 0, angle: 0, points, roundness: { type: 2 }, elbowed: true }), straight);
+  const two = [[0, 0], [30, 40]];
+  assert.deepEqual(elementBounds({ type: "arrow", x: 0, y: 0, angle: 0, points: two, roundness: { type: 2 } }), [0, 0, 30, 40]);
+});
+
+test("elementBounds: unknown types fall back to rotated corners", () => {
+  nearAll(elementBounds({ type: "blob", x: 100, y: 100, width: 100, height: 50, angle: Math.PI / 2 }), [125, 75, 175, 175]);
+  nearAll(elementBounds({ type: "frame", x: 1, y: 2, width: 3, height: 4 }), [1, 2, 4, 6]);
+});
+
+test("fitZoom centers the bbox and clamps zoom", () => {
+  const bbox = [100, 100, 300, 200];
+  const r = fitZoom({ bbox, viewportWidth: 1000, viewportHeight: 800 });
+  near(r.zoom, Math.min(1000 * 0.76 / 200, 800 * 0.76 / 100));
+  near((200 + r.scrollX) * r.zoom, 500);
+  near((150 + r.scrollY) * r.zoom, 400);
+  assert.equal(fitZoom({ bbox: [0, 0, 1, 1], viewportWidth: 1000, viewportHeight: 800 }).zoom, 4);
+  assert.equal(fitZoom({ bbox: [0, 0, 1e6, 1e6], viewportWidth: 100, viewportHeight: 100 }).zoom, 0.1);
+  assert.ok(Number.isFinite(fitZoom({ bbox: [5, 5, 5, 5], viewportWidth: 100, viewportHeight: 100 }).zoom));
+});
+
+test("scene/viewport transforms invert each other", () => {
+  const appState = { zoom: { value: 2 }, scrollX: -30, scrollY: 10, offsetLeft: 5, offsetTop: 7 };
+  assert.deepEqual(sceneToViewport({ x: 40, y: 50, appState }), { x: (40 - 30) * 2 + 5, y: (50 + 10) * 2 + 7 });
+  const v = sceneToViewport({ x: 40, y: 50, appState });
+  const s = viewportToScene({ ...v, appState });
+  near(s.x, 40); near(s.y, 50);
+  assert.deepEqual(sceneToViewport({ x: 1, y: 2, appState: {} }), { x: 1, y: 2 });
+});
+
+test("rectToFraction intersects, normalizes and clips", () => {
+  const img = { left: 100, top: 100, width: 200, height: 100 };
+  assert.deepEqual(rectToFraction({ left: 150, top: 125, width: 100, height: 50 }, img), [0.25, 0.25, 0.5, 0.5]);
+  // hangs off the top-left and right edges
+  assert.deepEqual(rectToFraction({ left: 50, top: 50, width: 150, height: 100 }, img), [0, 0, 0.5, 0.5]);
+  assert.deepEqual(rectToFraction({ left: 200, top: 100, width: 500, height: 100 }, img), [0.5, 0, 0.5, 1]);
+  // too small or outside
+  assert.equal(rectToFraction({ left: 150, top: 150, width: 3, height: 50 }, img), null);
+  assert.equal(rectToFraction({ left: 150, top: 150, width: 50, height: 3.9 }, img), null);
+  assert.equal(rectToFraction({ left: 0, top: 0, width: 50, height: 50 }, img), null);
+  assert.equal(rectToFraction({ left: 0, top: 0, width: 50, height: 50 }, { left: 0, top: 0, width: 0, height: 0 }), null);
+});
+
+const ROOT = '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 180" width="260" height="180">';
+const svgDoc = `${ROOT}<style>.a{stroke-width:2}</style><g transform="translate(10 10)"><rect width="240" height="160"/></g></svg>`;
+
+test("cropSvgToFraction rewrites only the root tag", () => {
+  const out = cropSvgToFraction(svgDoc, [0, 0, 0.5, 0.5]);
+  assert.ok(out.startsWith('<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="10 10 120 80" width="120" height="80">'));
+  assert.equal(out.slice(out.indexOf(">") + 1), svgDoc.slice(svgDoc.indexOf(">") + 1));
+});
+
+test("cropSvgToFraction offsets and uses the given pad", () => {
+  const out = cropSvgToFraction(svgDoc, [0.25, 0.5, 0.5, 0.25]);
+  assert.match(out, /viewBox="70 90 120 40" width="120" height="40"/);
+  const out0 = cropSvgToFraction('<svg viewBox="0 0 200 100" width="200" height="100">x</svg>', [0.5, 0, 0.5, 1], 0);
+  assert.match(out0, /viewBox="100 0 100 100" width="100" height="100"/);
+});
+
+test("cropSvgToFraction scales width/height with an existing ratio and adds missing attrs", () => {
+  const out = cropSvgToFraction('<svg viewBox="0 0 220 120" width="440" height="240"></svg>', [0, 0, 1, 0.5]);
+  assert.match(out, /viewBox="10 10 200 50" width="400" height="100"/);
+  const bare = cropSvgToFraction('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 120"></svg>', [0, 0, 1, 1]);
+  assert.match(bare, /viewBox="10 10 200 100"/);
+  assert.match(bare, /width="200"/);
+  assert.match(bare, /height="100"/);
+});
+
+test("cropSvgToFraction rejects bad input", () => {
+  assert.throws(() => cropSvgToFraction("<div/>", [0, 0, 1, 1]), TypeError);
+  assert.throws(() => cropSvgToFraction("<svg></svg>", [0, 0, 1, 1]), TypeError);
+  assert.throws(() => cropSvgToFraction(svgDoc, [0, 0, 0, 1]), TypeError);
+});

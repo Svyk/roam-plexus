@@ -54,3 +54,11 @@ test("a second load disposes the previous runtime before registering again", asy
   await cleanup();
 });
 
+
+test("version flag is set on load and cleared on unload", async () => {
+  const api = fakeExtensionApi();
+  await extension.onload({ extensionAPI: api, extension: { version: "9.9.9" } });
+  assert.equal(globalThis.__ROAM_PLEXUS_VERSION, "9.9.9");
+  await extension.onunload();
+  assert.equal(globalThis.__ROAM_PLEXUS_VERSION, undefined);
+});
