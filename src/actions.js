@@ -1,12 +1,15 @@
 import { DEFAULT_PAD, geometryKey, isId, parseRegion, serializeRegion } from "./model/region.js";
-import { regionSceneBBox, cropSvgToFraction, normalizeSvgSize } from "./model/scene.js";
+import { regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
+import { embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
+import { orderFrames } from "./model/slides.js";
 import { captionFromElements } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
+import { cropCanvasToBlob } from "./host/cold-render.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
-import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
+import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -26,6 +29,13 @@ function svgSize(svg) {
   if (vb) return { w: Math.round(Number(vb[1])), h: Math.round(Number(vb[2])) };
   return { w: 0, h: 0 };
 }
+
+// A native crop as natural-image fractions, the stored form of a region.
+export function cropToFraction(crop) {
+  return [crop.x / crop.naturalWidth, crop.y / crop.naturalHeight, crop.width / crop.naturalWidth, crop.height / crop.naturalHeight];
+}
+
+const validCrop = (c) => !!c && c.width > 0 && c.height > 0 && c.naturalWidth > 0 && c.naturalHeight > 0;
 
 const isFrame = (el) => el.type === "frame" || el.type === "magicframe";
 const DRAWING_STRING_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
@@ -94,6 +104,7 @@ export function createActions({
   fetchBlob = (url) => globalThis.fetch(url).then((r) => r.blob()),
   createBitmap = globalThis.createImageBitmap?.bind(globalThis),
   startTool = startImageRegionTool,
+  presenter = null,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -183,13 +194,19 @@ export function createActions({
 
   // Hot path: Excalidraw's own SVG export, cropped (rect/poly) and clipped (poly). Null on any failure.
   async function hotSvg(app, region) {
-    const svg = await captureSafe(app, hotIds(region, sceneElements(app)));
+    const elements = sceneElements(app);
+    const imageEl = region.kind === "rect" || region.kind === "poly" ? elements.find((el) => el.id === region.el && !el.isDeleted) : null;
+    // rect/poly fractions are natural-image; map them onto the displayed (cropped) box before cropping the export.
+    const f = region.kind === "rect" ? displayedRect(imageEl, region.f) : null;
+    const p = region.kind === "poly" ? displayedPoly(imageEl, region.p) : null;
+    if ((region.kind === "rect" && !f) || (region.kind === "poly" && !p)) return null;
+    const svg = await captureSafe(app, hotIds(region, elements));
     if (!svg) return null;
     try {
-      if (region.kind === "rect") return cropSvgToFraction(svg, region.f);
+      if (region.kind === "rect") return cropSvgToFraction(svg, f);
       if (region.kind === "poly") {
-        const box = polyBBox(region.p);
-        return clipSvgToPolygon(cropSvgToFraction(svg, box), polyToLocal(region.p, box));
+        const box = polyBBox(p);
+        return clipSvgToPolygon(cropSvgToFraction(svg, box), polyToLocal(p, box));
       }
       return svg;
     } catch (error) {
@@ -197,6 +214,13 @@ export function createActions({
       return null;
     }
   }
+
+  const croppedImage = (app) => {
+    const ids = native.selectedElementIds(app);
+    if (ids.length !== 1) return null;
+    const el = sceneElements(app).find((e) => e.id === ids[0] && !e.isDeleted);
+    return el && el.type === "image" && validCrop(el.crop) ? el : null;
+  };
 
   const badTarget = (drawingUid, ids) => {
     if (isId(drawingUid) && ids.length && ids.every(isId)) return false;
@@ -305,6 +329,7 @@ export function createActions({
       }
       if (!picked || disposed) return null;
       let region;
+      picked = displayedToNatural(element, picked);
       if (Array.isArray(picked)) {
         region = { kind: "rect", drawingUid, el: element.id, f: picked, caption: "Image region" };
       } else {
@@ -314,6 +339,82 @@ export function createActions({
       }
       return finishCreate(region, await hotSvg(app, region));
     }),
+
+    hasCroppedImageSelected() {
+      const editor = native.activeEditor(doc);
+      return !!editor && !!croppedImage(editor.app);
+    },
+
+    hasFrames() {
+      const editor = native.activeEditor(doc);
+      return !!editor && orderFrames(sceneElements(editor.app)).length > 0;
+    },
+
+    regionFromCrop: () => once("crop", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const { app, drawingUid } = editor;
+      const element = croppedImage(app);
+      if (!element) {
+        toaster.show("Select exactly one cropped image", { kind: "error" });
+        return null;
+      }
+      if (element.angle) {
+        toaster.show("Rotated images are not supported", { kind: "error" });
+        return null;
+      }
+      if (badTarget(drawingUid, [element.id])) return null;
+      const region = { kind: "rect", drawingUid, el: element.id, f: cropToFraction(element.crop), caption: "Image crop" };
+      return finishCreate(region, await hotSvg(app, region));
+    }),
+
+    insertEmbedFromClipboard: () => once("embed", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const { app } = editor;
+      const hint = "Copy a block ref first (right-click a bullet \u2192 Copy block ref)";
+      let text = null;
+      try {
+        text = await native.readClipboardText({ clipboard });
+      } catch (error) {
+        console.warn("[plexus] clipboard read failed", error);
+      }
+      const parsed = parseEmbedRef(text);
+      if (!parsed) {
+        toaster.show(hint, { kind: "error" });
+        return null;
+      }
+      let content = null;
+      try {
+        content = await host.pullEmbedContent(parsed.ref);
+      } catch (error) {
+        console.warn("[plexus] embed pull failed", error);
+      }
+      if (!content || disposed) {
+        if (!disposed) toaster.show("Could not find that block or page", { kind: "error" });
+        return null;
+      }
+      const label = embedLabel(content.string || content.title || parsed.ref);
+      const st = app.state || {};
+      const c = viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+      const width = 360;
+      const height = 200;
+      const elements = makeEmbedAnchor({ ref: parsed.ref, label, x: c.x - width / 2, y: c.y - height / 2, width, height, idPrefix: "plexus-embed-" });
+      if (!native.insertElements(app, elements, { select: true })) {
+        toaster.show("Could not embed block", { kind: "error" });
+        return null;
+      }
+      toaster.show(`Embedded ${label}`);
+      return elements[0].id;
+    }),
+
+    presentDrawing: ({ drawingUid } = {}) => once("present", () => presentOnce(drawingUid)),
 
     createPlainImageRegion: (blockUid) => once("plain", async () => {
       const block = isId(blockUid) ? host.pullBlock(blockUid) : null;
@@ -392,6 +493,85 @@ export function createActions({
       toaster.show("Crop cache cleared");
     },
   };
+
+  async function presentOnce(requestedUid) {
+    const editor = native.activeEditor(doc);
+    const uid = requestedUid || editor?.drawingUid;
+    if (!isId(uid) || !presenter) {
+      toaster.show("Could not identify this drawing", { kind: "error" });
+      return null;
+    }
+    const mounted = editor && editor.drawingUid === uid ? editor : null;
+    const drawing = host.drawing(uid);
+    const frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
+    if (!frames.length) {
+      toaster.show("No frames in this drawing", { kind: "error" });
+      return null;
+    }
+    if (!drawing) {
+      toaster.show("Drawing not found", { kind: "error" });
+      return null;
+    }
+    const slides = frames.map((frame) => {
+      const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "Frame" };
+      const gk = geometryKey(region);
+      return {
+        frame,
+        region,
+        name: frame.name || `Frame ${frames.indexOf(frame) + 1}`,
+        url: null,
+        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" }),
+        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "png" }),
+      };
+    });
+    // Whatever is already cached opens immediately; the rest fills in behind it.
+    for (const slide of slides) {
+      const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
+      slide.url = entry?.url ?? null;
+    }
+    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0 });
+    const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
+    if (!missing.length) return uid;
+    const fill = (i, entry) => { if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url }); };
+    try {
+      if (mounted) {
+        for (const [slide, i] of missing) {
+          if (disposed || !handle.isOpen()) break;
+          let svg = await captureSafe(mounted.app, [slide.frame.id]);
+          if (!svg) continue;
+          svg = normalizeSvgSize(svg);
+          await cache.put(slide.svgKey, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
+          fill(i, cache.peek?.(slide.svgKey) || (await cache.get(slide.svgKey)));
+        }
+      } else {
+        const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
+        const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
+        if (!rendered || disposed || !handle.isOpen()) {
+          if (!rendered && !disposed && handle.isOpen()) toaster.show("Could not render this drawing", { kind: "error" });
+          return uid;
+        }
+        for (const [slide, i] of missing) {
+          if (disposed || !handle.isOpen()) break;
+          const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
+          if (box.error) continue;
+          const crop = viewPngCropRect({
+            elements: drawing.elements,
+            appState: drawing.appState,
+            bbox: box.bbox,
+            naturalWidth: rendered.naturalWidth,
+            naturalHeight: rendered.naturalHeight,
+          });
+          if (crop.error) continue;
+          const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
+          await cache.put(slide.pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
+          fill(i, cache.peek?.(slide.pngKey) || (await cache.get(slide.pngKey)));
+        }
+      }
+    } catch (error) {
+      console.warn("[plexus] present fill failed", error);
+    }
+    return uid;
+  }
 
   function findRenderedImage(blockUid, index = 0) {
     for (const el of doc.querySelectorAll('[id^="block-input-"]')) {

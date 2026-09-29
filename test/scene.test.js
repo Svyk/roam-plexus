@@ -297,3 +297,40 @@ test("exportBounds: frameRendering.name false adds no label", () => {
   assert.deepEqual(exportBounds(els, { frameRendering: { name: false } }), commonBounds(els));
   assert.deepEqual(exportBounds([], {}), null);
 });
+
+import { naturalToScene, sceneToNatural } from "../src/model/scene.js";
+
+const cropImg = () => ({
+  id: "ci", type: "image", x: 120, y: 300, width: 240, height: 160, angle: 0,
+  crop: { x: 30, y: 20, width: 60, height: 40, naturalWidth: 120, naturalHeight: 80 },
+});
+
+test("crop mapping: contract fixture numbers", () => {
+  const img = cropImg();
+  nearAll(regionSceneBBox({ kind: "rect", el: "ci", f: [0.25, 0.25, 0.5, 0.5] }, [img]).bbox, [120, 300, 360, 460], 0.5);
+  nearAll(regionSceneBBox({ kind: "rect", el: "ci", f: [0.125, 0.1875, 0.4167, 0.625] }, [img]).bbox, [120, 300, 260, 460], 0.5);
+  assert.equal(regionSceneBBox({ kind: "rect", el: "ci", f: [0, 0, 0.2, 0.5] }, [img]).error, "outside-crop");
+  assert.equal(regionSceneBBox({ kind: "rect", el: "ci", f: [0.8, 0, 0.2, 0.5] }, [img]).error, "outside-crop");
+  const poly = regionSceneBBox({ kind: "poly", el: "ci", p: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75] }, [img]);
+  nearAll(poly.bbox, [120, 300, 360, 460], 0.5);
+  assert.equal(regionSceneBBox({ kind: "poly", el: "ci", p: [0, 0, 0.1, 0, 0.05, 0.1] }, [img]).error, "outside-crop");
+});
+
+test("naturalToScene / sceneToNatural invert each other and are identity without crop", () => {
+  const img = cropImg();
+  nearAll(naturalToScene(img, [0.25, 0.25]), [120, 300]);
+  nearAll(naturalToScene(img, [0.75, 0.75]), [360, 460]);
+  nearAll(sceneToNatural(img, [120, 300]), [0.25, 0.25]);
+  nearAll(sceneToNatural(img, naturalToScene(img, [0.6, 0.4])), [0.6, 0.4]);
+  const plain = { x: 10, y: 20, width: 100, height: 50 };
+  nearAll(naturalToScene(plain, [0.5, 0.5]), [60, 45]);
+  nearAll(sceneToNatural(plain, [60, 45]), [0.5, 0.5]);
+  const nul = { ...plain, crop: null };
+  nearAll(naturalToScene(nul, [0.5, 1]), [60, 70]);
+});
+
+test("crop == null keeps rect/poly identical", () => {
+  const img = { id: "p", type: "image", x: 10, y: 20, width: 200, height: 100, angle: 0, crop: null };
+  nearAll(regionSceneBBox({ kind: "rect", el: "p", f: [0.25, 0.5, 0.5, 0.25] }, [img]).bbox, [60, 70, 160, 95]);
+  nearAll(regionSceneBBox({ kind: "poly", el: "p", p: [0.2, 0.2, 0.6, 0.2, 0.4, 0.8] }, [img]).bbox, [50, 40, 130, 100]);
+});

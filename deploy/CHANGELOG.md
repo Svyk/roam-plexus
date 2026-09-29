@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.3.0]
+
+- Crop-aware regions: regions on cropped images map through the image crop; a region fully outside the crop reports "outside crop".
+- Canvas embeds: Roam blocks and pages embedded on the canvas as live overlays, inserted from the clipboard.
+- Frames as slides: present a drawing's frames in order from the command palette or block menu.
+
 ## [0.2.1]
 
 - Fix: view-PNG bounds now include Excalidraw's frame name labels, so cold crops no longer fail the size guard in drawings with frames. `frame` regions extend up to the label. Crop cache version 3.

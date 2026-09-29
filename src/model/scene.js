@@ -162,6 +162,29 @@ export function exportBounds(elements, appState) {
   return [x1, y1, x2, y2];
 }
 
+function validCrop(c) {
+  return !!c && c.width > 0 && c.height > 0 && c.naturalWidth > 0 && c.naturalHeight > 0;
+}
+
+// Region fractions are relative to the natural (uncropped) image; el.crop is in natural pixels.
+export function naturalToScene(el, [nx, ny]) {
+  const c = el.crop;
+  if (!validCrop(c)) return [el.x + nx * el.width, el.y + ny * el.height];
+  return [
+    el.x + (nx * c.naturalWidth - c.x) * el.width / c.width,
+    el.y + (ny * c.naturalHeight - c.y) * el.height / c.height,
+  ];
+}
+
+export function sceneToNatural(el, [sx, sy]) {
+  const c = el.crop;
+  if (!validCrop(c)) return [(sx - el.x) / el.width, (sy - el.y) / el.height];
+  return [
+    (c.x + (sx - el.x) * c.width / el.width) / c.naturalWidth,
+    (c.y + (sy - el.y) * c.height / el.height) / c.naturalHeight,
+  ];
+}
+
 // area: union of the listed live elements plus region.pad on each side (matches the hot SVG export).
 // rect/poly: the fraction (poly: its bbox fraction) of an unrotated image element.
 // group: union of live members + pad. frame: frame bbox + pad. cframe: frame bbox exactly.
@@ -188,10 +211,18 @@ export function regionSceneBBox(region, elements, appState) {
     if (Number(el.angle) || 0) return { error: "rotated-image" };
     const [rx, ry, rw, rh] = region.kind === "rect" ? region.f : (polyBBox(region.p) ?? [0, 0, 0, 0]);
     if (!(rw > 0) || !(rh > 0)) return { error: "no-elements" };
-    return {
-      bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
-      missing: [],
-    };
+    if (!validCrop(el.crop)) {
+      return {
+        bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
+        missing: [],
+      };
+    }
+    const [ax, ay] = naturalToScene(el, [rx, ry]);
+    const [bx, by] = naturalToScene(el, [rx + rw, ry + rh]);
+    const x1 = Math.max(ax, el.x), y1 = Math.max(ay, el.y);
+    const x2 = Math.min(bx, el.x + el.width), y2 = Math.min(by, el.y + el.height);
+    if (!(x2 > x1) || !(y2 > y1)) return { error: "outside-crop" };
+    return { bbox: [x1, y1, x2, y2], missing: [] };
   }
   if (region.kind === "group") {
     const g = region.groupId ?? region.g;

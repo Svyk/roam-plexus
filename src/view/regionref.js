@@ -1,5 +1,5 @@
 import { parseRegion, geometryKey } from "../model/region.js";
-import { regionSceneBBox, viewPngCropRect } from "../model/scene.js";
+import { naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
 import { imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
 import { fnv1a } from "../model/hash.js";
 import { cropKey } from "../host/cache.js";
@@ -15,6 +15,60 @@ export const PLAIN_SETTLE_MS = 150;
 export const IMAGE_KINDS = new Set(["imgrect", "imgpoly"]);
 export const isImageKind = (kind) => IMAGE_KINDS.has(kind);
 
+const pt = (v) => (Array.isArray(v) ? v : [v.x, v.y]);
+
+// Natural-image fraction rect -> fractions of the displayed element box, clipped to what the crop shows.
+// Null when nothing is visible. With no crop the fraction is returned unchanged.
+export function displayedRect(el, f) {
+  if (!el?.crop) return f;
+  const [ax, ay] = pt(naturalToScene(el, [f[0], f[1]]));
+  const [bx, by] = pt(naturalToScene(el, [f[0] + f[2], f[1] + f[3]]));
+  const x1 = Math.max(el.x, Math.min(ax, bx));
+  const y1 = Math.max(el.y, Math.min(ay, by));
+  const x2 = Math.min(el.x + el.width, Math.max(ax, bx));
+  const y2 = Math.min(el.y + el.height, Math.max(ay, by));
+  if (!(x2 > x1) || !(y2 > y1)) return null;
+  return [(x1 - el.x) / el.width, (y1 - el.y) / el.height, (x2 - x1) / el.width, (y2 - y1) / el.height];
+}
+
+// Natural-image polygon (flat fractions) -> displayed-box fractions, clamped to the box. Null when fully outside.
+export function displayedPoly(el, p) {
+  if (!el?.crop) return p;
+  const out = [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i + 1 < p.length; i += 2) {
+    const [sx, sy] = pt(naturalToScene(el, [p[i], p[i + 1]]));
+    const x = (sx - el.x) / el.width;
+    const y = (sy - el.y) / el.height;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    out.push(x, y);
+  }
+  if (!(maxX > 0) || !(maxY > 0) || !(minX < 1) || !(minY < 1)) return null;
+  return out.map((v) => Math.min(1, Math.max(0, v)));
+}
+
+// Image-tool output (fractions of the displayed box) -> natural-image fractions, the stored form.
+export function displayedToNatural(el, picked) {
+  if (!el?.crop) return picked;
+  const toNat = (fx, fy) => pt(sceneToNatural(el, [el.x + fx * el.width, el.y + fy * el.height]));
+  if (Array.isArray(picked)) {
+    const [x1, y1] = toNat(picked[0], picked[1]);
+    const [x2, y2] = toNat(picked[0] + picked[2], picked[1] + picked[3]);
+    return [x1, y1, x2 - x1, y2 - y1];
+  }
+  const p = [];
+  for (let i = 0; i + 1 < picked.p.length; i += 2) p.push(...toNat(picked.p[i], picked.p[i + 1]));
+  return { p };
+}
+
+export const OUTSIDE_CROP_TEXT = "Region is outside the image's crop";
+
 // Where a region's pixels come from. Drawing kinds read the drawing block; image kinds read a plain block's image.
 export function resolveRegionTarget(host, region) {
   if (isImageKind(region.kind)) {
@@ -26,6 +80,7 @@ export function resolveRegionTarget(host, region) {
   const drawing = host.drawing(region.drawingUid);
   if (!drawing) return { error: "Drawing not found" };
   const sceneBox = regionSceneBBox(region, drawing.elements, drawing.appState);
+  if (sceneBox.error === "outside-crop") return { error: OUTSIDE_CROP_TEXT };
   if (sceneBox.error) return { error: `Region unavailable (${sceneBox.error})` };
   return { drawing, sceneBox, hash: drawing.hash };
 }
@@ -54,7 +109,13 @@ export async function renderRegionCrop({ region, target, cold, doc, api, settleM
     naturalHeight: rendered.naturalHeight,
   });
   if (crop.error) return { error: crop.error };
-  const poly = region.kind === "poly" ? polyToLocal(region.p, polyBBox(region.p)) : undefined;
+  let poly;
+  if (region.kind === "poly") {
+    const el = drawing.elements.find((e) => e.id === region.el);
+    const p = displayedPoly(el, region.p);
+    if (!p) return { error: "outside-crop" };
+    poly = polyToLocal(p, polyBBox(p));
+  }
   const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly });
   return { blob, w: crop.sw, h: crop.sh, settled: rendered.settled !== false };
 }

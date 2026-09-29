@@ -1,4 +1,4 @@
-function baseZIndex(doc, outerEl) {
+export function baseZIndex(doc, outerEl) {
   const view = doc.defaultView;
   for (let el = outerEl; el && el !== doc.body; el = el.parentElement) {
     const z = Number.parseInt(view.getComputedStyle(el).zIndex, 10);
@@ -7,19 +7,20 @@ function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent }) {
   const view = doc.defaultView;
   let bar = null;
   let outer = null;
-  let frameButton = null;
+  let gated = [];
   let refreshTimer = null;
 
   const refresh = () => {
     refreshTimer = null;
-    if (!frameButton) return;
-    let ok = false;
-    try { ok = !!canFrame?.(); } catch { ok = false; }
-    frameButton.disabled = !ok;
+    for (const [b, can] of gated) {
+      let ok = false;
+      try { ok = !!can?.(); } catch { ok = false; }
+      b.disabled = !ok;
+    }
   };
   // Selection changes land after the pointer/key event, so read it on the next tick. Scoped to the editor only.
   const scheduleRefresh = () => {
@@ -58,7 +59,7 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
     bar?.remove();
     bar = null;
     outer = null;
-    frameButton = null;
+    gated = [];
   };
 
   return {
@@ -68,8 +69,11 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       bar = doc.createElement("div");
       bar.className = "plexus-portal plexus-toolbar";
       bar.style.zIndex = String(baseZIndex(doc, outerEl) + 1);
-      frameButton = button("Frame (with margin)", onFrameRegion);
-      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton);
+      const frameButton = button("Frame (with margin)", onFrameRegion);
+      const cropButton = button("Region from crop", onCropRegion);
+      const presentButton = button("Present", onPresent);
+      gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
+      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed), presentButton);
       doc.body.append(bar);
       refresh();
       outerEl.addEventListener?.("pointerup", scheduleRefresh, true);

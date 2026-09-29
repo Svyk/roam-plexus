@@ -8,6 +8,20 @@ const DRAWING_MEMO_CAP = 64;
 const DRAWING_STRING = "{{[[excalidraw]]}}";
 const DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
 const DRAWINGS_CAP = 50;
+const EMBED_CAP = 30;
+const EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
+const EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
+
+function parseEmbedTarget(ref) {
+  const text = String(ref ?? "").trim();
+  let m = /^\(\(([^()]+)\)\)$/.exec(text);
+  if (m) return { uid: m[1] };
+  m = /^\[\[([\s\S]+)\]\]$/.exec(text);
+  if (m) return { title: m[1] };
+  return EMBED_UID.test(text) ? { uid: text } : null;
+}
+
+const byOrder = (a, b) => (a[":block/order"] ?? 0) - (b[":block/order"] ?? 0);
 
 function normalizeProps(props) {
   if (typeof props === "string") {
@@ -179,6 +193,53 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return null;
   }
 
+  // Block: string + children to depth 2. Page: title + first-level children. At most EMBED_CAP child blocks in total.
+  function pullEmbedContent(ref) {
+    const target = parseEmbedTarget(ref);
+    if (!target) return null;
+    let raw;
+    try {
+      raw = api.data.pull(EMBED_PATTERN, target.title != null ? [":node/title", target.title] : [":block/uid", target.uid]);
+    } catch (error) {
+      console.warn("[plexus] embed pull failed", error);
+      return null;
+    }
+    if (!raw || !raw[":block/uid"]) return null;
+    const isPage = raw[":node/title"] != null;
+    let budget = EMBED_CAP;
+    const take = (nodes, depth) => {
+      const out = [];
+      for (const n of [...(nodes || [])].sort(byOrder)) {
+        if (budget <= 0) break;
+        budget--;
+        out.push({ string: n[":block/string"] ?? "", children: depth > 1 ? take(n[":block/children"], depth - 1) : [] });
+      }
+      return out;
+    };
+    return {
+      kind: isPage ? "page" : "block",
+      uid: raw[":block/uid"],
+      title: isPage ? raw[":node/title"] : "",
+      string: isPage ? "" : (raw[":block/string"] ?? ""),
+      children: take(raw[":block/children"], isPage ? 1 : 2),
+    };
+  }
+
+  function watchEmbed(uid, cb) {
+    if (!uid || typeof api.data?.addPullWatch !== "function") return () => {};
+    const ident = `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`;
+    const handler = (before, after) => {
+      try { cb(before, after); } catch (error) { console.warn("[plexus] embed watch callback failed", error); }
+    };
+    api.data.addPullWatch(EMBED_PATTERN, ident, handler);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      try { api.data.removePullWatch(EMBED_PATTERN, ident, handler); } catch (error) { console.warn("[plexus] removePullWatch failed", error); }
+    };
+  }
+
   return {
     graphName() { return api.graph.name; },
     isEncrypted() { return !!api.graph.isEncrypted; },
@@ -192,5 +253,7 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     resolveUidKind,
     openBlock,
     blockUidFromNode,
+    pullEmbedContent,
+    watchEmbed,
   };
 }

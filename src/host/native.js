@@ -143,3 +143,52 @@ export function viewportRectOf(app, bbox) {
   const b = sceneToViewport({ x: bbox[2], y: bbox[3], appState });
   return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y };
 }
+
+// Emitters on the Excalidraw App return their own unsubscribe from .on(). Missing emitters degrade to a no-op.
+export function subscribeViewport(app, cb) {
+  const offs = [];
+  for (const name of ["onScrollChangeEmitter", "onChangeEmitter"]) {
+    const emitter = app?.[name];
+    if (!emitter || typeof emitter.on !== "function") continue;
+    try {
+      const off = emitter.on((...args) => {
+        try { cb(...args); } catch (error) { console.warn("[plexus] viewport listener failed", error); }
+      });
+      if (typeof off === "function") offs.push(off);
+    } catch (error) {
+      console.warn("[plexus] could not subscribe to", name, error);
+    }
+  }
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    for (const off of offs) {
+      try { off(); } catch (error) { console.warn("[plexus] unsubscribe failed", error); }
+    }
+  };
+}
+
+export function insertElements(app, elements, { select = true } = {}) {
+  const list = Array.isArray(elements) ? elements : [];
+  if (!app || typeof app.updateScene !== "function" || !list.length) return false;
+  const existing = app.getSceneElementsIncludingDeleted?.() || [];
+  const update = { elements: [...existing, ...list], captureUpdate: "IMMEDIATELY" };
+  if (select) {
+    const selection = {};
+    for (const el of list) if (!el.containerId) selection[el.id] = true;
+    update.appState = { selectedElementIds: selection, selectedGroupIds: {} };
+  }
+  app.updateScene(update);
+  return true;
+}
+
+export async function readClipboardText({ clipboard = globalThis.navigator?.clipboard } = {}) {
+  if (!clipboard || typeof clipboard.readText !== "function") return null;
+  try {
+    return await clipboard.readText();
+  } catch (error) {
+    console.warn("[plexus] clipboard read failed", error);
+    return null;
+  }
+}

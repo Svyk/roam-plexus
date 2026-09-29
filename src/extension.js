@@ -5,7 +5,9 @@ import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
 import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
-import { createEditorToolbar } from "./view/toolbar.js";
+import { baseZIndex, createEditorToolbar } from "./view/toolbar.js";
+import { createEmbedOverlay } from "./view/embeds.js";
+import { createPresenter } from "./view/present.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
@@ -20,6 +22,8 @@ let activeLifecycle = null;
 const THUMB_WIDTHS = [160, 480];
 const THUMB_WARM_DELAY_MS = 1500;
 const CONTEXT_MENU_LABEL = "Plexus: Region on image";
+const PRESENT_MENU_LABEL = "Plexus: Present frames";
+const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 
 function createEmitter() {
   const listeners = new Map();
@@ -79,8 +83,15 @@ export async function onload({ extensionAPI, extension }) {
         onImageRegion: () => actions.createImageRegion(),
         onFrameRegion: () => actions.createFrameRegion(),
         canFrame: () => actions.isFrameSelected(),
+        onCropRegion: () => actions.regionFromCrop(),
+        canCrop: () => actions.hasCroppedImageSelected(),
+        onEmbed: () => actions.insertEmbedFromClipboard(),
+        onPresent: () => actions.presentDrawing(),
+        canPresent: () => actions.hasFrames(),
       });
       lifecycle.add(() => toolbar.dispose());
+      const presenter = createPresenter({ doc });
+      lifecycle.add(() => presenter.dispose());
       actions = createActions({
         host,
         native,
@@ -93,6 +104,7 @@ export async function onload({ extensionAPI, extension }) {
         api,
         emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
+        presenter,
       });
       lifecycle.add(() => actions.dispose());
 
@@ -106,6 +118,12 @@ export async function onload({ extensionAPI, extension }) {
           callback: (e) => actions.createPlainImageRegion(e?.["block-uid"]).catch((error) => console.warn("[plexus] image region failed", error)),
         });
         lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: CONTEXT_MENU_LABEL }));
+        api.ui.blockContextMenu.addCommand({
+          label: PRESENT_MENU_LABEL,
+          "display-conditional": (e) => DRAWING_START.test(host.pullBlock(e?.["block-uid"])?.string ?? ""),
+          callback: (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }).catch((error) => console.warn("[plexus] present failed", error)),
+        });
+        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: PRESENT_MENU_LABEL }));
       }
 
       const regionref = createRegionRefRenderer({
@@ -164,6 +182,8 @@ export async function onload({ extensionAPI, extension }) {
           if (!app) return;
           mounted = { uid: host.blockUidFromNode(el), disposers: [] };
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
+          const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000 });
+          mounted.disposers.push(() => overlay.dispose());
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
@@ -186,6 +206,7 @@ export async function onload({ extensionAPI, extension }) {
     const commands = [
       ["Plexus: Create region from selection", "createAreaRegion"],
       ["Plexus: Create image region", "createImageRegion"],
+      ["Plexus: Present open drawing", "presentDrawing"],
       ["Plexus: Refresh crops for open drawing", "refreshCropsForOpenDrawing"],
       ["Plexus: Clear crop cache", "clearCache"],
     ];

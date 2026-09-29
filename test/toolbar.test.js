@@ -99,3 +99,23 @@ test("Frame button enables on a single frame after a pointerup refresh, fires on
   tb.hide();
   assert.deepEqual(Object.keys(listeners), []);
 });
+
+test("toolbar has six buttons in contract order with independent enable rules", async () => {
+  const buttons = [];
+  const { doc, bar } = fakeDoc(36);
+  const create = doc.createElement;
+  doc.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === "button") { el.disabled = false; buttons.push(el); }
+    return el;
+  };
+  const state = { frame: false, crop: true, present: false };
+  const tb = createEditorToolbar({
+    doc, onAreaRegion() {}, onImageRegion() {}, onFrameRegion() {}, onCropRegion() {}, onEmbed() {}, onPresent() {},
+    canFrame: () => state.frame, canCrop: () => state.crop, canPresent: () => state.present,
+  });
+  tb.show(outerEl);
+  assert.deepEqual(bar.children.map((b) => b.textContent), ["Region", "Image region", "Frame (with margin)", "Region from crop", "Embed block", "Present"]);
+  assert.deepEqual(bar.children.map((b) => b.disabled), [false, false, true, false, false, true]);
+  tb.hide();
+});
