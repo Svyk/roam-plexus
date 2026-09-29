@@ -557,3 +557,45 @@ test("keyboard leave does not overwrite a selection the user made during the 300
   assert.deepEqual(t.app.state.selectedElementIds, { e2: true });
   await t.overlay.dispose();
 });
+
+function selectionSetup(t, entries) {
+  const state = { entries };
+  const events = [];
+  t.api.ui.multiselect = { getSelected: async () => state.entries };
+  t.doc.dispatchEvent = (ev) => { events.push(ev); state.entries = []; };
+  t.doc.defaultView.KeyboardEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
+  return { state, events };
+}
+
+test("leave clears Roam block selection that belongs to the mount with one synthetic Escape", async () => {
+  const t = editSetup();
+  await entered(t);
+  const sel = selectionSetup(t, [{ "block-uid": "abcdefghi", "window-id": "render-block-path-abcdefghi-uuid1" }, { "block-uid": "c1", "window-id": "render-block-path-abcdefghi-uuid1" }]);
+  await t.overlay.leave("keyboard");
+  assert.equal(sel.events.length, 1);
+  assert.equal(sel.events[0].type, "keydown");
+  assert.equal(sel.events[0].key, "Escape");
+  assert.equal(sel.events[0].keyCode, 27);
+  assert.equal(sel.events[0].bubbles, true);
+  assert.ok(t.log.includes("sleep100"));
+  await t.overlay.dispose();
+});
+
+test("leave never dispatches Escape for another window's selection", async () => {
+  const t = editSetup();
+  await entered(t);
+  const sel = selectionSetup(t, [{ "block-uid": "zzzzzzzzz", "window-id": "main-window" }]);
+  await t.overlay.leave("keyboard");
+  assert.equal(sel.events.length, 0);
+  await t.overlay.dispose();
+});
+
+test("a missing multiselect API leaves without throwing or dispatching", async () => {
+  const t = editSetup();
+  await entered(t);
+  let dispatched = 0;
+  t.doc.dispatchEvent = () => { dispatched += 1; };
+  await t.overlay.leave("keyboard");
+  assert.equal(dispatched, 0);
+  await t.overlay.dispose();
+});

@@ -10,6 +10,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Automation API v2: scene registry, `whenOpen`, `add`/`update`/`remove`/`exportSvg`.
 - Editable embeds: edit a drawing in place from an embed (Edit embed button, F2).
 - Editable embeds: Roam autocomplete navigation keys (Esc, arrows, Enter, Tab, ...) now reach Roam while a menu is open, so `[[` menus can be closed and navigated.
+- Fix: leaving an editable embed clears the Roam block selection left on the edited blocks, so a later Delete/Backspace cannot remove them.
 
 ## [0.4.0]
 

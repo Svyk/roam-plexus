@@ -5,6 +5,7 @@ import { subscribeViewport } from "../host/native.js";
 export const EMBED_BLOCK_CAP = 30;
 const CHILD_DEPTH = 2;
 const LEAVE_WAIT_MS = 300;
+const SELECTION_RECHECK_MS = 100;
 const QUIET_CAP_MS = 900;
 const FOCUS_WAIT_MS = 300;
 const REFOCUS_WINDOW_MS = 1200;
@@ -562,6 +563,36 @@ export function createEmbedOverlay({
     return s.leavePromise;
   }
 
+  async function ownsSelection(s) {
+    try {
+      const get = api?.ui?.multiselect?.getSelected;
+      if (typeof get !== "function") return false;
+      const list = await get.call(api.ui.multiselect);
+      const prefix = `render-block-path-${s.uid}`;
+      return Array.isArray(list) && list.some((x) => String(x?.["window-id"] ?? "").startsWith(prefix));
+    } catch (error) {
+      console.warn("[plexus] selection read failed", error);
+      return false;
+    }
+  }
+
+  async function clearMountSelection(s) {
+    if (!(await ownsSelection(s))) return;
+    dispatchEscape();
+    await sleep(SELECTION_RECHECK_MS);
+    if (await ownsSelection(s)) dispatchEscape();
+  }
+
+  function dispatchEscape() {
+    try {
+      const View = doc.defaultView;
+      const Ctor = View?.KeyboardEvent ?? globalThis.KeyboardEvent;
+      doc.dispatchEvent(new Ctor("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true }));
+    } catch (error) {
+      console.warn("[plexus] selection clear failed", error);
+    }
+  }
+
   async function runLeave(s, trigger) {
     const { portal, inner } = s;
     // 1. no more pointer traffic, no more window/document capture listeners
@@ -598,6 +629,8 @@ export function createEmbedOverlay({
       void load(portal);
       try { sync(); } catch (error) { console.warn("[plexus] embed reposition failed", error); }
     }
+    // 6b. Roam's block selection can outlive the mount; its Delete would remove the edited blocks
+    await clearMountSelection(s);
     // 7. keyboard leave: give the selection back if the anchors are all still there
     if (keyboard && !disposed && s.prev) {
       const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));

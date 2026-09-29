@@ -2057,6 +2057,7 @@ function embedAnchors(elements) {
 var EMBED_BLOCK_CAP = 30;
 var CHILD_DEPTH = 2;
 var LEAVE_WAIT_MS = 300;
+var SELECTION_RECHECK_MS = 100;
 var QUIET_CAP_MS = 900;
 var FOCUS_WAIT_MS = 300;
 var REFOCUS_WINDOW_MS = 1200;
@@ -2627,6 +2628,33 @@ function createEmbedOverlay({
     s.leavePromise = runLeave(s, trigger);
     return s.leavePromise;
   }
+  async function ownsSelection(s) {
+    try {
+      const get = api?.ui?.multiselect?.getSelected;
+      if (typeof get !== "function") return false;
+      const list = await get.call(api.ui.multiselect);
+      const prefix = `render-block-path-${s.uid}`;
+      return Array.isArray(list) && list.some((x) => String(x?.["window-id"] ?? "").startsWith(prefix));
+    } catch (error) {
+      console.warn("[plexus] selection read failed", error);
+      return false;
+    }
+  }
+  async function clearMountSelection(s) {
+    if (!await ownsSelection(s)) return;
+    dispatchEscape();
+    await sleep2(SELECTION_RECHECK_MS);
+    if (await ownsSelection(s)) dispatchEscape();
+  }
+  function dispatchEscape() {
+    try {
+      const View = doc.defaultView;
+      const Ctor = View?.KeyboardEvent ?? globalThis.KeyboardEvent;
+      doc.dispatchEvent(new Ctor("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true }));
+    } catch (error) {
+      console.warn("[plexus] selection clear failed", error);
+    }
+  }
   async function runLeave(s, trigger) {
     const { portal, inner } = s;
     for (const off of s.globalOffs.splice(0)) off();
@@ -2677,6 +2705,7 @@ function createEmbedOverlay({
         console.warn("[plexus] embed reposition failed", error);
       }
     }
+    await clearMountSelection(s);
     if (keyboard && !disposed && s.prev) {
       const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
       const now = app.state || {};
