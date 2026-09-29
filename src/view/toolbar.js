@@ -81,6 +81,7 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       place();
       view?.addEventListener("resize", place);
     },
+    refresh: scheduleRefresh,
     hide,
     dispose: hide,
   };

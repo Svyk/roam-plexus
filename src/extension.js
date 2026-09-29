@@ -181,6 +181,11 @@ export async function onload({ extensionAPI, extension }) {
           const app = native.findApp(el);
           if (!app) return;
           mounted = { uid: host.blockUidFromNode(el), disposers: [] };
+          try {
+            const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
+            if (typeof off === "function") mounted.disposers.push(off);
+          } catch (error) { console.warn("[plexus] toolbar refresh subscribe failed", error); }
+          toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000 });
           mounted.disposers.push(() => overlay.dispose());

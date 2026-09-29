@@ -51,3 +51,14 @@ test("embedAnchors finds live anchors only", () => {
   assert.deepEqual(embedAnchors([a, { ...b, isDeleted: true }, plain, { id: "i", type: "image" }]).map((e) => e.id), [a.id]);
   assert.deepEqual(embedAnchors(null), []);
 });
+
+test("makeEmbedAnchor wraps a long label inside the anchor width", () => {
+  const label = "word ".repeat(16).trim();
+  const [rect, text] = makeEmbedAnchor({ ref: "((abc123XYZ))", label, width: 360, height: 200 });
+  const lines = text.text.split("\n");
+  assert.ok(lines.length > 1);
+  assert.ok(Math.max(...lines.map((l) => l.length)) * 16 * 0.6 <= 360 - 16 + 1);
+  assert.equal(text.originalText, embedLabel(label));
+  assert.equal(text.height, Math.ceil(lines.length * 16 * 1.25));
+  assert.ok(text.height < rect.height);
+});

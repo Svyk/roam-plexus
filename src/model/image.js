@@ -41,6 +41,45 @@ export function polyBBox(p) {
   return normalizeFrac([x1, y1, x2 - x1, y2 - y1]);
 }
 
+// Sutherland-Hodgman clip of a flat polygon (unclamped fractions) to the unit box.
+// Returns the clipped flat polygon, or null when fewer than 3 vertices or ~zero area remain.
+export function clipPolyToUnit(flat) {
+  let pts = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
+  const edges = [
+    [(q) => q[0], 0, true],
+    [(q) => q[0], 1, false],
+    [(q) => q[1], 0, true],
+    [(q) => q[1], 1, false],
+  ];
+  for (const [get, lim, keepAbove] of edges) {
+    const inside = (q) => (keepAbove ? get(q) >= lim : get(q) <= lim);
+    const next = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      const ia = inside(a);
+      const ib = inside(b);
+      if (ia !== ib) {
+        const t = (lim - get(a)) / (get(b) - get(a));
+        next.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+      }
+      if (ib) next.push(b);
+    }
+    pts = next;
+    if (!pts.length) return null;
+  }
+  if (pts.length < 3) return null;
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  if (Math.abs(area) / 2 < 1e-9) return null;
+  return pts.flat();
+}
+
 function rdp(pts, eps) {
   if (pts.length < 3) return pts;
   const [ax, ay] = pts[0];

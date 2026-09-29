@@ -10,6 +10,7 @@ export function createPresenter({ doc }) {
     if (!state) return;
     current = null;
     state.dialog.removeEventListener?.("keydown", state.onKey);
+    state.dialog.removeEventListener?.("keyup", state.onKeyUp);
     state.dialog.removeEventListener?.("click", state.onClick);
     state.dialog.removeEventListener?.("cancel", state.onCancel);
     state.dialog.removeEventListener?.("close", state.onClosed);
@@ -52,6 +53,7 @@ export function createPresenter({ doc }) {
           img.hidden = false;
           wait.hidden = true;
         } else {
+          wait.textContent = slide.error ? "Could not render this slide" : "Rendering...";
           img.removeAttribute?.("src");
           img.hidden = true;
           wait.hidden = false;
@@ -72,11 +74,11 @@ export function createPresenter({ doc }) {
         else if (e.key === "Home") go(0);
         else if (e.key === "End") go(list.length - 1);
         else handled = false;
-        if (handled) {
-          e.preventDefault?.();
-          e.stopPropagation?.();
-        }
+        if (handled) e.preventDefault?.();
+        // Nothing typed in the dialog may reach Roam or Excalidraw document handlers; Esc/Tab stay native.
+        if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation?.();
       };
+      const onKeyUp = (e) => e.stopPropagation?.();
       const onClick = (e) => {
         const width = dialog.getBoundingClientRect?.().width || doc.defaultView?.innerWidth || 0;
         const left = dialog.getBoundingClientRect?.().left || 0;
@@ -89,10 +91,11 @@ export function createPresenter({ doc }) {
       };
       const onClosed = () => close();
       dialog.addEventListener("keydown", onKey);
+      dialog.addEventListener("keyup", onKeyUp);
       dialog.addEventListener("click", onClick);
       dialog.addEventListener("cancel", onCancel);
       dialog.addEventListener("close", onClosed);
-      current = { dialog, preload, onKey, onClick, onCancel, onClosed, onClose };
+      current = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose };
       doc.body.append(dialog);
       show();
       dialog.showModal();

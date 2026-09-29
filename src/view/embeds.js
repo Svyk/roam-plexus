@@ -1,4 +1,4 @@
-import { embedAnchors } from "../model/embeds.js";
+import { embedAnchors, parseEmbedRef } from "../model/embeds.js";
 import { sceneToViewport } from "../model/scene.js";
 import { subscribeViewport } from "../host/native.js";
 
@@ -147,7 +147,8 @@ export function createEmbedOverlay({
     }
     if (disposed || portal.dead || gen !== portal.gen) return;
     paint(portal, content);
-    if (content?.uid) watchUid(portal, content.uid);
+    const uid = content?.uid ?? parseEmbedRef(portal.ref)?.uid;
+    if (uid) watchUid(portal, uid);
   };
 
   const create = (el) => {
@@ -178,7 +179,12 @@ export function createEmbedOverlay({
     portal.root.remove();
   };
 
+  let lastNonce;
   const sync = () => {
+    // Nothing mounted and the scene has not changed since the last scan: a pure pan/zoom needs no work.
+    const nonce = app.scene?.getSceneNonce?.();
+    if (!portals.size && nonce !== undefined && nonce === lastNonce) return;
+    lastNonce = nonce;
     const anchors = embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []);
     const ids = new Set(anchors.map((el) => el.id));
     for (const id of [...portals.keys()]) if (!ids.has(id)) remove(id);

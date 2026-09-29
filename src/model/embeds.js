@@ -43,14 +43,36 @@ function base(id, type, x, y, width, height) {
   };
 }
 
+function wrapLines(text, perLine) {
+  const lines = [];
+  let cur = "";
+  for (const word of text.split(" ")) {
+    let w = word;
+    while (w.length > perLine) {
+      if (cur) { lines.push(cur); cur = ""; }
+      lines.push(w.slice(0, perLine));
+      w = w.slice(perLine);
+    }
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= perLine) cur += ` ${w}`;
+    else { lines.push(cur); cur = w; }
+  }
+  if (cur || !lines.length) lines.push(cur);
+  return lines;
+}
+
 export function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
   const rectId = rid(idPrefix);
   const textId = rid(idPrefix);
   const text = embedLabel(label) || embedLabel(ref);
   const fontSize = 16;
   const lineHeight = 1.25;
-  const tw = Math.min(width - 16, Math.max(10, Math.ceil(text.length * fontSize * 0.6)));
-  const th = Math.ceil(fontSize * lineHeight);
+  const perLine = Math.max(4, Math.floor((width - 16) / (fontSize * 0.6)));
+  const lines = wrapLines(text, perLine);
+  const wrapped = lines.join("\n");
+  const longest = Math.max(1, ...lines.map((l) => l.length));
+  const tw = Math.min(width - 16, Math.max(10, Math.ceil(longest * fontSize * 0.6)));
+  const th = Math.ceil(lines.length * fontSize * lineHeight);
   const rect = {
     ...base(rectId, "rectangle", x, y, width, height),
     strokeStyle: "dashed",
@@ -61,7 +83,7 @@ export function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, he
   };
   const t = {
     ...base(textId, "text", x + (width - tw) / 2, y + (height - th) / 2, tw, th),
-    text, originalText: text, fontSize, fontFamily: 1, textAlign: "center", verticalAlign: "middle",
+    text: wrapped, originalText: text, fontSize, fontFamily: 1, textAlign: "center", verticalAlign: "middle",
     containerId: rectId, autoResize: true, lineHeight,
   };
   return [rect, t];

@@ -232,20 +232,20 @@ function parseRegion(blockString) {
   const kind = args.get("k") ?? "";
   const drawingUid = args.get("d") ?? "";
   const region = { kind, drawingUid, caption, extra, supported: false };
-  const fail = (error) => {
+  const fail2 = (error) => {
     region.error = error;
     return region;
   };
-  if (bad.length) return fail(`bad token ${bad[0]}`);
-  if (!kind) return fail("missing k");
+  if (bad.length) return fail2(`bad token ${bad[0]}`);
+  if (!kind) return fail2("missing k");
   if (RESERVED_KINDS.includes(kind)) {
     for (const key of ["f", "el", "pad", "ids"]) if (args.has(key)) extra.unshift([key, args.get(key)]);
-    if (drawingUid && !ID_RE.test(drawingUid)) return fail("bad d");
+    if (drawingUid && !ID_RE.test(drawingUid)) return fail2("bad d");
     return region;
   }
-  if (!SUPPORTED_KINDS.includes(kind)) return fail(`unknown kind ${kind}`);
-  if (!drawingUid) return fail("missing d");
-  if (!ID_RE.test(drawingUid)) return fail("bad d");
+  if (!SUPPORTED_KINDS.includes(kind)) return fail2(`unknown kind ${kind}`);
+  if (!drawingUid) return fail2("missing d");
+  if (!ID_RE.test(drawingUid)) return fail2("bad d");
   const parsePad = () => {
     if (!args.has("pad")) return DEFAULT_PAD;
     const raw = args.get("pad");
@@ -284,11 +284,11 @@ function parseRegion(blockString) {
   };
   let err = null;
   if (kind === "area") {
-    if (!args.has("ids")) return fail("missing ids");
+    if (!args.has("ids")) return fail2("missing ids");
     const ids = args.get("ids").split(",");
-    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail("bad ids");
+    if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail2("bad ids");
     const pad = parsePad();
-    if (pad === null) return fail("bad pad");
+    if (pad === null) return fail2("bad pad");
     region.ids = ids;
     region.pad = pad;
   } else if (kind === "rect") {
@@ -319,7 +319,7 @@ function parseRegion(blockString) {
   } else if (kind === "imgpoly") {
     err = parseIndex() || parsePoly();
   }
-  if (err) return fail(err);
+  if (err) return fail2(err);
   region.supported = true;
   return region;
 }
@@ -408,8 +408,8 @@ var encoder = new TextEncoder();
 function fnv1a(str) {
   const bytes = encoder.encode(String(str ?? ""));
   let h = 2166136261;
-  for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
+  for (let i2 = 0; i2 < bytes.length; i2++) {
+    h ^= bytes[i2];
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h.toString(16).padStart(8, "0");
@@ -440,13 +440,49 @@ function polyBBox(p) {
   const poly = normalizePoly(p);
   if (!poly) return null;
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-  for (let i = 0; i < poly.length; i += 2) {
-    x1 = Math.min(x1, poly[i]);
-    x2 = Math.max(x2, poly[i]);
-    y1 = Math.min(y1, poly[i + 1]);
-    y2 = Math.max(y2, poly[i + 1]);
+  for (let i2 = 0; i2 < poly.length; i2 += 2) {
+    x1 = Math.min(x1, poly[i2]);
+    x2 = Math.max(x2, poly[i2]);
+    y1 = Math.min(y1, poly[i2 + 1]);
+    y2 = Math.max(y2, poly[i2 + 1]);
   }
   return normalizeFrac([x1, y1, x2 - x1, y2 - y1]);
+}
+function clipPolyToUnit(flat) {
+  let pts = [];
+  for (let i2 = 0; i2 + 1 < flat.length; i2 += 2) pts.push([flat[i2], flat[i2 + 1]]);
+  const edges = [
+    [(q) => q[0], 0, true],
+    [(q) => q[0], 1, false],
+    [(q) => q[1], 0, true],
+    [(q) => q[1], 1, false]
+  ];
+  for (const [get, lim, keepAbove] of edges) {
+    const inside = (q) => keepAbove ? get(q) >= lim : get(q) <= lim;
+    const next = [];
+    for (let i2 = 0; i2 < pts.length; i2++) {
+      const a = pts[i2];
+      const b = pts[(i2 + 1) % pts.length];
+      const ia = inside(a);
+      const ib = inside(b);
+      if (ia !== ib) {
+        const t = (lim - get(a)) / (get(b) - get(a));
+        next.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+      }
+      if (ib) next.push(b);
+    }
+    pts = next;
+    if (!pts.length) return null;
+  }
+  if (pts.length < 3) return null;
+  let area = 0;
+  for (let i2 = 0; i2 < pts.length; i2++) {
+    const a = pts[i2];
+    const b = pts[(i2 + 1) % pts.length];
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  if (Math.abs(area) / 2 < 1e-9) return null;
+  return pts.flat();
 }
 function rdp(pts, eps) {
   if (pts.length < 3) return pts;
@@ -455,11 +491,11 @@ function rdp(pts, eps) {
   const dx = bx - ax, dy = by - ay;
   const len = Math.hypot(dx, dy);
   let idx = -1, max = -1;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const d = len > 0 ? Math.abs(dy * pts[i][0] - dx * pts[i][1] + bx * ay - by * ax) / len : Math.hypot(pts[i][0] - ax, pts[i][1] - ay);
+  for (let i2 = 1; i2 < pts.length - 1; i2++) {
+    const d = len > 0 ? Math.abs(dy * pts[i2][0] - dx * pts[i2][1] + bx * ay - by * ax) / len : Math.hypot(pts[i2][0] - ax, pts[i2][1] - ay);
     if (d > max) {
       max = d;
-      idx = i;
+      idx = i2;
     }
   }
   if (max <= eps) return [pts[0], pts[pts.length - 1]];
@@ -469,14 +505,14 @@ function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
   const poly = normalizePoly(p);
   if (!poly) return null;
   const pts = [];
-  for (let i = 0; i < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
+  for (let i2 = 0; i2 < poly.length; i2 += 2) pts.push([poly[i2], poly[i2 + 1]]);
   if (pts.length <= 3) return poly;
   let far = 1, best = -1;
-  for (let i = 1; i < pts.length; i++) {
-    const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
+  for (let i2 = 1; i2 < pts.length; i2++) {
+    const d = Math.hypot(pts[i2][0] - pts[0][0], pts[i2][1] - pts[0][1]);
     if (d > best) {
       best = d;
-      far = i;
+      far = i2;
     }
   }
   const chainA = pts.slice(0, far + 1);
@@ -494,7 +530,7 @@ function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
   }
   if (result.length > maxPoints) {
     const step = result.length / maxPoints;
-    result = Array.from({ length: maxPoints }, (_, i) => result[Math.floor(i * step)]);
+    result = Array.from({ length: maxPoints }, (_, i2) => result[Math.floor(i2 * step)]);
   }
   return result.flat().map((n) => Math.round(n * 1e3) / 1e3);
 }
@@ -503,8 +539,8 @@ function polyToLocal(p, bboxFrac) {
   const bb = normalizeFrac(bboxFrac);
   if (!poly || !bb) return null;
   const out = [];
-  for (let i = 0; i < poly.length; i += 2) {
-    out.push(Math.round((poly[i] - bb[0]) / bb[2] * 1e6) / 1e6, Math.round((poly[i + 1] - bb[1]) / bb[3] * 1e6) / 1e6);
+  for (let i2 = 0; i2 < poly.length; i2 += 2) {
+    out.push(Math.round((poly[i2] - bb[0]) / bb[2] * 1e6) / 1e6, Math.round((poly[i2 + 1] - bb[1]) / bb[3] * 1e6) / 1e6);
   }
   return out;
 }
@@ -525,7 +561,7 @@ function clipSvgToPolygon(svgString, localPoints) {
   }
   if (!(w > 0) || !(h > 0)) throw new TypeError("clipSvgToPolygon: no size");
   const coords = [];
-  for (let i = 0; i < pts.length; i += 2) coords.push(`${num(minX + pts[i] * w)},${num(minY + pts[i + 1] * h)}`);
+  for (let i2 = 0; i2 < pts.length; i2 += 2) coords.push(`${num(minX + pts[i2] * w)},${num(minY + pts[i2 + 1] * h)}`);
   const attr = coords.join(" ");
   const id = `plexus-clip-${fnv1a(attr)}`;
   const head = svgString.slice(0, open.index + tag.length);
@@ -595,25 +631,25 @@ function curveToBezier(pointsIn) {
   const len = pointsIn.length;
   if (len === 3) return [pointsIn[0], pointsIn[1], pointsIn[2], pointsIn[2]];
   const pts = [pointsIn[0], pointsIn[0]];
-  for (let i = 1; i < len; i++) {
-    pts.push(pointsIn[i]);
-    if (i === len - 1) pts.push(pointsIn[i]);
+  for (let i2 = 1; i2 < len; i2++) {
+    pts.push(pointsIn[i2]);
+    if (i2 === len - 1) pts.push(pointsIn[i2]);
   }
   const s = 1;
   const b = [[pts[0][0], pts[0][1]]];
-  for (let i = 1; i + 2 < pts.length; i++) {
-    const p = pts[i];
-    b.push([p[0] + (s * pts[i + 1][0] - s * pts[i - 1][0]) / 6, p[1] + (s * pts[i + 1][1] - s * pts[i - 1][1]) / 6]);
-    b.push([pts[i + 1][0] + (s * pts[i][0] - s * pts[i + 2][0]) / 6, pts[i + 1][1] + (s * pts[i][1] - s * pts[i + 2][1]) / 6]);
-    b.push([pts[i + 1][0], pts[i + 1][1]]);
+  for (let i2 = 1; i2 + 2 < pts.length; i2++) {
+    const p = pts[i2];
+    b.push([p[0] + (s * pts[i2 + 1][0] - s * pts[i2 - 1][0]) / 6, p[1] + (s * pts[i2 + 1][1] - s * pts[i2 - 1][1]) / 6]);
+    b.push([pts[i2 + 1][0] + (s * pts[i2][0] - s * pts[i2 + 2][0]) / 6, pts[i2 + 1][1] + (s * pts[i2][1] - s * pts[i2 + 2][1]) / 6]);
+    b.push([pts[i2 + 1][0], pts[i2 + 1][1]]);
   }
   return b;
 }
 function sampleCurve(points) {
   const b = curveToBezier(points);
   const out = [];
-  for (let i = 0; i + 3 < b.length; i += 3) {
-    const [p0, p1, p2, p3] = [b[i], b[i + 1], b[i + 2], b[i + 3]];
+  for (let i2 = 0; i2 + 3 < b.length; i2 += 3) {
+    const [p0, p1, p2, p3] = [b[i2], b[i2 + 1], b[i2 + 2], b[i2 + 3]];
     for (let k = 0; k <= CURVE_SAMPLES; k++) {
       const t = k / CURVE_SAMPLES;
       const u = 1 - t;
@@ -732,6 +768,23 @@ function regionSceneBBox(region, elements, appState) {
         bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
         missing: []
       };
+    }
+    if (region.kind === "poly") {
+      const disp = [];
+      for (let i2 = 0; i2 + 1 < region.p.length; i2 += 2) {
+        const [sx, sy] = naturalToScene(el, [region.p[i2], region.p[i2 + 1]]);
+        disp.push((sx - el.x) / el.width, (sy - el.y) / el.height);
+      }
+      const clipped = clipPolyToUnit(disp);
+      if (!clipped) return { error: "outside-crop" };
+      let cx1 = Infinity, cy1 = Infinity, cx2 = -Infinity, cy2 = -Infinity;
+      for (let i2 = 0; i2 < clipped.length; i2 += 2) {
+        cx1 = Math.min(cx1, clipped[i2]);
+        cx2 = Math.max(cx2, clipped[i2]);
+        cy1 = Math.min(cy1, clipped[i2 + 1]);
+        cy2 = Math.max(cy2, clipped[i2 + 1]);
+      }
+      return { bbox: [el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height], missing: [] };
     }
     const [ax, ay] = naturalToScene(el, [rx, ry]);
     const [bx, by] = naturalToScene(el, [rx + rw, ry + rh]);
@@ -1125,7 +1178,7 @@ function findApp(excalidrawEl) {
   const key = Object.keys(excalidrawEl).find((k) => k.startsWith("__reactFiber$"));
   if (!key) return null;
   let fiber = excalidrawEl[key];
-  for (let i = 0; fiber && i <= 6; i++) {
+  for (let i2 = 0; fiber && i2 <= 6; i2++) {
     const node = fiber.stateNode;
     if (node && typeof node.updateScene === "function" && typeof node.getSceneElementsIncludingDeleted === "function" && node.actionManager && typeof node.actionManager === "object") return node;
     fiber = fiber.return;
@@ -1319,12 +1372,7 @@ function insertElements(app, elements, { select = true } = {}) {
 }
 async function readClipboardText({ clipboard = globalThis.navigator?.clipboard } = {}) {
   if (!clipboard || typeof clipboard.readText !== "function") return null;
-  try {
-    return await clipboard.readText();
-  } catch (error) {
-    console.warn("[plexus] clipboard read failed", error);
-    return null;
-  }
+  return clipboard.readText();
 }
 
 // src/host/cache.js
@@ -1558,7 +1606,7 @@ function polyPoints(poly) {
   let pts;
   if (typeof poly[0] === "number") {
     pts = [];
-    for (let i = 0; i + 1 < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
+    for (let i2 = 0; i2 + 1 < poly.length; i2 += 2) pts.push([poly[i2], poly[i2 + 1]]);
   } else pts = poly.map((p) => Array.isArray(p) ? [p[0], p[1]] : [p?.x, p?.y]);
   if (pts.length < 3 || pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
   return pts;
@@ -1571,7 +1619,7 @@ function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document }
   const pts = polyPoints(poly);
   if (pts) {
     ctx.beginPath();
-    pts.forEach(([x, y], i) => i ? ctx.lineTo(x * sw, y * sh) : ctx.moveTo(x * sw, y * sh));
+    pts.forEach(([x, y], i2) => i2 ? ctx.lineTo(x * sw, y * sh) : ctx.moveTo(x * sw, y * sh));
     ctx.closePath();
     ctx.clip();
   }
@@ -1853,6 +1901,7 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
       place();
       view2?.addEventListener("resize", place);
     },
+    refresh: scheduleRefresh,
     hide,
     dispose: hide
   };
@@ -1908,14 +1957,41 @@ function base(id, type, x, y, width, height) {
     index: null
   };
 }
+function wrapLines(text, perLine) {
+  const lines = [];
+  let cur = "";
+  for (const word of text.split(" ")) {
+    let w = word;
+    while (w.length > perLine) {
+      if (cur) {
+        lines.push(cur);
+        cur = "";
+      }
+      lines.push(w.slice(0, perLine));
+      w = w.slice(perLine);
+    }
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= perLine) cur += ` ${w}`;
+    else {
+      lines.push(cur);
+      cur = w;
+    }
+  }
+  if (cur || !lines.length) lines.push(cur);
+  return lines;
+}
 function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
   const rectId = rid(idPrefix);
   const textId = rid(idPrefix);
   const text = embedLabel(label) || embedLabel(ref);
   const fontSize = 16;
   const lineHeight = 1.25;
-  const tw = Math.min(width - 16, Math.max(10, Math.ceil(text.length * fontSize * 0.6)));
-  const th = Math.ceil(fontSize * lineHeight);
+  const perLine = Math.max(4, Math.floor((width - 16) / (fontSize * 0.6)));
+  const lines = wrapLines(text, perLine);
+  const wrapped = lines.join("\n");
+  const longest = Math.max(1, ...lines.map((l) => l.length));
+  const tw = Math.min(width - 16, Math.max(10, Math.ceil(longest * fontSize * 0.6)));
+  const th = Math.ceil(lines.length * fontSize * lineHeight);
   const rect = {
     ...base(rectId, "rectangle", x, y, width, height),
     strokeStyle: "dashed",
@@ -1926,7 +2002,7 @@ function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 
   };
   const t = {
     ...base(textId, "text", x + (width - tw) / 2, y + (height - th) / 2, tw, th),
-    text,
+    text: wrapped,
     originalText: text,
     fontSize,
     fontFamily: 1,
@@ -2084,7 +2160,8 @@ function createEmbedOverlay({
     }
     if (disposed || portal.dead || gen !== portal.gen) return;
     paint(portal, content);
-    if (content?.uid) watchUid(portal, content.uid);
+    const uid = content?.uid ?? parseEmbedRef(portal.ref)?.uid;
+    if (uid) watchUid(portal, uid);
   };
   const create = (el) => {
     const root = doc.createElement("div");
@@ -2112,7 +2189,11 @@ function createEmbedOverlay({
     unmountHosts(portal);
     portal.root.remove();
   };
+  let lastNonce;
   const sync = () => {
+    const nonce = app.scene?.getSceneNonce?.();
+    if (!portals.size && nonce !== void 0 && nonce === lastNonce) return;
+    lastNonce = nonce;
     const anchors = embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []);
     const ids = new Set(anchors.map((el) => el.id));
     for (const id of [...portals.keys()]) if (!ids.has(id)) remove(id);
@@ -2191,6 +2272,7 @@ function createPresenter({ doc }) {
     if (!state) return;
     current = null;
     state.dialog.removeEventListener?.("keydown", state.onKey);
+    state.dialog.removeEventListener?.("keyup", state.onKeyUp);
     state.dialog.removeEventListener?.("click", state.onClick);
     state.dialog.removeEventListener?.("cancel", state.onCancel);
     state.dialog.removeEventListener?.("close", state.onClosed);
@@ -2239,6 +2321,7 @@ function createPresenter({ doc }) {
           img.hidden = false;
           wait.hidden = true;
         } else {
+          wait.textContent = slide.error ? "Could not render this slide" : "Rendering...";
           img.removeAttribute?.("src");
           img.hidden = true;
           wait.hidden = false;
@@ -2259,11 +2342,10 @@ function createPresenter({ doc }) {
         else if (e.key === "Home") go(0);
         else if (e.key === "End") go(list.length - 1);
         else handled = false;
-        if (handled) {
-          e.preventDefault?.();
-          e.stopPropagation?.();
-        }
+        if (handled) e.preventDefault?.();
+        if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation?.();
       };
+      const onKeyUp = (e) => e.stopPropagation?.();
       const onClick = (e) => {
         const width = dialog.getBoundingClientRect?.().width || doc.defaultView?.innerWidth || 0;
         const left = dialog.getBoundingClientRect?.().left || 0;
@@ -2276,20 +2358,21 @@ function createPresenter({ doc }) {
       };
       const onClosed = () => close();
       dialog.addEventListener("keydown", onKey);
+      dialog.addEventListener("keyup", onKeyUp);
       dialog.addEventListener("click", onClick);
       dialog.addEventListener("cancel", onCancel);
       dialog.addEventListener("close", onClosed);
-      current = { dialog, preload, onKey, onClick, onCancel, onClosed, onClose };
+      current = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose };
       doc.body.append(dialog);
       show();
       dialog.showModal();
       dialog.focus?.();
       const state = current;
       return {
-        setSlide(i, patch) {
-          if (current !== state || !list[i]) return;
-          Object.assign(list[i], patch);
-          if (i === at || i === at + 1) show();
+        setSlide(i2, patch) {
+          if (current !== state || !list[i2]) return;
+          Object.assign(list[i2], patch);
+          if (i2 === at || i2 === at + 1) show();
         },
         isOpen: () => current === state,
         close: () => {
@@ -2323,22 +2406,11 @@ function displayedRect(el, f) {
 function displayedPoly(el, p) {
   if (!el?.crop) return p;
   const out = [];
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i + 1 < p.length; i += 2) {
-    const [sx, sy] = pt(naturalToScene(el, [p[i], p[i + 1]]));
-    const x = (sx - el.x) / el.width;
-    const y = (sy - el.y) / el.height;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-    out.push(x, y);
+  for (let i2 = 0; i2 + 1 < p.length; i2 += 2) {
+    const [sx, sy] = pt(naturalToScene(el, [p[i2], p[i2 + 1]]));
+    out.push((sx - el.x) / el.width, (sy - el.y) / el.height);
   }
-  if (!(maxX > 0) || !(maxY > 0) || !(minX < 1) || !(minY < 1)) return null;
-  return out.map((v) => Math.min(1, Math.max(0, v)));
+  return clipPolyToUnit(out);
 }
 function displayedToNatural(el, picked) {
   if (!el?.crop) return picked;
@@ -2349,7 +2421,7 @@ function displayedToNatural(el, picked) {
     return [x1, y1, x2 - x1, y2 - y1];
   }
   const p = [];
-  for (let i = 0; i + 1 < picked.p.length; i += 2) p.push(...toNat(picked.p[i], picked.p[i + 1]));
+  for (let i2 = 0; i2 + 1 < picked.p.length; i2 += 2) p.push(...toNat(picked.p[i2], picked.p[i2 + 1]));
   return { p };
 }
 var OUTSIDE_CROP_TEXT = "Region is outside the image's crop";
@@ -2560,14 +2632,14 @@ function classifyAddedNode(node) {
   if (!node || node.nodeType !== 1 || skipped(node)) return out;
   if (node.classList?.contains(REGION_BUTTON_CLASS)) out.regionButtons.push(node);
   const buttons = node.getElementsByClassName?.(REGION_BUTTON_CLASS);
-  if (buttons) for (let i = 0; i < buttons.length; i++) out.regionButtons.push(buttons[i]);
+  if (buttons) for (let i2 = 0; i2 < buttons.length; i2++) out.regionButtons.push(buttons[i2]);
   if (node.classList?.contains("excalidraw")) {
     if (underFullScreen(node)) out.editors.push(node);
   } else {
     const editors = node.getElementsByClassName?.("excalidraw");
     if (editors) {
-      for (let i = 0; i < editors.length; i++) {
-        if (underFullScreen(editors[i])) out.editors.push(editors[i]);
+      for (let i2 = 0; i2 < editors.length; i2++) {
+        if (underFullScreen(editors[i2])) out.editors.push(editors[i2]);
       }
     }
   }
@@ -3271,6 +3343,7 @@ function createActions({
   let activeToolIsDrawing = false;
   let stopSpotlight = null;
   const busy = /* @__PURE__ */ new Set();
+  let presentOwner = null;
   const thumbPending = /* @__PURE__ */ new Map();
   const aborted = () => disposed;
   async function once(name, fn) {
@@ -3520,7 +3593,10 @@ function createActions({
         text = await native.readClipboardText({ clipboard });
       } catch (error) {
         console.warn("[plexus] clipboard read failed", error);
+        toaster.show("Clipboard access was blocked. Allow paste in the browser, then try again", { kind: "error" });
+        return null;
       }
+      if (native.activeEditor(doc)?.app !== app) return null;
       const parsed = parseEmbedRef(text);
       if (!parsed) {
         toaster.show(hint, { kind: "error" });
@@ -3549,7 +3625,19 @@ function createActions({
       toaster.show(`Embedded ${label}`);
       return elements[0].id;
     }),
-    presentDrawing: ({ drawingUid } = {}) => once("present", () => presentOnce(drawingUid)),
+    presentDrawing: async ({ drawingUid } = {}) => {
+      if (presentOwner) return null;
+      const token = {};
+      presentOwner = token;
+      const release = () => {
+        if (presentOwner === token) presentOwner = null;
+      };
+      try {
+        return await presentOnce(drawingUid, release);
+      } finally {
+        release();
+      }
+    },
     createPlainImageRegion: (blockUid) => once("plain", async () => {
       const block = isId(blockUid) ? host.pullBlock(blockUid) : null;
       const refs = block ? parseImageRefs(block.string) : [];
@@ -3606,7 +3694,10 @@ function createActions({
         try {
           if (isImageKind(region.kind)) continue;
           const svg = await hotSvg(editor.app, region);
-          if (!svg) continue;
+          if (!svg) {
+            fail(i);
+            continue;
+          }
           await putSvg(uid, region, svg);
           count += 1;
         } catch (error) {
@@ -3622,7 +3713,7 @@ function createActions({
       toaster.show("Crop cache cleared");
     }
   };
-  async function presentOnce(requestedUid) {
+  async function presentOnce(requestedUid, release) {
     const editor = native.activeEditor(doc);
     const uid = requestedUid || editor?.drawingUid;
     if (!isId(uid) || !presenter) {
@@ -3640,6 +3731,7 @@ function createActions({
       toaster.show("Drawing not found", { kind: "error" });
       return null;
     }
+    const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
     const slides = frames.map((frame) => {
       const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "Frame" };
       const gk = geometryKey(region);
@@ -3648,41 +3740,50 @@ function createActions({
         region,
         name: frame.name || `Frame ${frames.indexOf(frame) + 1}`,
         url: null,
-        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" }),
-        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "png" })
+        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
+        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" })
       };
     });
     for (const slide of slides) {
       const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
       slide.url = entry?.url ?? null;
     }
-    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0 });
-    const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
+    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0, onClose: release });
+    const missing = slides.map((s, i2) => [s, i2]).filter(([s]) => !s.url);
     if (!missing.length) return uid;
-    const fill = (i, entry) => {
-      if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url });
+    const fail2 = (i2) => {
+      if (handle.isOpen()) handle.setSlide(i2, { error: true });
+    };
+    const fill = (i2, entry) => {
+      if (entry?.url && handle.isOpen()) handle.setSlide(i2, { url: entry.url });
     };
     try {
       if (mounted) {
-        for (const [slide, i] of missing) {
+        for (const [slide, i2] of missing) {
           if (disposed || !handle.isOpen()) break;
           let svg = await captureSafe(mounted.app, [slide.frame.id]);
           if (!svg) continue;
           svg = normalizeSvgSize(svg);
           await cache.put(slide.svgKey, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
-          fill(i, cache.peek?.(slide.svgKey) || await cache.get(slide.svgKey));
+          fill(i2, cache.peek?.(slide.svgKey) || await cache.get(slide.svgKey));
         }
       } else {
         const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
         const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
         if (!rendered || disposed || !handle.isOpen()) {
-          if (!rendered && !disposed && handle.isOpen()) toaster.show("Could not render this drawing", { kind: "error" });
+          if (!rendered && !disposed && handle.isOpen()) {
+            for (const [, i2] of missing) fail2(i2);
+            toaster.show("Could not render this drawing", { kind: "error" });
+          }
           return uid;
         }
-        for (const [slide, i] of missing) {
+        for (const [slide, i2] of missing) {
           if (disposed || !handle.isOpen()) break;
           const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
-          if (box.error) continue;
+          if (box.error) {
+            fail2(i2);
+            continue;
+          }
           const crop = viewPngCropRect({
             elements: drawing.elements,
             appState: drawing.appState,
@@ -3690,14 +3791,18 @@ function createActions({
             naturalWidth: rendered.naturalWidth,
             naturalHeight: rendered.naturalHeight
           });
-          if (crop.error) continue;
+          if (crop.error) {
+            fail2(i2);
+            continue;
+          }
           const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
           await cache.put(slide.pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
-          fill(i, cache.peek?.(slide.pngKey) || await cache.get(slide.pngKey));
+          fill(i2, cache.peek?.(slide.pngKey) || await cache.get(slide.pngKey));
         }
       }
     } catch (error) {
       console.warn("[plexus] present fill failed", error);
+      for (const [slide, i2] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail2(i2);
     }
     return uid;
   }
@@ -4061,6 +4166,13 @@ async function onload({ extensionAPI, extension }) {
           const app = findApp(el);
           if (!app) return;
           mounted = { uid: host.blockUidFromNode(el), disposers: [] };
+          try {
+            const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
+            if (typeof off === "function") mounted.disposers.push(off);
+          } catch (error) {
+            console.warn("[plexus] toolbar refresh subscribe failed", error);
+          }
+          toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const overlay = createEmbedOverlay({ doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1e3 });
           mounted.disposers.push(() => overlay.dispose());

@@ -39,9 +39,9 @@ test("insertElements appends, selects non-bound elements, captures immediately",
   assert.equal(insertElements(app, []), false);
 });
 
-test("readClipboardText returns text or null", async () => {
+test("readClipboardText returns text, null, or rejects on denial", async () => {
   assert.equal(await readClipboardText({ clipboard: { readText: async () => "((abc123456))" } }), "((abc123456))");
-  assert.equal(await readClipboardText({ clipboard: { readText: async () => { throw new Error("denied"); } } }), null);
+  await assert.rejects(readClipboardText({ clipboard: { readText: async () => { throw new Error("denied"); } } }), /denied/);
   assert.equal(await readClipboardText({ clipboard: null }), null);
 });
 

@@ -111,6 +111,7 @@ export function createActions({
   let activeToolIsDrawing = false;
   let stopSpotlight = null;
   const busy = new Set();
+  let presentOwner = null;
   const thumbPending = new Map();
   const aborted = () => disposed;
 
@@ -384,7 +385,10 @@ export function createActions({
         text = await native.readClipboardText({ clipboard });
       } catch (error) {
         console.warn("[plexus] clipboard read failed", error);
+        toaster.show("Clipboard access was blocked. Allow paste in the browser, then try again", { kind: "error" });
+        return null;
       }
+      if (native.activeEditor(doc)?.app !== app) return null;
       const parsed = parseEmbedRef(text);
       if (!parsed) {
         toaster.show(hint, { kind: "error" });
@@ -414,7 +418,17 @@ export function createActions({
       return elements[0].id;
     }),
 
-    presentDrawing: ({ drawingUid } = {}) => once("present", () => presentOnce(drawingUid)),
+    presentDrawing: async ({ drawingUid } = {}) => {
+      if (presentOwner) return null;
+      const token = {};
+      presentOwner = token;
+      const release = () => { if (presentOwner === token) presentOwner = null; };
+      try {
+        return await presentOnce(drawingUid, release);
+      } finally {
+        release();
+      }
+    },
 
     createPlainImageRegion: (blockUid) => once("plain", async () => {
       const block = isId(blockUid) ? host.pullBlock(blockUid) : null;
@@ -476,7 +490,7 @@ export function createActions({
         try {
           if (isImageKind(region.kind)) continue;
           const svg = await hotSvg(editor.app, region);
-          if (!svg) continue;
+          if (!svg) { fail(i); continue; }
           await putSvg(uid, region, svg);
           count += 1;
         } catch (error) {
@@ -494,7 +508,7 @@ export function createActions({
     },
   };
 
-  async function presentOnce(requestedUid) {
+  async function presentOnce(requestedUid, release) {
     const editor = native.activeEditor(doc);
     const uid = requestedUid || editor?.drawingUid;
     if (!isId(uid) || !presenter) {
@@ -512,6 +526,8 @@ export function createActions({
       toaster.show("Drawing not found", { kind: "error" });
       return null;
     }
+    // Mounted slides are captured from the live scene, so key them on the live scene, not the last saved hash.
+    const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
     const slides = frames.map((frame) => {
       const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "Frame" };
       const gk = geometryKey(region);
@@ -520,8 +536,8 @@ export function createActions({
         region,
         name: frame.name || `Frame ${frames.indexOf(frame) + 1}`,
         url: null,
-        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" }),
-        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: drawing.hash, tier: "png" }),
+        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
+        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" }),
       };
     });
     // Whatever is already cached opens immediately; the rest fills in behind it.
@@ -529,9 +545,10 @@ export function createActions({
       const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
       slide.url = entry?.url ?? null;
     }
-    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0 });
+    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0, onClose: release });
     const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
     if (!missing.length) return uid;
+    const fail = (i) => { if (handle.isOpen()) handle.setSlide(i, { error: true }); };
     const fill = (i, entry) => { if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url }); };
     try {
       if (mounted) {
@@ -547,13 +564,16 @@ export function createActions({
         const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
         const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
         if (!rendered || disposed || !handle.isOpen()) {
-          if (!rendered && !disposed && handle.isOpen()) toaster.show("Could not render this drawing", { kind: "error" });
+          if (!rendered && !disposed && handle.isOpen()) {
+            for (const [, i] of missing) fail(i);
+            toaster.show("Could not render this drawing", { kind: "error" });
+          }
           return uid;
         }
         for (const [slide, i] of missing) {
           if (disposed || !handle.isOpen()) break;
           const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
-          if (box.error) continue;
+          if (box.error) { fail(i); continue; }
           const crop = viewPngCropRect({
             elements: drawing.elements,
             appState: drawing.appState,
@@ -561,7 +581,7 @@ export function createActions({
             naturalWidth: rendered.naturalWidth,
             naturalHeight: rendered.naturalHeight,
           });
-          if (crop.error) continue;
+          if (crop.error) { fail(i); continue; }
           const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
           await cache.put(slide.pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
           fill(i, cache.peek?.(slide.pngKey) || (await cache.get(slide.pngKey)));
@@ -569,6 +589,7 @@ export function createActions({
       }
     } catch (error) {
       console.warn("[plexus] present fill failed", error);
+      for (const [slide, i] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail(i);
     }
     return uid;
   }

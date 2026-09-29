@@ -1,6 +1,6 @@
 import { parseRegion, geometryKey } from "../model/region.js";
 import { naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
-import { imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
+import { clipPolyToUnit, imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
 import { fnv1a } from "../model/hash.js";
 import { cropKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
@@ -31,26 +31,15 @@ export function displayedRect(el, f) {
   return [(x1 - el.x) / el.width, (y1 - el.y) / el.height, (x2 - x1) / el.width, (y2 - y1) / el.height];
 }
 
-// Natural-image polygon (flat fractions) -> displayed-box fractions, clamped to the box. Null when fully outside.
+// Natural-image polygon (flat fractions) -> displayed-box fractions, clipped to the box. Null when nothing is visible.
 export function displayedPoly(el, p) {
   if (!el?.crop) return p;
   const out = [];
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
   for (let i = 0; i + 1 < p.length; i += 2) {
     const [sx, sy] = pt(naturalToScene(el, [p[i], p[i + 1]]));
-    const x = (sx - el.x) / el.width;
-    const y = (sy - el.y) / el.height;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-    out.push(x, y);
+    out.push((sx - el.x) / el.width, (sy - el.y) / el.height);
   }
-  if (!(maxX > 0) || !(maxY > 0) || !(minX < 1) || !(minY < 1)) return null;
-  return out.map((v) => Math.min(1, Math.max(0, v)));
+  return clipPolyToUnit(out);
 }
 
 // Image-tool output (fractions of the displayed box) -> natural-image fractions, the stored form.

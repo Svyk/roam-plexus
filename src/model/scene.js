@@ -1,5 +1,5 @@
 import { normalizeFrac } from "./region.js";
-import { polyBBox } from "./image.js";
+import { clipPolyToUnit, polyBBox } from "./image.js";
 
 export const VIEW_EXPORT_PADDING = 10;
 
@@ -216,6 +216,21 @@ export function regionSceneBBox(region, elements, appState) {
         bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
         missing: [],
       };
+    }
+    if (region.kind === "poly") {
+      const disp = [];
+      for (let i = 0; i + 1 < region.p.length; i += 2) {
+        const [sx, sy] = naturalToScene(el, [region.p[i], region.p[i + 1]]);
+        disp.push((sx - el.x) / el.width, (sy - el.y) / el.height);
+      }
+      const clipped = clipPolyToUnit(disp);
+      if (!clipped) return { error: "outside-crop" };
+      let cx1 = Infinity, cy1 = Infinity, cx2 = -Infinity, cy2 = -Infinity;
+      for (let i = 0; i < clipped.length; i += 2) {
+        cx1 = Math.min(cx1, clipped[i]); cx2 = Math.max(cx2, clipped[i]);
+        cy1 = Math.min(cy1, clipped[i + 1]); cy2 = Math.max(cy2, clipped[i + 1]);
+      }
+      return { bbox: [el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height], missing: [] };
     }
     const [ax, ay] = naturalToScene(el, [rx, ry]);
     const [bx, by] = naturalToScene(el, [rx + rw, ry + rh]);

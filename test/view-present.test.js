@@ -81,3 +81,35 @@ test("dispose closes an open dialog", () => {
   t.presenter.dispose();
   assert.equal(t.dialog().removed, true);
 });
+
+test("Cmd+Z, Delete and keyups never leave the dialog; failed slides say so", () => {
+  const t = setup();
+  const seen = [];
+  const ev = (k) => ({ key: k, preventDefault() {}, stopPropagation() { seen.push(k); } });
+  const h = t.presenter.open({ slides });
+  const d = t.dialog();
+  d.listeners.keydown(ev("z"));
+  d.listeners.keydown(ev("Delete"));
+  d.listeners.keyup(ev("ArrowRight"));
+  d.listeners.keydown(ev("Escape"));
+  assert.deepEqual(seen, ["z", "Delete", "ArrowRight"]);
+  d.listeners.keydown(key("End"));
+  const wait = d.children.find((c) => c.className === "plexus-present-wait");
+  assert.equal(wait.textContent, "Rendering...");
+  h.setSlide(2, { error: true });
+  assert.equal(wait.textContent, "Could not render this slide");
+  assert.equal(wait.hidden, false);
+});
+
+test("Enter, PageDown, Spacebar advance and ArrowLeft goes back", () => {
+  const t = setup();
+  t.presenter.open({ slides });
+  const d = t.dialog();
+  for (const k of ["Enter", "PageDown", "Spacebar"]) {
+    d.listeners.keydown(key("Home"));
+    d.listeners.keydown(key(k));
+    assert.equal(t.hud().textContent, "2 / 3 · B", k);
+  }
+  d.listeners.keydown(key("ArrowLeft"));
+  assert.equal(t.hud().textContent, "1 / 3 · A");
+});

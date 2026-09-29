@@ -185,10 +185,5 @@ export function insertElements(app, elements, { select = true } = {}) {
 
 export async function readClipboardText({ clipboard = globalThis.navigator?.clipboard } = {}) {
   if (!clipboard || typeof clipboard.readText !== "function") return null;
-  try {
-    return await clipboard.readText();
-  } catch (error) {
-    console.warn("[plexus] clipboard read failed", error);
-    return null;
-  }
+  return clipboard.readText();
 }
