@@ -143,3 +143,31 @@ export function viewportRectOf(app, bbox) {
   const b = sceneToViewport({ x: bbox[2], y: bbox[3], appState });
   return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y };
 }
+
+const liveElements = (app) => (app.getSceneElementsIncludingDeleted?.() || []).filter((e) => !e.isDeleted);
+
+// Ids to select so copyAsSvg exports a group: every live member of the group.
+export function groupCaptureIds(app, groupId) {
+  return liveElements(app).filter((e) => Array.isArray(e.groupIds) && e.groupIds.includes(groupId)).map((e) => e.id);
+}
+
+// Ids to select so copyAsSvg exports a frame. clipped=true selects ONLY the frame (Excalidraw then exports with
+// exportingFrame and clips to it); otherwise the frame plus its live children (margin variant).
+export function frameCaptureIds(app, frameId, { clipped = false } = {}) {
+  const live = liveElements(app);
+  if (!live.some((e) => e.id === frameId && e.type === "frame")) return [];
+  if (clipped) return [frameId];
+  return [frameId, ...live.filter((e) => e.frameId === frameId).map((e) => e.id)];
+}
+
+export function captureGroupSvg(app, groupId, opts) {
+  const ids = groupCaptureIds(app, groupId);
+  if (!ids.length) return Promise.reject(new Error("[plexus] group has no live elements"));
+  return captureSelectionSvg(app, ids, opts);
+}
+
+export function captureFrameSvg(app, frameId, { clipped = false, ...opts } = {}) {
+  const ids = frameCaptureIds(app, frameId, { clipped });
+  if (!ids.length) return Promise.reject(new Error("[plexus] frame not found"));
+  return captureSelectionSvg(app, ids, opts);
+}

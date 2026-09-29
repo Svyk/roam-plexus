@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseRegion, serializeRegion, normalizeFrac, isContainerString, geometryKey,
-  CONTAINER_STRING, DEFAULT_PAD,
+  CONTAINER_STRING, DEFAULT_PAD, SUPPORTED_KINDS, RESERVED_KINDS, normalizePoly,
 } from "../src/model/region.js";
 
 test("parses an area region", () => {
@@ -42,15 +42,100 @@ test("non-canonical order is normalized, unknown tokens preserved in order", () 
   assert.equal(serializeRegion(r), "{{[[plexus-region]]: k=area d=u1 ids=a pad=5 zz=1 yy=two}} cap");
 });
 
-test("reserved kinds parse as unsupported without error and round-trip", () => {
-  for (const kind of ["group", "frame", "cframe", "poly"]) {
-    const s = `{{[[plexus-region]]: k=${kind} d=u1 ids=a,b pad=3}} c`;
+const NEW_KINDS = [
+  "{{[[plexus-region]]: k=group d=u1 g=grp_1 pad=12}} Group cap",
+  "{{[[plexus-region]]: k=frame d=u1 fr=frameA pad=0}}",
+  "{{[[plexus-region]]: k=cframe d=u1 fr=frameA}} Frame",
+  "{{[[plexus-region]]: k=poly d=u1 el=img1 p=0.1,0.1,0.9,0.2,0.5,0.9}} Tri",
+  "{{[[plexus-region]]: k=imgrect d=blk1 i=0 f=0.1,0.2,0.3,0.4}} Image region",
+  "{{[[plexus-region]]: k=imgpoly d=blk1 i=2 p=0,0,1,0,1,1,0,1}}",
+];
+
+test("all 8 kinds are supported and none are reserved", () => {
+  assert.equal(RESERVED_KINDS.length, 0);
+  assert.deepEqual([...SUPPORTED_KINDS].sort(), ["area", "cframe", "frame", "group", "imgpoly", "imgrect", "poly", "rect"]);
+});
+
+test("new kinds parse and round-trip", () => {
+  for (const s of NEW_KINDS) {
     const r = parseRegion(s);
-    assert.equal(r.supported, false);
-    assert.equal(r.error, undefined);
-    assert.equal(r.kind, kind);
+    assert.equal(r.supported, true, s);
+    assert.equal(r.error, undefined, s);
     assert.equal(serializeRegion(r), s);
   }
+  const g = parseRegion(NEW_KINDS[0]);
+  assert.equal(g.groupId, "grp_1");
+  assert.equal(g.pad, 12);
+  assert.equal(parseRegion("{{[[plexus-region]]: k=group d=u1 g=x}}").pad, DEFAULT_PAD);
+  assert.equal(parseRegion(NEW_KINDS[2]).frameId, "frameA");
+  assert.deepEqual(parseRegion(NEW_KINDS[3]).p, [0.1, 0.1, 0.9, 0.2, 0.5, 0.9]);
+  assert.equal(parseRegion(NEW_KINDS[4]).i, 0);
+  assert.deepEqual(parseRegion(NEW_KINDS[4]).f, [0.1, 0.2, 0.3, 0.4]);
+});
+
+test("new kinds normalize token order and clamp/round polygon points", () => {
+  const r = parseRegion("{{[[plexus-region]]: p=-1,0.123456,2,0.5,0.5,0.5 el=e d=u1 k=poly}}");
+  assert.deepEqual(r.p, [0, 0.1235, 1, 0.5, 0.5, 0.5]);
+  assert.equal(serializeRegion(r), "{{[[plexus-region]]: k=poly d=u1 el=e p=0,0.1235,1,0.5,0.5,0.5}}");
+});
+
+test("new kind errors", () => {
+  const cases = {
+    "{{[[plexus-region]]: k=group d=u1}}": /missing g/,
+    "{{[[plexus-region]]: k=group d=u1 g=a pad=999}}": /bad pad/,
+    "{{[[plexus-region]]: k=frame d=u1 g=a}}": /missing fr/,
+    "{{[[plexus-region]]: k=cframe d=u1 fr=a/b}}": /bad token|bad fr/,
+    "{{[[plexus-region]]: k=poly d=u1 el=e}}": /missing p/,
+    "{{[[plexus-region]]: k=poly d=u1 el=e p=0,0,1,1}}": /bad p/,
+    "{{[[plexus-region]]: k=poly d=u1 el=e p=0,0,1,1,a,b}}": /bad p/,
+    "{{[[plexus-region]]: k=poly d=u1 el=e p=0,0,1,1,0.5,}}": /bad p/,
+    "{{[[plexus-region]]: k=poly d=u1 p=0,0,1,1,0,1}}": /missing el/,
+    "{{[[plexus-region]]: k=imgrect d=u1 f=0,0,1,1}}": /missing i/,
+    "{{[[plexus-region]]: k=imgrect d=u1 i=-1 f=0,0,1,1}}": /bad i/,
+    "{{[[plexus-region]]: k=imgrect d=u1 i=0}}": /missing f/,
+    "{{[[plexus-region]]: k=imgpoly d=u1 i=x p=0,0,1,1,0,1}}": /bad i/,
+    "{{[[plexus-region]]: k=imgpoly d=u1 i=0}}": /missing p/,
+  };
+  for (const [s, re] of Object.entries(cases)) {
+    const r = parseRegion(s);
+    assert.equal(r.supported, false, s);
+    assert.match(r.error, re, s);
+  }
+});
+
+test("cframe keeps a stray pad token as extra (pad is always 0)", () => {
+  const r = parseRegion("{{[[plexus-region]]: k=cframe d=u1 fr=f1 pad=5}}");
+  assert.equal(r.supported, true);
+  assert.equal(r.pad, undefined);
+  assert.deepEqual(r.extra, [["pad", "5"]]);
+});
+
+test("serialize rejects bad new-kind input", () => {
+  assert.throws(() => serializeRegion({ kind: "group", drawingUid: "u" }), TypeError);
+  assert.throws(() => serializeRegion({ kind: "frame", drawingUid: "u", frameId: "f", pad: -1 }), TypeError);
+  assert.throws(() => serializeRegion({ kind: "poly", drawingUid: "u", el: "e", p: [0, 0, 1, 1] }), TypeError);
+  assert.throws(() => serializeRegion({ kind: "imgrect", drawingUid: "u", i: 1.5, f: [0, 0, 1, 1] }), TypeError);
+  assert.throws(() => serializeRegion({ kind: "imgpoly", drawingUid: "u", i: 0 }), TypeError);
+});
+
+test("normalizePoly accepts flat and pair arrays", () => {
+  assert.deepEqual(normalizePoly([[0, 0], [1, 0], [0.5, 1]]), [0, 0, 1, 0, 0.5, 1]);
+  assert.equal(normalizePoly([0, 0, 1, 1]), null);
+  assert.equal(normalizePoly([0, 0, 1, 1, 0.5]), null);
+  assert.equal(normalizePoly(null), null);
+});
+
+test("geometryKey covers every kind", () => {
+  const keys = NEW_KINDS.map((s) => geometryKey(parseRegion(s)));
+  assert.deepEqual(keys, [
+    "group|u1|grp_1|12",
+    "frame|u1|frameA|0",
+    "cframe|u1|frameA",
+    "poly|u1|img1|0.1,0.1,0.9,0.2,0.5,0.9",
+    "imgrect|blk1|0|0.1,0.2,0.3,0.4",
+    "imgpoly|blk1|2|0,0,1,0,1,1,0,1",
+  ]);
+  assert.equal(new Set(keys).size, keys.length);
 });
 
 test("malformed regions carry an error and supported=false", () => {

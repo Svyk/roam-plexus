@@ -1,15 +1,64 @@
 import { parseRegion, geometryKey } from "../model/region.js";
 import { regionSceneBBox, viewPngCropRect } from "../model/scene.js";
+import { imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
+import { fnv1a } from "../model/hash.js";
 import { cropKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
+import { cropToBlob, loadImageBitmap } from "../host/image-source.js";
 
 const CLAIMED = "data-plexus-claimed";
 const FAIL_TTL_MS = 60000;
 const PRUNE_FLOOR = 64;
-const IMAGE_SETTLE_MS = 1200;
-const PLAIN_SETTLE_MS = 150;
+export const IMAGE_SETTLE_MS = 1200;
+export const PLAIN_SETTLE_MS = 150;
 
-export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc }) {
+export const IMAGE_KINDS = new Set(["imgrect", "imgpoly"]);
+export const isImageKind = (kind) => IMAGE_KINDS.has(kind);
+
+// Where a region's pixels come from. Drawing kinds read the drawing block; image kinds read a plain block's image.
+export function resolveRegionTarget(host, region) {
+  if (isImageKind(region.kind)) {
+    const block = host.pullBlock(region.drawingUid);
+    const ref = block ? parseImageRefs(block.string).find((r) => r.index === region.i) : null;
+    if (!ref) return { error: "Image not found" };
+    return { url: ref.url, hash: fnv1a(ref.url) };
+  }
+  const drawing = host.drawing(region.drawingUid);
+  if (!drawing) return { error: "Drawing not found" };
+  const sceneBox = regionSceneBBox(region, drawing.elements);
+  if (sceneBox.error) return { error: `Region unavailable (${sceneBox.error})` };
+  return { drawing, sceneBox, hash: drawing.hash };
+}
+
+// Cold pixels for one region: the view PNG (drawings) or the decoded image (plain blocks), cropped and,
+// for polygon kinds, clipped. Resolves { blob, w, h, settled } or { error }.
+export async function renderRegionCrop({ region, target, cold, doc, api, settleMs, loadBitmap = loadImageBitmap }) {
+  if (isImageKind(region.kind)) {
+    const bitmap = await loadBitmap(target.url, { api });
+    const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
+    const crop = imageCropRect({ naturalWidth: bitmap.width, naturalHeight: bitmap.height, f });
+    if (!crop) return { error: "bad-crop" };
+    const poly = region.kind === "imgpoly" ? polyToLocal(region.p, f) : undefined;
+    const blob = await cropToBlob(bitmap, crop, { doc, poly });
+    return { blob, w: crop.sw, h: crop.sh, settled: true };
+  }
+  const { drawing, sceneBox } = target;
+  const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
+  const rendered = await cold.renderDrawing(region.drawingUid, { settleMs: settleMs ?? (hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS) });
+  if (!rendered) return { error: "no-render" };
+  const crop = viewPngCropRect({
+    elements: drawing.elements,
+    bbox: sceneBox.bbox,
+    naturalWidth: rendered.naturalWidth,
+    naturalHeight: rendered.naturalHeight,
+  });
+  if (crop.error) return { error: crop.error };
+  const poly = region.kind === "poly" ? polyToLocal(region.p, polyBBox(region.p)) : undefined;
+  const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly });
+  return { blob, w: crop.sw, h: crop.sh, settled: rendered.settled !== false };
+}
+
+export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
   const roots = new Map();
   const failed = new Map();
   let pruneAt = PRUNE_FLOOR;
@@ -80,24 +129,26 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         }
       }, true);
 
-      const drawing = host.drawing(region.drawingUid);
-      if (!drawing) return chip(root, "Drawing not found");
-      const sceneBox = regionSceneBBox(region, drawing.elements);
-      if (sceneBox.error) return chip(root, `Region unavailable (${sceneBox.error})`);
+      const target = resolveRegionTarget(host, region);
+      if (target.error) return chip(root, target.error);
 
       const gk = geometryKey(region);
-      const svgKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "svg" });
-      const pngKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: drawing.hash, tier: "png" });
+      const pngKey = cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "png" });
+      const svgKey = target.url ? null : cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "svg" });
 
-      const hotSvg = cache.peek(svgKey);
+      const hotSvg = svgKey ? cache.peek(svgKey) : null;
       const hot = hotSvg || cache.peek(pngKey);
       if (hot) return paint(root, hot, hotSvg ? svgKey : pngKey);
 
-      const [x1, y1, x2, y2] = sceneBox.bbox;
-      const bw = Math.max(1, x2 - x1);
-      const bh = Math.max(1, y2 - y1);
       const maxH = getSettings().maxCropHeight;
-      const h = Math.min(maxH, bh);
+      let bw = 4;
+      let bh = 3;
+      if (target.sceneBox) {
+        const [x1, y1, x2, y2] = target.sceneBox.bbox;
+        bw = Math.max(1, x2 - x1);
+        bh = Math.max(1, y2 - y1);
+      }
+      const h = Math.min(maxH, target.sceneBox ? bh : 120);
       root.className = "plexus-root plexus-regionref plexus-placeholder";
       root.style.height = `${h}px`;
       root.style.width = `${Math.round((h * bw) / bh)}px`;
@@ -105,33 +156,23 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       void (async () => {
         try {
           let entry = null;
-          let entryKey = svgKey;
-          entry = await cache.get(svgKey);
+          let entryKey = svgKey || pngKey;
+          if (svgKey) entry = await cache.get(svgKey);
           if (!entry) { entryKey = pngKey; entry = await cache.get(pngKey); }
           if (!entry) {
-            const failKey = `${region.drawingUid}|${drawing.hash}`;
+            const failKey = `${region.drawingUid}|${target.hash}`;
             const failedAt = failed.get(failKey);
             if (failedAt != null && Date.now() - failedAt < FAIL_TTL_MS) return finishChip(root);
             if (!root.isConnected) return;
-            const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
-            const rendered = await cold.renderDrawing(region.drawingUid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
+            const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
             if (!root.isConnected) return;
-            const crop = rendered
-              ? viewPngCropRect({
-                  elements: drawing.elements,
-                  bbox: sceneBox.bbox,
-                  naturalWidth: rendered.naturalWidth,
-                  naturalHeight: rendered.naturalHeight,
-                })
-              : { error: "no-render" };
-            if (crop.error) {
+            if (rendered.error) {
               failed.set(failKey, Date.now());
               return finishChip(root);
             }
             entryKey = pngKey;
-            const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
             // An unsettled render may still be Roam's placeholder: paint it from memory, never persist it.
-            await cache.put(pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
+            await cache.put(pngKey, rendered.blob, { w: rendered.w, h: rendered.h, persist: rendered.settled !== false });
             entry = cache.peek(pngKey) || (await cache.get(pngKey));
           }
           if (!root.isConnected) return;

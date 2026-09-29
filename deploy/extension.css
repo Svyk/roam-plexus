@@ -103,6 +103,47 @@
   outline: 1px dashed rgba(255, 255, 255, 0.8);
 }
 
+.plexus-portal .plexus-lasso {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.plexus-portal .plexus-lasso path {
+  fill: rgba(45, 114, 210, 0.2);
+  stroke: #2d72d2;
+  stroke-width: 1;
+}
+
+.plexus-portal.plexus-hover {
+  position: fixed;
+  z-index: 100001;
+  max-width: 360px;
+  max-height: 240px;
+  overflow: hidden;
+  padding: 8px 10px;
+  pointer-events: none;
+  background: #fff;
+  color: #1c2127;
+  border: 1px solid rgba(17, 20, 24, 0.3);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.plexus-portal.plexus-hover .plexus-hover-line {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plexus-portal.plexus-hover .plexus-hover-line:first-of-type {
+  margin-top: 8px;
+}
+
 .plexus-portal .plexus-marquee {
   position: absolute;
   border: 1px solid #2d72d2;
@@ -128,6 +169,13 @@ body.bt-theme-dark .plexus-portal .plexus-toolbar-button {
   color: #f6f7f9;
 }
 
+:root.bp3-dark .plexus-portal.plexus-hover,
+body.bt-theme-dark .plexus-portal.plexus-hover {
+  background: #252a31;
+  color: #f6f7f9;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
 :root.bp3-dark .plexus-portal.plexus-toast,
 body.bt-theme-dark .plexus-portal.plexus-toast {
   background: #252a31;
@@ -150,8 +198,19 @@ body.bt-theme-dark .plexus-portal.plexus-toast {
     color: #f6f7f9;
   }
 
+  :root:not(.bp3-light) .plexus-portal.plexus-hover {
+    background: #252a31;
+    color: #f6f7f9;
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+
   :root:not(.bp3-light) .plexus-portal.plexus-toast {
     background: #252a31;
     border: 1px solid rgba(255, 255, 255, 0.4);
   }
+}
+
+.plexus-portal .plexus-toolbar-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

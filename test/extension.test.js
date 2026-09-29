@@ -107,3 +107,40 @@ test("wired runtime persists crops for an unencrypted graph", async () => {
     dropFakeRoam();
   }
 });
+
+test("load registers the block context menu command and RoamPlexus; unload removes both", async () => {
+  const menu = [];
+  const g = globalThis;
+  const saved = { doc: g.document, api: g.roamAlphaAPI, mo: g.MutationObserver };
+  g.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
+  const noop = () => {};
+  g.document = {
+    body: { append: noop },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({ style: {}, append: noop, addEventListener: noop, removeEventListener: noop, setAttribute: noop }),
+    addEventListener: noop,
+    removeEventListener: noop,
+    defaultView: { addEventListener: noop, removeEventListener: noop, getComputedStyle: () => ({}) },
+  };
+  g.roamAlphaAPI = {
+    graph: { name: "g" },
+    data: { pull: () => null, q: () => [], addPullWatch: noop, removePullWatch: noop },
+    ui: { blockContextMenu: {
+      addCommand: (c) => menu.push(["add", c.label]),
+      removeCommand: (c) => menu.push(["remove", c?.label]),
+    } },
+  };
+  try {
+    const cleanup = await extension.onload({ extensionAPI: fakeExtensionApi(), extension: { version: "t" } });
+    assert.ok(menu.some(([k, l]) => k === "add" && l === "Plexus: Region on image"));
+    assert.ok(g.RoamPlexus || g.window?.RoamPlexus, "RoamPlexus installed");
+    await cleanup();
+    assert.ok(menu.some(([k, l]) => k === "remove" && l === "Plexus: Region on image"));
+    assert.ok(!g.RoamPlexus && !g.window?.RoamPlexus);
+  } finally {
+    if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
+    if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
+    if (saved.api === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved.api;
+  }
+});

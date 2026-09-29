@@ -84,7 +84,7 @@ test("regionSceneBBox reports missing ids and errors", () => {
   assert.deepEqual(r, { bbox: [420, 120, 580, 220], missing: ["nope"] });
   assert.equal(regionSceneBBox({ kind: "area", ids: ["nope"], pad: 10 }, els).error, "no-elements");
   assert.equal(regionSceneBBox({ kind: "area", ids: ["a"], pad: 10 }, []).error, "no-elements");
-  assert.equal(regionSceneBBox({ kind: "group", ids: ["a"] }, els).error, "unsupported-kind");
+  assert.equal(regionSceneBBox({ kind: "blob" }, els).error, "unsupported-kind");
 });
 
 test("regionSceneBBox rect kind", () => {
@@ -229,4 +229,44 @@ test("cropSvgToFraction viewBox is independent of an exportScale-inflated width/
   const vb = (s) => /viewBox="([^"]+)"/.exec(s)[1];
   assert.equal(vb(cropSvgToFraction(scaled, [0.25, 0.5, 0.5, 0.25])), vb(cropSvgToFraction(plain, [0.25, 0.5, 0.5, 0.25])));
   assert.match(normalizeSvgSize(cropSvgToFraction(scaled, [0, 0, 0.5, 0.5])), /viewBox="10 10 120 80" width="120" height="80"/);
+});
+
+const tri = "0.1,0.2,0.9,0.2,0.5,0.8".split(",").map(Number);
+
+test("regionSceneBBox group: union of members + pad, ignores deleted", () => {
+  const els = [
+    rect("a", 100, 100, 50, 50, { groupIds: ["g1"] }),
+    rect("b", 300, 200, 100, 40, { groupIds: ["g0", "g1"] }),
+    rect("c", 900, 900, 10, 10, { groupIds: ["g1"], isDeleted: true }),
+    rect("d", 500, 500, 10, 10, { groupIds: ["g2"] }),
+  ];
+  assert.deepEqual(regionSceneBBox({ kind: "group", groupId: "g1", pad: 10 }, els).bbox, [90, 90, 410, 250]);
+  assert.deepEqual(regionSceneBBox({ kind: "group", groupId: "g1", pad: 0 }, els).bbox, [100, 100, 400, 240]);
+  assert.equal(regionSceneBBox({ kind: "group", groupId: "nope", pad: 0 }, els).error, "no-elements");
+});
+
+test("regionSceneBBox frame adds pad, cframe is exact", () => {
+  const els = [
+    { id: "fr", type: "frame", x: 50, y: 60, width: 400, height: 300, angle: 0, name: "F" },
+    rect("child", 80, 90, 100, 100, { frameId: "fr" }),
+    rect("plain", 0, 0, 5, 5),
+  ];
+  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els).bbox, [40, 50, 460, 370]);
+  assert.deepEqual(regionSceneBBox({ kind: "cframe", frameId: "fr" }, els).bbox, [50, 60, 450, 360]);
+  assert.equal(regionSceneBBox({ kind: "cframe", frameId: "plain" }, els).error, "not-frame");
+  assert.equal(regionSceneBBox({ kind: "cframe", frameId: "zzz" }, els).error, "no-elements");
+});
+
+test("regionSceneBBox poly: polygon bbox inside the image element", () => {
+  const els = [{ id: "img", type: "image", x: 100, y: 200, width: 400, height: 200, angle: 0 }];
+  const { bbox } = regionSceneBBox({ kind: "poly", el: "img", p: tri }, els);
+  nearAll(bbox, [140, 240, 460, 360], 1);
+  assert.equal(regionSceneBBox({ kind: "poly", el: "img", p: tri }, [{ ...els[0], angle: 0.3 }]).error, "rotated-image");
+  assert.equal(regionSceneBBox({ kind: "poly", el: "r", p: tri }, [rect("r", 0, 0, 1, 1)]).error, "not-image");
+  assert.equal(regionSceneBBox({ kind: "poly", el: "img", p: [0, 0, 1, 0, 0.5, 0] }, els).error, "no-elements");
+});
+
+test("regionSceneBBox: imgrect/imgpoly have no scene geometry", () => {
+  assert.equal(regionSceneBBox({ kind: "imgrect", i: 0, f: [0, 0, 1, 1] }, fixture()).error, "unsupported-kind");
+  assert.equal(regionSceneBBox({ kind: "imgpoly", i: 0, p: tri }, fixture()).error, "unsupported-kind");
 });

@@ -1,3 +1,5 @@
+import { cropToBlob } from "./image-source.js";
+
 const DEFAULT_SETTLE_MS = 150;
 
 export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.document, timeoutMs = 8000 } = {}) {
@@ -120,12 +122,6 @@ export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = global
   };
 }
 
-export async function cropCanvasToBlob(canvas, { sx, sy, sw, sh }, { doc = globalThis.document } = {}) {
-  const out = doc.createElement("canvas");
-  out.width = sw;
-  out.height = sh;
-  out.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-  return new Promise((resolve, reject) => {
-    out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("[plexus] toBlob failed"))), "image/png");
-  });
+export function cropCanvasToBlob(canvas, rect, { doc = globalThis.document, poly } = {}) {
+  return cropToBlob(canvas, rect, { doc, poly });
 }

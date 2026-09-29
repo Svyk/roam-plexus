@@ -5,6 +5,9 @@ import { fnv1a } from "../model/hash.js";
 
 const PULL_PATTERN = "[:block/uid :block/string :edit/time :block/open :block/props {:block/children [:block/uid :block/string :block/order]}]";
 const DRAWING_MEMO_CAP = 64;
+const DRAWING_STRING = "{{[[excalidraw]]}}";
+const DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
+const DRAWINGS_CAP = 50;
 
 function normalizeProps(props) {
   if (typeof props === "string") {
@@ -87,10 +90,10 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return uid;
   }
 
-  async function createRegion(drawingUid, regionString) {
+  async function createRegion(parentUid, regionString) {
     const graph = api.graph.name;
-    const lock = await withLockFn(lockName(graph, drawingUid), async () => {
-      const containerUid = await ensureRegionContainer(drawingUid);
+    const lock = await withLockFn(lockName(graph, parentUid), async () => {
+      const containerUid = await ensureRegionContainer(parentUid);
       const uid = api.util.generateUID();
       await api.data.block.create({
         location: { "parent-uid": containerUid, order: "last" },
@@ -100,6 +103,63 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     });
     if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
     return lock.value;
+  }
+
+  function pageUidByTitle(title) {
+    const raw = api.data.pull("[:block/uid]", [":node/title", title]);
+    return raw?.[":block/uid"] || null;
+  }
+
+  function resolveUidKind(uid) {
+    if (!uid) return null;
+    const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
+    if (!raw) return null;
+    if (raw[":node/title"] != null) return "page";
+    if (raw[":block/string"] != null) return "block";
+    return null;
+  }
+
+  async function ensurePage(title) {
+    const existing = pageUidByTitle(title);
+    if (existing) return existing;
+    const uid = api.util.generateUID();
+    try {
+      await api.data.page.create({ page: { title, uid } });
+    } catch (error) {
+      const found = pageUidByTitle(title);
+      if (found) return found;
+      throw error;
+    }
+    return pageUidByTitle(title) || uid;
+  }
+
+  // create({pageUid, parentUid, title}): with a title the drawing goes under page "Drawings/<title>" (reused if present).
+  async function createDrawing({ pageUid, parentUid, title } = {}) {
+    let page = pageUid;
+    let parent = parentUid || pageUid;
+    if (title) {
+      page = await ensurePage(`Drawings/${title}`);
+      parent = page;
+    }
+    if (!parent) throw new Error("[plexus] createDrawing needs pageUid, parentUid, or title");
+    const uid = api.util.generateUID();
+    await api.data.block.create({
+      location: { "parent-uid": parent, order: "last" },
+      block: { uid, string: DRAWING_STRING },
+    });
+    return { uid, pageUid: page || null };
+  }
+
+  const DRAWINGS_QUERY = `[:find ?u ?s ?o :in $ ?pu :where [?p :block/uid ?pu] [?b :block/page ?p] [?b :block/uid ?u] [?b :block/string ?s] [?b :block/order ?o] (or [(clojure.string/starts-with? ?s "{{[[excalidraw]]}}")] [(clojure.string/starts-with? ?s "{{excalidraw}}")])]`;
+
+  function drawingsOn(pageUid) {
+    if (!pageUid) return [];
+    const rows = api.data.q(DRAWINGS_QUERY, pageUid) || [];
+    return rows
+      .filter((r) => DRAWING_START.test(String(r[1])))
+      .sort((a, b) => (a[2] ?? 0) - (b[2] ?? 0))
+      .slice(0, DRAWINGS_CAP)
+      .map((r) => r[0]);
   }
 
   async function openBlock(uid, { sidebar = false } = {}) {
@@ -127,6 +187,9 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     regionsOf,
     ensureRegionContainer,
     createRegion,
+    createDrawing,
+    drawingsOn,
+    resolveUidKind,
     openBlock,
     blockUidFromNode,
   };

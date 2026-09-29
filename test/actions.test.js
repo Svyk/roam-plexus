@@ -345,3 +345,25 @@ test("F1: re-dispatches when the editor has not mounted within 1500 ms, at most 
   assert.equal(await opened, "drw000001");
   assert.equal(clicks, 2);
 });
+
+import { detectRegionKind } from "../src/actions.js";
+
+test("detectRegionKind: cframe, group and area", () => {
+  const frame = { id: "f", type: "frame" };
+  const a = { id: "a", type: "rectangle", frameId: "f" };
+  const b = { id: "b", type: "rectangle", frameId: "f" };
+  const out = { id: "o", type: "rectangle" };
+  const all = [frame, a, b, out];
+  const c = detectRegionKind({ elements: all, ids: ["f"], selectedGroupIds: {} });
+  assert.equal(c.kind, "cframe");
+  assert.deepEqual(c.children.map((e) => e.id), ["a", "b"]);
+  assert.equal(detectRegionKind({ elements: all, ids: ["f", "a"], selectedGroupIds: {} }).kind, "cframe");
+  assert.equal(detectRegionKind({ elements: all, ids: ["f", "o"], selectedGroupIds: {} }).kind, "area");
+  const g1 = { id: "g1", type: "rectangle", groupIds: ["G"] };
+  const g2 = { id: "g2", type: "ellipse", groupIds: ["G"] };
+  const grp = detectRegionKind({ elements: [g1, g2, out], ids: ["g1", "g2"], selectedGroupIds: { G: true } });
+  assert.equal(grp.kind, "group");
+  assert.equal(grp.groupId, "G");
+  assert.equal(detectRegionKind({ elements: [g1, g2, out], ids: ["g1"], selectedGroupIds: { G: true } }).kind, "area");
+  assert.equal(detectRegionKind({ elements: all, ids: ["a"], selectedGroupIds: {} }).kind, "area");
+});

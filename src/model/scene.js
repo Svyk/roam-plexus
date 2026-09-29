@@ -1,4 +1,5 @@
 import { normalizeFrac } from "./region.js";
+import { polyBBox } from "./image.js";
 
 export const VIEW_EXPORT_PADDING = 10;
 
@@ -143,7 +144,9 @@ export function commonBounds(elements) {
 }
 
 // area: union of the listed live elements plus region.pad on each side (matches the hot SVG export).
-// rect: the fraction of an unrotated image element.
+// rect/poly: the fraction (poly: its bbox fraction) of an unrotated image element.
+// group: union of live members + pad. frame: frame bbox + pad. cframe: frame bbox exactly.
+// imgrect/imgpoly have no scene geometry (unsupported-kind).
 export function regionSceneBBox(region, elements) {
   const live = liveElements(elements);
   if (!region || !live.length) return { error: "no-elements" };
@@ -159,16 +162,34 @@ export function regionSceneBBox(region, elements) {
     const pad = region.pad ?? 10;
     return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing };
   }
-  if (region.kind === "rect") {
+  if (region.kind === "rect" || region.kind === "poly") {
     const el = live.find((e) => e.id === region.el);
     if (!el) return { error: "no-elements" };
     if (el.type !== "image") return { error: "not-image" };
     if (Number(el.angle) || 0) return { error: "rotated-image" };
-    const [rx, ry, rw, rh] = region.f;
+    const [rx, ry, rw, rh] = region.kind === "rect" ? region.f : (polyBBox(region.p) ?? [0, 0, 0, 0]);
+    if (!(rw > 0) || !(rh > 0)) return { error: "no-elements" };
     return {
       bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
       missing: [],
     };
+  }
+  if (region.kind === "group") {
+    const g = region.groupId ?? region.g;
+    const members = live.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+    if (!members.length) return { error: "no-elements" };
+    const b = commonBounds(members);
+    const pad = region.pad ?? 10;
+    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing: [] };
+  }
+  if (region.kind === "frame" || region.kind === "cframe") {
+    const id = region.frameId ?? region.fr;
+    const frame = live.find((el) => el.id === id);
+    if (!frame) return { error: "no-elements" };
+    if (frame.type !== "frame" && frame.type !== "magicframe") return { error: "not-frame" };
+    const b = elementBounds(frame);
+    const pad = region.kind === "cframe" ? 0 : (region.pad ?? 10);
+    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing: [] };
   }
   return { error: "unsupported-kind" };
 }

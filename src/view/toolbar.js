@@ -7,10 +7,25 @@ function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame }) {
   const view = doc.defaultView;
   let bar = null;
   let outer = null;
+  let frameButton = null;
+  let refreshTimer = null;
+
+  const refresh = () => {
+    refreshTimer = null;
+    if (!frameButton) return;
+    let ok = false;
+    try { ok = !!canFrame?.(); } catch { ok = false; }
+    frameButton.disabled = !ok;
+  };
+  // Selection changes land after the pointer/key event, so read it on the next tick. Scoped to the editor only.
+  const scheduleRefresh = () => {
+    if (refreshTimer != null) return;
+    refreshTimer = setTimeout(refresh, 0);
+  };
 
   const place = () => {
     if (!bar || !outer) return;
@@ -37,9 +52,13 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
 
   const hide = () => {
     view?.removeEventListener("resize", place);
+    if (refreshTimer != null) { clearTimeout(refreshTimer); refreshTimer = null; }
+    outer?.removeEventListener?.("pointerup", scheduleRefresh, true);
+    outer?.removeEventListener?.("keyup", scheduleRefresh, true);
     bar?.remove();
     bar = null;
     outer = null;
+    frameButton = null;
   };
 
   return {
@@ -49,8 +68,12 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
       bar = doc.createElement("div");
       bar.className = "plexus-portal plexus-toolbar";
       bar.style.zIndex = String(baseZIndex(doc, outerEl) + 1);
-      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion));
+      frameButton = button("Frame (with margin)", onFrameRegion);
+      bar.append(button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton);
       doc.body.append(bar);
+      refresh();
+      outerEl.addEventListener?.("pointerup", scheduleRefresh, true);
+      outerEl.addEventListener?.("keyup", scheduleRefresh, true);
       place();
       view?.addEventListener("resize", place);
     },

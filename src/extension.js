@@ -9,9 +9,29 @@ import { createEditorToolbar } from "./view/toolbar.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
+import { createHoverPreview } from "./view/hover-preview.js";
+import { installLinkInterception } from "./host/links.js";
+import { createPublicApi, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createActions } from "./actions.js";
 
 let activeLifecycle = null;
+
+const CONTEXT_MENU_LABEL = "Plexus: Region on image";
+
+function createEmitter() {
+  const listeners = new Map();
+  return {
+    on(type, cb) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(cb);
+    },
+    off(type, cb) { listeners.get(type)?.delete(cb); },
+    emit(detail) {
+      for (const cb of [...(listeners.get("change") ?? [])]) cb(detail);
+    },
+    clear() { listeners.clear(); },
+  };
+}
 
 function versionFlagTarget() {
   return globalThis.window ?? globalThis;
@@ -48,10 +68,14 @@ export async function onload({ extensionAPI, extension }) {
       lifecycle.add(() => cold.dispose());
       const toaster = createToaster({ doc });
       lifecycle.add(() => toaster.dispose());
+      const emitter = createEmitter();
+      lifecycle.add(() => emitter.clear());
       const toolbar = createEditorToolbar({
         doc,
         onAreaRegion: () => actions.createAreaRegion(),
         onImageRegion: () => actions.createImageRegion(),
+        onFrameRegion: () => actions.createFrameRegion(),
+        canFrame: () => actions.isFrameSelected(),
       });
       lifecycle.add(() => toolbar.dispose());
       actions = createActions({
@@ -63,9 +87,24 @@ export async function onload({ extensionAPI, extension }) {
         spotlight: showSpotlight,
         getSettings,
         doc,
+        api,
+        emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
       });
       lifecycle.add(() => actions.dispose());
+
+      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development" });
+      installPublicApi(publicApi, { win: flagTarget });
+      lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
+
+      if (api.ui?.blockContextMenu?.addCommand) {
+        api.ui.blockContextMenu.addCommand({
+          label: CONTEXT_MENU_LABEL,
+          callback: (e) => actions.createPlainImageRegion(e?.["block-uid"]).catch((error) => console.warn("[plexus] image region failed", error)),
+        });
+        lifecycle.add(() => api.ui.blockContextMenu.removeCommand?.({ label: CONTEXT_MENU_LABEL }));
+      }
+
       const regionref = createRegionRefRenderer({
         host,
         cache,
@@ -75,14 +114,40 @@ export async function onload({ extensionAPI, extension }) {
         onOpen: (uid, opts) => actions.openRegion(uid, opts).catch((error) => console.warn("[plexus] open failed", error)),
       });
       lifecycle.add(() => regionref.releaseAll());
+      const hover = createHoverPreview({ doc, api });
+      lifecycle.add(() => hover.dispose());
+      // Link interception and hover preview live only while an editor is mounted.
+      let mounted = null;
+      const unmountEditor = () => {
+        const current = mounted;
+        mounted = null;
+        if (!current) return;
+        for (const dispose of current.disposers) {
+          try { dispose(); } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
+        }
+        if (current.uid) emitter.emit({ uid: current.uid, kind: "drawing" });
+      };
+      lifecycle.add(unmountEditor);
       const discovery = createDiscovery({
         root: doc.body,
         onRegionButton: (btn) => regionref.claim(btn),
         onEditorMount: (el) => {
           const outer = el.closest(".excalidraw-outer-container");
           if (outer) toolbar.show(outer);
+          unmountEditor();
+          const app = native.findApp(el);
+          if (!app) return;
+          mounted = { uid: host.blockUidFromNode(el), disposers: [] };
+          mounted.disposers.push(hover.attach({ app, containerEl: el }));
+          mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
+            hover.hide();
+            if (sidebar) toaster.show("Opened in sidebar");
+          } }));
         },
-        onEditorUnmount: () => toolbar.hide(),
+        onEditorUnmount: () => {
+          toolbar.hide();
+          unmountEditor();
+        },
       });
       lifecycle.add(() => discovery.dispose());
       discovery.scanExisting();
