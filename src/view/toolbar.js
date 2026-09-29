@@ -16,7 +16,8 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion }) {
     if (!bar || !outer) return;
     const rect = outer.getBoundingClientRect();
     bar.style.left = `${rect.left + rect.width / 2}px`;
-    bar.style.top = `${rect.top + 8}px`;
+    const height = bar.getBoundingClientRect().height || 40;
+    bar.style.top = `${rect.bottom - 16 - height}px`;
   };
 
   const button = (label, handler) => {
