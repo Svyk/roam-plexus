@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseImageRefs, imageCropRect, polyBBox, normalizePoly, polyToLocal, clipSvgToPolygon, thumbnailSize,
+  parseImageRefs, imageCropRect, polyBBox, normalizePoly, polyToLocal, clipSvgToPolygon, thumbnailSize, simplifyPoly,
 } from "../src/model/image.js";
 
 test("parseImageRefs finds images in order with alt and url", () => {
@@ -79,4 +79,29 @@ test("thumbnailSize scales down only", () => {
   assert.deepEqual(thumbnailSize({ width: 300, height: 100, maxWidth: 480 }), { width: 300, height: 100 });
   assert.deepEqual(thumbnailSize({ width: 1000, height: 1, maxWidth: 10 }), { width: 10, height: 1 });
   assert.deepEqual(thumbnailSize({ width: 0, height: 5, maxWidth: 10 }), { width: 1, height: 1 });
+});
+
+test("simplifyPoly: collinear rectangle becomes 4 points", () => {
+  const p = [];
+  const n = 10;
+  for (let i = 0; i < n; i++) p.push(0.1 + (0.5 * i) / n, 0.1);
+  for (let i = 0; i < n; i++) p.push(0.6, 0.1 + (0.4 * i) / n);
+  for (let i = 0; i < n; i++) p.push(0.6 - (0.5 * i) / n, 0.5);
+  for (let i = 0; i < n; i++) p.push(0.1, 0.5 - (0.4 * i) / n);
+  assert.equal(p.length, 80);
+  const out = simplifyPoly(p);
+  assert.equal(out.length, 8);
+});
+
+test("simplifyPoly: ellipse stays <=48 points, area within 3%, string under 400 chars", () => {
+  const area = (q) => { let a = 0; for (let i = 0; i < q.length; i += 2) { const j = (i + 2) % q.length; a += q[i] * q[j + 1] - q[j] * q[i + 1]; } return Math.abs(a) / 2; };
+  const p = [];
+  for (let i = 0; i < 200; i++) { const t = (2 * Math.PI * i) / 200; p.push(0.5 + 0.4 * Math.cos(t), 0.5 + 0.3 * Math.sin(t)); }
+  const out = simplifyPoly(p);
+  assert.ok(out.length / 2 <= 48 && out.length >= 6);
+  assert.ok(Math.abs(area(out) - area(normalizePoly(p))) / area(normalizePoly(p)) < 0.03);
+  assert.ok(out.join(",").length < 400, String(out.join(",").length));
+  const noisy = [];
+  for (let i = 0; i < 300; i++) { const t = (2 * Math.PI * i) / 300; noisy.push(0.5 + 0.45 * Math.cos(t) + (i % 2) * 0.004, 0.5 + 0.45 * Math.sin(t)); }
+  assert.ok(simplifyPoly(noisy).length / 2 <= 48);
 });

@@ -173,3 +173,33 @@ test("links:false disables interception", () => {
   handlers.pointerup(u);
   assert.equal(u.prevented, 0);
 });
+
+test("plain click navigation clears the orphaned Excalidraw link tooltip", () => {
+  const removed = [];
+  const tips = [{ classList: { remove: (c) => removed.push(c) } }];
+  const s = setup({ pulls: { "[:block/uid]": null } });
+  const doc = { querySelectorAll: (sel) => (sel === ".excalidraw-tooltip--visible" ? tips : []) };
+  s.dispose();
+  const handlers = {};
+  const containerEl = {
+    ownerDocument: doc,
+    addEventListener: (t, f) => { handlers[t] = f; },
+    removeEventListener() {},
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    closest: () => null,
+  };
+  installLinkInterception({
+    app: { state: { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, getElementLinkAtPosition: () => "[[T]]" },
+    containerEl,
+    api: { graph: { name: "g" }, data: { pull: () => null }, ui: { mainWindow: { openPage() {} } } },
+    parse: () => ({ type: "page", title: "T" }),
+  });
+  const ev = { isTrusted: true, button: 0, clientX: 1, clientY: 1, preventDefault() {}, stopImmediatePropagation() {} };
+  handlers.pointerdown(ev);
+  handlers.pointerup(ev);
+  assert.deepEqual(removed, ["excalidraw-tooltip--visible"]);
+  removed.length = 0;
+  handlers.pointerdown(ev);
+  handlers.pointerup({ ...ev, shiftKey: true });
+  assert.deepEqual(removed, []);
+});

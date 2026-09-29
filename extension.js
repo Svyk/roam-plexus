@@ -1,4 +1,4 @@
-/* Plexus v0.2.0 | MIT | generated; edit src/ */
+/* Plexus v0.2.1 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -448,6 +448,52 @@ function polyBBox(p) {
   }
   return normalizeFrac([x1, y1, x2 - x1, y2 - y1]);
 }
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const [ax, ay] = pts[0];
+  const [bx, by] = pts[pts.length - 1];
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  let idx = -1, max = -1;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = len > 0 ? Math.abs(dy * pts[i][0] - dx * pts[i][1] + bx * ay - by * ax) / len : Math.hypot(pts[i][0] - ax, pts[i][1] - ay);
+    if (d > max) {
+      max = d;
+      idx = i;
+    }
+  }
+  if (max <= eps) return [pts[0], pts[pts.length - 1]];
+  return [...rdp(pts.slice(0, idx + 1), eps).slice(0, -1), ...rdp(pts.slice(idx), eps)];
+}
+function simplifyPoly(p, epsilon = 3e-3, maxPoints = 48) {
+  const poly = normalizePoly(p);
+  if (!poly) return null;
+  const pts = [];
+  for (let i = 0; i < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
+  if (pts.length <= 3) return poly;
+  let far = 1, best = -1;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
+    if (d > best) {
+      best = d;
+      far = i;
+    }
+  }
+  const chainA = pts.slice(0, far + 1);
+  const chainB = [...pts.slice(far), pts[0]];
+  let eps = epsilon;
+  let result = pts;
+  for (let guard = 0; guard < 60; guard++) {
+    const a = rdp(chainA, eps);
+    const b = rdp(chainB, eps);
+    const ring = [...a.slice(0, -1), ...b.slice(0, -1)];
+    if (ring.length < 3) break;
+    result = ring;
+    if (ring.length <= maxPoints) break;
+    eps *= 1.3;
+  }
+  return result.flat().map((n) => Math.round(n * 1e3) / 1e3);
+}
 function polyToLocal(p, bboxFrac) {
   const poly = normalizePoly(p);
   const bb = normalizeFrac(bboxFrac);
@@ -620,7 +666,22 @@ function commonBounds(elements) {
     Math.max(...all.map((b) => b[3]))
   ];
 }
-function regionSceneBBox(region, elements) {
+var FRAME_LABEL_HEIGHT = 20.5;
+var showsFrameLabel = (appState) => appState?.frameRendering?.name !== false;
+function exportBounds(elements, appState) {
+  const cb = commonBounds(elements);
+  if (!cb || !showsFrameLabel(appState)) return cb;
+  let [x1, y1, x2, y2] = cb;
+  for (const el of liveElements(elements)) {
+    if (el.type !== "frame" && el.type !== "magicframe") continue;
+    const b = elementBounds(el);
+    x1 = Math.min(x1, b[0]);
+    y1 = Math.min(y1, b[1] - FRAME_LABEL_HEIGHT);
+    x2 = Math.max(x2, b[2]);
+  }
+  return [x1, y1, x2, y2];
+}
+function regionSceneBBox(region, elements, appState) {
   const live = liveElements(elements);
   if (!region || !live.length) return { error: "no-elements" };
   if (region.kind === "area") {
@@ -663,12 +724,14 @@ function regionSceneBBox(region, elements) {
     if (frame.type !== "frame" && frame.type !== "magicframe") return { error: "not-frame" };
     const b = elementBounds(frame);
     const pad = region.kind === "cframe" ? 0 : region.pad ?? 10;
-    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing: [] };
+    let top = b[1] - pad;
+    if (region.kind === "frame" && showsFrameLabel(appState)) top = Math.min(top, b[1] - FRAME_LABEL_HEIGHT);
+    return { bbox: [b[0] - pad, top, b[2] + pad, b[3] + pad], missing: [] };
   }
   return { error: "unsupported-kind" };
 }
-function viewPngCropRect({ elements, bbox, naturalWidth, naturalHeight, padding = VIEW_EXPORT_PADDING }) {
-  const cb = commonBounds(elements);
+function viewPngCropRect({ elements, appState, bbox, naturalWidth, naturalHeight, padding = VIEW_EXPORT_PADDING }) {
+  const cb = exportBounds(elements, appState);
   if (!cb || !bbox) return { error: "bounds-mismatch", expected: [0, 0], actual: [naturalWidth, naturalHeight] };
   const ew = Math.round(cb[2] - cb[0] + 2 * padding);
   const eh = Math.round(cb[3] - cb[1] + 2 * padding);
@@ -1113,7 +1176,7 @@ function viewportRectOf(app, bbox) {
 // src/host/cache.js
 var DB_NAME = "plexus-cache";
 var STORE = "crops";
-var CACHE_VERSION = 2;
+var CACHE_VERSION = 3;
 function cropKey({ regionUid, geometryKey: geometryKey2, drawingHash, tier }) {
   return `v${CACHE_VERSION}|${regionUid}|${geometryKey2}|${drawingHash}|${tier}`;
 }
@@ -1654,7 +1717,7 @@ function resolveRegionTarget(host, region) {
   }
   const drawing = host.drawing(region.drawingUid);
   if (!drawing) return { error: "Drawing not found" };
-  const sceneBox = regionSceneBBox(region, drawing.elements);
+  const sceneBox = regionSceneBBox(region, drawing.elements, drawing.appState);
   if (sceneBox.error) return { error: `Region unavailable (${sceneBox.error})` };
   return { drawing, sceneBox, hash: drawing.hash };
 }
@@ -1674,6 +1737,7 @@ async function renderRegionCrop({ region, target, cold, doc, api, settleMs, load
   if (!rendered) return { error: "no-render" };
   const crop = viewPngCropRect({
     elements: drawing.elements,
+    appState: drawing.appState,
     bbox: sceneBox.bbox,
     naturalWidth: rendered.naturalWidth,
     naturalHeight: rendered.naturalHeight
@@ -1970,6 +2034,11 @@ function linksActive(app) {
   const tool = app?.state?.activeTool?.type;
   return !tool || tool === "selection" || !!app.state.viewModeEnabled;
 }
+function clearLinkTooltip(doc) {
+  for (const el of doc?.querySelectorAll?.(".excalidraw-tooltip--visible") ?? []) {
+    el.classList.remove("excalidraw-tooltip--visible");
+  }
+}
 function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {
   };
@@ -2008,6 +2077,7 @@ function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaA
       if (uid) api.ui.mainWindow.openPage({ page: { uid } });
       else api.ui.mainWindow.openPage({ page: { title: target.title } });
     } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+    clearLinkTooltip(containerEl.ownerDocument);
   }
   function pageUidOf(title) {
     return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
@@ -2714,7 +2784,7 @@ function createActions({
       if (Array.isArray(picked)) {
         region = { kind: "rect", drawingUid, el: element.id, f: picked, caption: "Image region" };
       } else {
-        const p = normalizePoly(picked.p);
+        const p = simplifyPoly(picked.p);
         if (!p || !polyBBox(p)) return null;
         region = { kind: "poly", drawingUid, el: element.id, p, caption: "Image region" };
       }
@@ -2748,7 +2818,7 @@ function createActions({
       if (Array.isArray(picked)) {
         region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked, caption: "Image region" };
       } else {
-        const p = normalizePoly(picked.p);
+        const p = simplifyPoly(picked.p);
         if (!p || !polyBBox(p)) return null;
         region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption: "Image region" };
       }
@@ -2892,6 +2962,18 @@ function createActions({
         toaster.show("Could not open image", { kind: "error" });
         return null;
       }
+      const img = await waitFor(() => findRenderedImage(uid), 3e3, 50, aborted);
+      if (img && !disposed) {
+        const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
+        if (f) {
+          const box2 = contentRect(img, doc.defaultView);
+          stopSpotlight?.();
+          stopSpotlight = spotlight({
+            rect: { left: box2.left + f[0] * box2.width, top: box2.top + f[1] * box2.height, width: f[2] * box2.width, height: f[3] * box2.height },
+            doc
+          }) || null;
+        }
+      }
       return uid;
     }
     const matches = () => {
@@ -2945,7 +3027,7 @@ function createActions({
       return null;
     }
     const { app } = editor;
-    const box = regionSceneBBox(region, sceneElements(app));
+    const box = regionSceneBBox(region, sceneElements(app), app.state);
     if (box.error) {
       toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
       return null;
@@ -3084,10 +3166,12 @@ async function onload({ extensionAPI, extension }) {
         thumbTimers.add(timer);
       };
       let mounted = null;
+      let navigatedAt = -Infinity;
       const unmountEditor = () => {
         const current = mounted;
         mounted = null;
         if (!current) return;
+        if (Date.now() - navigatedAt <= 2e3) clearLinkTooltip(doc);
         for (const dispose of current.disposers) {
           try {
             dispose();
@@ -3114,6 +3198,7 @@ async function onload({ extensionAPI, extension }) {
           mounted = { uid: host.blockUidFromNode(el), disposers: [] };
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
+            if (!sidebar) navigatedAt = Date.now();
             hover.hide();
             if (sidebar) toaster.show("Opened in sidebar");
           } }));

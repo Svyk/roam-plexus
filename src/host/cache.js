@@ -1,7 +1,7 @@
 const DB_NAME = "plexus-cache";
 const STORE = "crops";
 
-export const CACHE_VERSION = 2;
+export const CACHE_VERSION = 3;
 
 export function cropKey({ regionUid, geometryKey, drawingHash, tier }) {
   return `v${CACHE_VERSION}|${regionUid}|${geometryKey}|${drawingHash}|${tier}`;

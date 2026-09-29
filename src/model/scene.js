@@ -143,11 +143,30 @@ export function commonBounds(elements) {
   ];
 }
 
+export const FRAME_LABEL_HEIGHT = 20.5;
+
+const showsFrameLabel = (appState) => appState?.frameRendering?.name !== false;
+
+// Bounds of Roam's view PNG: commonBounds plus each frame's exported name label above it.
+export function exportBounds(elements, appState) {
+  const cb = commonBounds(elements);
+  if (!cb || !showsFrameLabel(appState)) return cb;
+  let [x1, y1, x2, y2] = cb;
+  for (const el of liveElements(elements)) {
+    if (el.type !== "frame" && el.type !== "magicframe") continue;
+    const b = elementBounds(el);
+    x1 = Math.min(x1, b[0]);
+    y1 = Math.min(y1, b[1] - FRAME_LABEL_HEIGHT);
+    x2 = Math.max(x2, b[2]);
+  }
+  return [x1, y1, x2, y2];
+}
+
 // area: union of the listed live elements plus region.pad on each side (matches the hot SVG export).
 // rect/poly: the fraction (poly: its bbox fraction) of an unrotated image element.
 // group: union of live members + pad. frame: frame bbox + pad. cframe: frame bbox exactly.
 // imgrect/imgpoly have no scene geometry (unsupported-kind).
-export function regionSceneBBox(region, elements) {
+export function regionSceneBBox(region, elements, appState) {
   const live = liveElements(elements);
   if (!region || !live.length) return { error: "no-elements" };
   if (region.kind === "area") {
@@ -189,13 +208,15 @@ export function regionSceneBBox(region, elements) {
     if (frame.type !== "frame" && frame.type !== "magicframe") return { error: "not-frame" };
     const b = elementBounds(frame);
     const pad = region.kind === "cframe" ? 0 : (region.pad ?? 10);
-    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing: [] };
+    let top = b[1] - pad;
+    if (region.kind === "frame" && showsFrameLabel(appState)) top = Math.min(top, b[1] - FRAME_LABEL_HEIGHT);
+    return { bbox: [b[0] - pad, top, b[2] + pad, b[3] + pad], missing: [] };
   }
   return { error: "unsupported-kind" };
 }
 
-export function viewPngCropRect({ elements, bbox, naturalWidth, naturalHeight, padding = VIEW_EXPORT_PADDING }) {
-  const cb = commonBounds(elements);
+export function viewPngCropRect({ elements, appState, bbox, naturalWidth, naturalHeight, padding = VIEW_EXPORT_PADDING }) {
+  const cb = exportBounds(elements, appState);
   if (!cb || !bbox) return { error: "bounds-mismatch", expected: [0, 0], actual: [naturalWidth, naturalHeight] };
   const ew = Math.round(cb[2] - cb[0] + 2 * padding);
   const eh = Math.round(cb[3] - cb[1] + 2 * padding);

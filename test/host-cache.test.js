@@ -14,8 +14,8 @@ function fakeUrls() {
 const blob = (size = 10, type = "image/png") => ({ size, type });
 
 test("cropKey format", () => {
-  assert.equal(cropKey({ regionUid: "r", geometryKey: "g", drawingHash: "h", tier: "svg" }), "v2|r|g|h|svg");
-  assert.equal(CACHE_VERSION, 2);
+  assert.equal(cropKey({ regionUid: "r", geometryKey: "g", drawingHash: "h", tier: "svg" }), "v3|r|g|h|svg");
+  assert.equal(CACHE_VERSION, 3);
 });
 
 test("memory-only: put, peek, get, clear", async () => {
@@ -102,22 +102,22 @@ test("IndexedDB: persists with graph prefix, hydrates, evicts to limit", async (
   const idb = fakeIdb();
   const urls = fakeUrls();
   const cache = createCropCache({ graph: "g", idb, urls, limitBytes: 25 });
-  await cache.put("v2|a", blob(10), { w: 1, h: 1 });
+  await cache.put("v3|a", blob(10), { w: 1, h: 1 });
   await new Promise((r) => setTimeout(r, 2));
-  await cache.put("v2|b", blob(10), { w: 1, h: 1 });
+  await cache.put("v3|b", blob(10), { w: 1, h: 1 });
   await new Promise((r) => setTimeout(r, 2));
-  await cache.put("v2|c", blob(10), { w: 1, h: 1 });
-  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v2|b", "g|v2|c"]);
+  await cache.put("v3|c", blob(10), { w: 1, h: 1 });
+  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v3|b", "g|v3|c"]);
 
   const cache2 = createCropCache({ graph: "g", idb, urls: fakeUrls() });
-  assert.equal(cache2.peek("v2|c"), null);
-  const hit = await cache2.get("v2|c");
+  assert.equal(cache2.peek("v3|c"), null);
+  const hit = await cache2.get("v3|c");
   assert.equal(hit.w, 1);
-  assert.ok(cache2.peek("v2|c"));
+  assert.ok(cache2.peek("v3|c"));
   assert.equal(await cache2.get("zzz"), null);
 
   const other = createCropCache({ graph: "other", idb, urls: fakeUrls() });
-  assert.equal(await other.get("v2|c"), null);
+  assert.equal(await other.get("v3|c"), null);
 
   await cache.clear();
   assert.equal(idb.rows.size, 0);
@@ -173,11 +173,11 @@ test("delete drops the memory entry, revokes its URL, and removes the row", asyn
 test("open purges this graph's rows from older cache versions, keeps current and other graphs", async () => {
   const idb = fakeIdb();
   const row = (key) => ({ key, blob: blob(), w: 1, h: 1, type: "image/png", size: 10, ts: 1 });
-  for (const k of ["g|old|geom|hash|png", "g|v1|old|geom|hash|png", "g|v2|keep", "other|old|x", "other|v2|keep"]) idb.rows.set(k, row(k));
+  for (const k of ["g|old|geom|hash|png", "g|v1|old|geom|hash|png", "g|v3|keep", "other|old|x", "other|v3|keep"]) idb.rows.set(k, row(k));
   const cache = createCropCache({ graph: "g", idb, urls: fakeUrls() });
-  assert.equal(await cache.get("v2|missing"), null);
+  assert.equal(await cache.get("v3|missing"), null);
   await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v2|keep", "other|old|x", "other|v2|keep"]);
+  assert.deepEqual([...idb.rows.keys()].sort(), ["g|v3|keep", "other|old|x", "other|v3|keep"]);
   const stale = await cache.get("old|geom|hash|png");
   assert.equal(stale, null);
 });
@@ -185,7 +185,7 @@ test("open purges this graph's rows from older cache versions, keeps current and
 test("put with persist:false stays in memory only", async () => {
   const idb = fakeIdb();
   const cache = createCropCache({ graph: "g", idb, urls: fakeUrls() });
-  await cache.put("v2|mem", blob(), { w: 1, h: 1, persist: false });
-  assert.ok(cache.peek("v2|mem"));
+  await cache.put("v3|mem", blob(), { w: 1, h: 1, persist: false });
+  assert.ok(cache.peek("v3|mem"));
   assert.equal(idb.rows.size, 0);
 });

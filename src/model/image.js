@@ -41,6 +41,50 @@ export function polyBBox(p) {
   return normalizeFrac([x1, y1, x2 - x1, y2 - y1]);
 }
 
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const [ax, ay] = pts[0];
+  const [bx, by] = pts[pts.length - 1];
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  let idx = -1, max = -1;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = len > 0 ? Math.abs(dy * pts[i][0] - dx * pts[i][1] + bx * ay - by * ax) / len : Math.hypot(pts[i][0] - ax, pts[i][1] - ay);
+    if (d > max) { max = d; idx = i; }
+  }
+  if (max <= eps) return [pts[0], pts[pts.length - 1]];
+  return [...rdp(pts.slice(0, idx + 1), eps).slice(0, -1), ...rdp(pts.slice(idx), eps)];
+}
+
+// Ramer-Douglas-Peucker on a closed polygon in fraction space; at least 3 points, at most maxPoints.
+export function simplifyPoly(p, epsilon = 0.003, maxPoints = 48) {
+  const poly = normalizePoly(p);
+  if (!poly) return null;
+  const pts = [];
+  for (let i = 0; i < poly.length; i += 2) pts.push([poly[i], poly[i + 1]]);
+  if (pts.length <= 3) return poly;
+  // Split the ring at point 0 and the point farthest from it so each chain has distinct endpoints.
+  let far = 1, best = -1;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
+    if (d > best) { best = d; far = i; }
+  }
+  const chainA = pts.slice(0, far + 1);
+  const chainB = [...pts.slice(far), pts[0]];
+  let eps = epsilon;
+  let result = pts;
+  for (let guard = 0; guard < 60; guard++) {
+    const a = rdp(chainA, eps);
+    const b = rdp(chainB, eps);
+    const ring = [...a.slice(0, -1), ...b.slice(0, -1)];
+    if (ring.length < 3) break;
+    result = ring;
+    if (ring.length <= maxPoints) break;
+    eps *= 1.3;
+  }
+  return result.flat().map((n) => Math.round(n * 1000) / 1000);
+}
+
 // Polygon points as 0..1 fractions of the bbox (flat array). null if invalid.
 export function polyToLocal(p, bboxFrac) {
   const poly = normalizePoly(p);

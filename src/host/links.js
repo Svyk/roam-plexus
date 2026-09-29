@@ -16,6 +16,13 @@ export function linksActive(app) {
   return !tool || tool === "selection" || !!app.state.viewModeEnabled;
 }
 
+// Excalidraw's link tooltip is orphaned on <body> when Plexus navigates away from under it.
+export function clearLinkTooltip(doc) {
+  for (const el of doc?.querySelectorAll?.(".excalidraw-tooltip--visible") ?? []) {
+    el.classList.remove("excalidraw-tooltip--visible");
+  }
+}
+
 // Capture-phase pointerdown/up on the editor container. Only trusted, short, still clicks on an element whose
 // link is a Roam link are taken over; everything else falls through to Excalidraw.
 export function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
@@ -61,6 +68,7 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
       if (uid) api.ui.mainWindow.openPage({ page: { uid } });
       else api.ui.mainWindow.openPage({ page: { title: target.title } });
     } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+    clearLinkTooltip(containerEl.ownerDocument);
   }
 
   function pageUidOf(title) {

@@ -25,7 +25,7 @@ export function resolveRegionTarget(host, region) {
   }
   const drawing = host.drawing(region.drawingUid);
   if (!drawing) return { error: "Drawing not found" };
-  const sceneBox = regionSceneBBox(region, drawing.elements);
+  const sceneBox = regionSceneBBox(region, drawing.elements, drawing.appState);
   if (sceneBox.error) return { error: `Region unavailable (${sceneBox.error})` };
   return { drawing, sceneBox, hash: drawing.hash };
 }
@@ -48,6 +48,7 @@ export async function renderRegionCrop({ region, target, cold, doc, api, settleM
   if (!rendered) return { error: "no-render" };
   const crop = viewPngCropRect({
     elements: drawing.elements,
+    appState: drawing.appState,
     bbox: sceneBox.bbox,
     naturalWidth: rendered.naturalWidth,
     naturalHeight: rendered.naturalHeight,

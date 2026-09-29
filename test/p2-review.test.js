@@ -53,7 +53,7 @@ function build(over = {}) {
     cache: over.cache || { put: async (k, b, d) => puts.push([k, b, d]), clear: async () => {} },
     cold: over.cold || {},
     toaster: { show: (m, o) => toasts.push([m, o]) },
-    spotlight: () => {},
+    spotlight: over.spotlight || (() => {}),
     getSettings: () => ({}),
     doc: over.doc || fakeCanvasDoc(),
     clipboard: { writeText: async () => {} },
@@ -164,12 +164,32 @@ test("contentRect: fill uses the box; contain letterboxes; scale-down never enla
   assert.deepEqual(contentRect(tall, view("contain")), { left: 0, top: 150, width: 100, height: 100 });
 });
 
+const blockDoc = () => fakeCanvasDoc({
+  querySelectorAll: () => [{
+    id: "block-input-blk000001",
+    closest: () => null,
+    querySelector: () => ({ getBoundingClientRect: () => ({ left: 100, top: 200, width: 400, height: 200 }), naturalWidth: 800, naturalHeight: 400 }),
+  }],
+});
+
+test("opening an imgrect/imgpoly region spotlights its rect on the rendered image", async () => {
+  for (const [string, want] of [
+    ["{{[[plexus-region]]: k=imgrect d=blk000001 i=0 f=0.25,0.5,0.5,0.25}}", { left: 200, top: 300, width: 200, height: 50 }],
+    ["{{[[plexus-region]]: k=imgpoly d=blk000001 i=0 p=0.25,0.5,0.75,0.5,0.5,0.75}}", { left: 200, top: 300, width: 200, height: 50 }],
+  ]) {
+    const spots = [];
+    const t = build({ pullBlock: () => ({ string }), doc: blockDoc(), spotlight: (a) => { spots.push(a.rect); } });
+    assert.equal(await t.actions.openRegion("reg000001"), "blk000001");
+    assert.deepEqual(spots, [want]);
+  }
+});
+
 test("opening an imgrect/imgpoly region goes to the image block: no toast, no editor wait", async () => {
   for (const string of [
     "{{[[plexus-region]]: k=imgrect d=blk000001 i=0 f=0.1,0.1,0.5,0.5}}",
     "{{[[plexus-region]]: k=imgpoly d=blk000001 i=0 p=0,0,1,0,1,1}}",
   ]) {
-    const t = build({ pullBlock: () => ({ string }) });
+    const t = build({ pullBlock: () => ({ string }), doc: blockDoc() });
     const started = Date.now();
     assert.equal(await t.actions.openRegion("reg000001", { sidebar: true }), "blk000001");
     assert.ok(Date.now() - started < 500);

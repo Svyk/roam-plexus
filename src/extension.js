@@ -10,7 +10,7 @@ import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
 import { createHoverPreview } from "./view/hover-preview.js";
-import { installLinkInterception } from "./host/links.js";
+import { clearLinkTooltip, installLinkInterception } from "./host/links.js";
 import { createPublicApi, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createActions } from "./actions.js";
 import { clearImageMemo } from "./host/image-source.js";
@@ -137,10 +137,12 @@ export async function onload({ extensionAPI, extension }) {
       };
       // Link interception and hover preview live only while an editor is mounted.
       let mounted = null;
+      let navigatedAt = -Infinity;
       const unmountEditor = () => {
         const current = mounted;
         mounted = null;
         if (!current) return;
+        if (Date.now() - navigatedAt <= 2000) clearLinkTooltip(doc);
         for (const dispose of current.disposers) {
           try { dispose(); } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
         }
@@ -163,6 +165,7 @@ export async function onload({ extensionAPI, extension }) {
           mounted = { uid: host.blockUidFromNode(el), disposers: [] };
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
+            if (!sidebar) navigatedAt = Date.now();
             hover.hide();
             if (sidebar) toaster.show("Opened in sidebar");
           } }));

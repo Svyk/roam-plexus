@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.1]
+
+- Fix: view-PNG bounds now include Excalidraw's frame name labels, so cold crops no longer fail the size guard in drawings with frames. `frame` regions extend up to the label. Crop cache version 3.
+- Lasso polygons are simplified (Ramer-Douglas-Peucker, at most 48 points) before they are stored.
+- Fix: Excalidraw's link tooltip no longer stays on screen after Plexus follows a link.
+- Clicking an image-region crop now spotlights the region on the opened image.
+
 ## [0.2.0]
 
 - Region kinds: group, frame, cframe (exact frame), poly, imgrect, imgpoly. "Frame (with margin)" toolbar button.

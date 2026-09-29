@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseDrawingProps, liveElements, elementBounds, commonBounds, regionSceneBBox,
+  parseDrawingProps, liveElements, elementBounds, commonBounds, exportBounds, regionSceneBBox,
   viewPngCropRect, fitZoom, sceneToViewport, viewportToScene, rectToFraction, cropSvgToFraction, normalizeSvgSize,
 } from "../src/model/scene.js";
 
@@ -251,8 +251,9 @@ test("regionSceneBBox frame adds pad, cframe is exact", () => {
     rect("child", 80, 90, 100, 100, { frameId: "fr" }),
     rect("plain", 0, 0, 5, 5),
   ];
-  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els).bbox, [40, 50, 460, 370]);
-  assert.deepEqual(regionSceneBBox({ kind: "cframe", frameId: "fr" }, els).bbox, [50, 60, 450, 360]);
+  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els, { frameRendering: { name: false } }).bbox, [40, 50, 460, 370]);
+  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els, {}).bbox, [40, 39.5, 460, 370]);
+  assert.deepEqual(regionSceneBBox({ kind: "cframe", frameId: "fr" }, els, {}).bbox, [50, 60, 450, 360]);
   assert.equal(regionSceneBBox({ kind: "cframe", frameId: "plain" }, els).error, "not-frame");
   assert.equal(regionSceneBBox({ kind: "cframe", frameId: "zzz" }, els).error, "no-elements");
 });
@@ -269,4 +270,30 @@ test("regionSceneBBox poly: polygon bbox inside the image element", () => {
 test("regionSceneBBox: imgrect/imgpoly have no scene geometry", () => {
   assert.equal(regionSceneBBox({ kind: "imgrect", i: 0, f: [0, 0, 1, 1] }, fixture()).error, "unsupported-kind");
   assert.equal(regionSceneBBox({ kind: "imgpoly", i: 0, p: tri }, fixture()).error, "unsupported-kind");
+});
+
+const frameFixture = (frameY = 100) => [
+  rect("a", 100, 100, 200, 100),
+  rect("b", 300, 370, 100, 100),
+  { id: "fr", type: "frame", x: 700, y: frameY, width: 300, height: 220, angle: 0, name: "Frame A" },
+];
+
+test("exportBounds: frame label extends the top, PNG predicts 920x410 and passes the guard", () => {
+  const els = frameFixture();
+  assert.deepEqual(commonBounds(els), [100, 100, 1000, 470]);
+  assert.deepEqual(exportBounds(els, {}), [100, 79.5, 1000, 470]);
+  const r = viewPngCropRect({ elements: els, appState: {}, bbox: [100, 100, 300, 200], naturalWidth: 920, naturalHeight: 410 });
+  assert.ok(!r.error, JSON.stringify(r));
+  assert.equal(viewPngCropRect({ elements: els, appState: {}, bbox: [100, 100, 300, 200], naturalWidth: 920, naturalHeight: 390 }).error, "bounds-mismatch");
+});
+
+test("exportBounds: a frame away from the top boundary does not change the bounds", () => {
+  const els = frameFixture(200);
+  assert.deepEqual(exportBounds(els, {}), commonBounds(els));
+});
+
+test("exportBounds: frameRendering.name false adds no label", () => {
+  const els = frameFixture();
+  assert.deepEqual(exportBounds(els, { frameRendering: { name: false } }), commonBounds(els));
+  assert.deepEqual(exportBounds([], {}), null);
 });

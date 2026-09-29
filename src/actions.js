@@ -1,7 +1,7 @@
-import { DEFAULT_PAD, geometryKey, isId, normalizePoly, parseRegion, serializeRegion } from "./model/region.js";
+import { DEFAULT_PAD, geometryKey, isId, parseRegion, serializeRegion } from "./model/region.js";
 import { regionSceneBBox, cropSvgToFraction, normalizeSvgSize } from "./model/scene.js";
 import { captionFromElements } from "./model/caption.js";
-import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, thumbnailSize } from "./model/image.js";
+import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
@@ -308,7 +308,7 @@ export function createActions({
       if (Array.isArray(picked)) {
         region = { kind: "rect", drawingUid, el: element.id, f: picked, caption: "Image region" };
       } else {
-        const p = normalizePoly(picked.p);
+        const p = simplifyPoly(picked.p);
         if (!p || !polyBBox(p)) return null;
         region = { kind: "poly", drawingUid, el: element.id, p, caption: "Image region" };
       }
@@ -344,7 +344,7 @@ export function createActions({
       if (Array.isArray(picked)) {
         region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked, caption: "Image region" };
       } else {
-        const p = normalizePoly(picked.p);
+        const p = simplifyPoly(picked.p);
         if (!p || !polyBBox(p)) return null;
         region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption: "Image region" };
       }
@@ -497,6 +497,18 @@ export function createActions({
         toaster.show("Could not open image", { kind: "error" });
         return null;
       }
+      const img = await waitFor(() => findRenderedImage(uid), 3000, 50, aborted);
+      if (img && !disposed) {
+        const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
+        if (f) {
+          const box = contentRect(img, doc.defaultView);
+          stopSpotlight?.();
+          stopSpotlight = spotlight({
+            rect: { left: box.left + f[0] * box.width, top: box.top + f[1] * box.height, width: f[2] * box.width, height: f[3] * box.height },
+            doc,
+          }) || null;
+        }
+      }
       return uid;
     }
     const matches = () => {
@@ -551,7 +563,7 @@ export function createActions({
       return null;
     }
     const { app } = editor;
-    const box = regionSceneBBox(region, sceneElements(app));
+    const box = regionSceneBBox(region, sceneElements(app), app.state);
     if (box.error) {
       toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
       return null;
