@@ -1,7 +1,7 @@
 import { withLock, lockName } from "./locks.js";
+import { isExcludedString } from "../model/mindmap.js";
 
 const TREE_PATTERN = "[:block/uid :block/string :block/open :block/order {:block/children ...}]";
-const EXCLUDED = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
 const COPY_CAP = 200;
 
 const byOrder = (a, b) => (a[":block/order"] ?? 0) - (b[":block/order"] ?? 0);
@@ -70,9 +70,9 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
     if (raw && raw[":block/open"] === false) await api.data.block.update({ block: { uid, open: true } });
   }
 
-  function createChild(rootUid, parentUid, { uid = api.util.generateUID(), string = "" } = {}) {
+  function createChild(rootUid, parentUid, { uid = api.util.generateUID(), string = "", unfold: doUnfold = true } = {}) {
     return run(rootUid, async () => {
-      await unfold(parentUid);
+      if (doUnfold) await unfold(parentUid);
       await createAt(parentUid, "last", uid, string);
       return uid;
     });
@@ -139,7 +139,7 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
       let skipped = 0;
       const plan = (node) => {
         const string = node[":block/string"] ?? "";
-        if (EXCLUDED.test(string)) { walk(node, () => { skipped += 1; }); return null; }
+        if (isExcludedString(string)) { walk(node, () => { skipped += 1; }); return null; }
         total += 1;
         return { string, open: node[":block/open"], children: kids(node).map(plan).filter(Boolean) };
       };
@@ -169,7 +169,7 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
       if (!tree) return { ok: false, reason: "missing" };
       const uids = new Set();
       let excluded = false;
-      walk(tree, (n) => { uids.add(n[":block/uid"]); if (EXCLUDED.test(n[":block/string"] ?? "")) excluded = true; });
+      walk(tree, (n) => { uids.add(n[":block/uid"]); if (isExcludedString(n[":block/string"] ?? "")) excluded = true; });
       if (excluded) return { ok: false, reason: "excluded", count: uids.size };
       if (expect.count != null && expect.count !== uids.size) return { ok: false, reason: "changed", count: uids.size };
       if (expect.string != null && expect.string !== (tree[":block/string"] ?? "")) return { ok: false, reason: "changed", count: uids.size };
@@ -230,5 +230,14 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
     };
   }
 
-  return { createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  // Runs fn now if the root's queue is idle, else once after it drains.
+  function onIdle(rootUid, fn) {
+    if (!busy(rootUid)) { fn(); return; }
+    let hooks = drainHooks.get(rootUid);
+    if (!hooks) { hooks = new Set(); drainHooks.set(rootUid, hooks); }
+    const hook = () => { hooks.delete(hook); if (!hooks.size && drainHooks.get(rootUid) === hooks) drainHooks.delete(rootUid); fn(); };
+    hooks.add(hook);
+  }
+
+  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
 }

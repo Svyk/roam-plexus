@@ -324,3 +324,16 @@ test("bench: full 200-node reconcile (cold and warm)", () => {
   console.log(`[bench] reconcile 201 nodes: cold add ${cold.toFixed(2)} ms, warm no-op ${warm.toFixed(2)} ms`);
   assert.ok(warm < 50);
 });
+
+test("a truncated tree keeps stored bounds so they survive until the tree is complete", () => {
+  const full = mk(["R", [["a", [["a1"]]], ["b"]]]);
+  let els = build(full);
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { bounds: ["b"] }) : e));
+  els = build(full, els);
+  const partial = mk(["R", [["a", [["a1"]]]]]);
+  partial.truncated = true;
+  els = applyOps(els, run(els, partial));
+  assert.deepEqual(get(els, nodeId("R", "R")).customData.plexus.mm.bounds, ["b"]);
+  els = applyOps(els, run(els, full));
+  assert.equal(get(els, boundaryId("R", "b")).isDeleted, false);
+});

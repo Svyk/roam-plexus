@@ -222,3 +222,52 @@ test("disposed watch never calls back", () => {
   s.flush();
   assert.equal(n, 0);
 });
+
+test("createChild with unfold:false leaves a collapsed parent (the drawing block) alone", async () => {
+  const s = setup({ blocks: { d: { ":block/open": false } } });
+  await s.w.createChild("r", "d", { uid: "u1", string: "x", unfold: false });
+  assert.deepEqual(s.writes.map((w) => w[0]), ["create"]);
+});
+
+test("copyBranch and deleteBranch treat a drawing string with leading whitespace as excluded", async () => {
+  const tree = B("s", "root", [B("d", " {{[[excalidraw]]}}"), B("k", "keep")]);
+  const s = setup({ blocks: { t: { ":block/open": true } }, trees: { s: tree } });
+  const copied = await s.w.copyBranch("r", "s", "t");
+  assert.equal(copied.ok, true);
+  assert.equal(copied.skipped, 1);
+  assert.ok(!s.writes.some(([, a]) => a.block?.string?.includes("excalidraw")));
+  const del = await s.w.deleteBranch("r", "s");
+  assert.equal(del.reason, "excluded");
+});
+
+test("a rejected queued op does not stall the next one", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true } } });
+  let first = true;
+  const orig = s.api.data.block.create;
+  s.api.data.block.create = async (a) => { if (first) { first = false; throw new Error("boom"); } return orig(a); };
+  await assert.rejects(s.w.createChild("r", "p", { uid: "a" }), /boom/);
+  await s.w.createChild("r", "p", { uid: "b" });
+  assert.equal(s.writes.length, 1);
+});
+
+test("watchTree uses the recursive pattern on the root uid and unwatches with the same pattern", () => {
+  const s = setup();
+  const off = s.w.watchTree("R", () => {});
+  assert.ok(s.watches[0].p.includes("{:block/children ...}"));
+  assert.equal(s.watches[0].i, '[:block/uid "R"]');
+  off();
+  assert.equal(s.watches.length, 0);
+});
+
+test("onIdle runs now when idle and once after the queue drains when busy", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true } } });
+  let ran = 0;
+  s.w.onIdle("r", () => { ran += 1; });
+  assert.equal(ran, 1);
+  const job = s.w.createChild("r", "p", { uid: "a" });
+  assert.equal(s.w.isBusy("r"), true);
+  s.w.onIdle("r", () => { ran += 1; });
+  assert.equal(ran, 1);
+  await job;
+  assert.equal(ran, 2);
+});

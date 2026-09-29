@@ -188,7 +188,8 @@ export function planMap({ elements, tree, sizes, layout = "right", textOf, rootP
   const dir = rootMM.layout || layout;
   const nodes = visibleNodes(tree);
   const uids = allUids(tree);
-  const bounds = (Array.isArray(rootMM.bounds) ? rootMM.bounds : []).filter((u) => uids.has(u));
+  const storedBounds = Array.isArray(rootMM.bounds) ? rootMM.bounds : [];
+  const bounds = tree.truncated ? storedBounds : storedBounds.filter((u) => uids.has(u));
   const info = new Map();
   const sizeMap = {};
   const pinned = {};

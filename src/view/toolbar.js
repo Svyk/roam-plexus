@@ -42,6 +42,7 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
     b.className = "plexus-toolbar-button";
     b.textContent = label;
     b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       Promise.resolve()

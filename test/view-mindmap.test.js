@@ -335,3 +335,92 @@ test("dispose closes an open input without writing and removes every listener an
   assert.equal(t.containerListeners.length, 0);
   assert.equal(t.listeners.change.size, 0);
 });
+
+test("dragging only the root pins nothing and the children follow on the next commit", () => {
+  const t = setup();
+  const ids = new Set([nodeId("R", "R"), `${nodeId("R", "R")}-t`]);
+  const before = t.el("a").x;
+  t.setElements(t.elements().map((e) => (ids.has(e.id) ? { ...e, x: e.x + 46, y: e.y + 30, version: e.version + 1 } : e)));
+  t.fireChange();
+  t.flush();
+  for (const uid of ["a", "b", "a1"]) assert.notEqual(mmOf(t.el(uid)).pinned, true, uid);
+  assert.equal(t.el("a").x, before + 46);
+  t.fireChange();
+  t.flush();
+  assert.notEqual(mmOf(t.el("a")).pinned, true);
+});
+
+test("a native text edit that ends while the pointer is down is written after the gesture", () => {
+  const t = setup();
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha2", originalText: "Alpha2", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.app.state.cursorButton = "down";
+  t.fireChange();
+  t.flush();
+  assert.equal(t.calls.length, 0);
+  t.app.state.cursorButton = "up";
+  for (const cb of [...t.listeners.up]) cb();
+  t.flush();
+  assert.deepEqual(t.calls.at(-1), ["updateString", "R", "a", "Alpha2", "Alpha"]);
+});
+
+test("a watch payload that arrives during a gesture is applied after pointer up", () => {
+  const raw = rawTree();
+  const t = setup({ raw });
+  t.app.state.cursorButton = "down";
+  raw[":block/children"][0][":block/string"] = "Alpha2";
+  t.watches.get("R").cb(raw);
+  t.flush();
+  assert.equal(t.elements().find((e) => e.id === `${t.el("a").id}-t`).originalText, "Alpha");
+  t.app.state.cursorButton = "up";
+  for (const cb of [...t.listeners.up]) cb();
+  t.flush();
+  assert.equal(t.elements().find((e) => e.id === `${t.el("a").id}-t`).originalText, "Alpha2");
+});
+
+test("refreshRoot waits for a busy write queue instead of pulling", async () => {
+  const t = setup();
+  let busy = true;
+  let idle = null;
+  t.writer.isBusy = () => busy;
+  t.writer.onIdle = (root, fn) => { idle = fn; };
+  t.writer.updateString = async () => ({ ok: false, reason: "changed" });
+  let pulls = 0;
+  const pull = t.writer.pullTree;
+  t.writer.pullTree = (u) => { pulls += 1; return pull(u); };
+  t.select("b");
+  t.key({ code: "F2", key: "F2" });
+  const input = t.doc.body.children[0];
+  input.value = "Beta 2";
+  input.fire("keydown", { key: "Enter" });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(pulls, 0);
+  assert.equal(typeof idle, "function");
+  busy = false;
+  idle();
+  assert.equal(pulls, 1);
+});
+
+test("Esc on a fresh placeholder reselects its anchor so hotkeys keep working", () => {
+  const t = setup();
+  t.select("b");
+  t.key(tab);
+  const input = t.doc.body.children[0];
+  input.fire("keydown", { key: "Escape" });
+  assert.deepEqual(Object.keys(t.app.state.selectedElementIds), [nodeId("R", "b")]);
+});
+
+test("commit persists projection writes with captureUpdate NEVER", () => {
+  const t = setup();
+  const seen = [];
+  const orig = t.app.updateScene;
+  t.app.updateScene = (u) => { if (u.elements) seen.push(u.captureUpdate); return orig.call(t.app, u); };
+  t.select("b");
+  t.key(tab);
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((c) => c === "NEVER"));
+});

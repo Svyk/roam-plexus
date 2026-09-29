@@ -1864,6 +1864,7 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
     b.className = "plexus-toolbar-button";
     b.textContent = label;
     b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       Promise.resolve().then(handler).catch((error) => console.warn("[plexus] toolbar action failed", error));
@@ -3635,7 +3636,8 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
   const dir = rootMM.layout || layout;
   const nodes = visibleNodes(tree);
   const uids = allUids(tree);
-  const bounds = (Array.isArray(rootMM.bounds) ? rootMM.bounds : []).filter((u) => uids.has(u));
+  const storedBounds = Array.isArray(rootMM.bounds) ? rootMM.bounds : [];
+  const bounds = tree.truncated ? storedBounds : storedBounds.filter((u) => uids.has(u));
   const info = /* @__PURE__ */ new Map();
   const sizeMap = {};
   const pinned = {};
@@ -3916,6 +3918,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     const watches = /* @__PURE__ */ new Map();
     const rootPos = /* @__PURE__ */ new Map();
     const pendingRefresh = /* @__PURE__ */ new Set();
+    const pendingFinished = /* @__PURE__ */ new Set();
+    const idleRefresh = /* @__PURE__ */ new Set();
+    const lastRoot = /* @__PURE__ */ new Map();
     const truncatedToast = /* @__PURE__ */ new Set();
     const offs = [];
     let snapshot = /* @__PURE__ */ new Map();
@@ -3927,7 +3932,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let clip = null;
     let pendingDelete = null;
     let input = null;
-    let fontSig = "";
+    const fontSig = /* @__PURE__ */ new Map();
     let loadedTimer = null;
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard = () => alive && !disposed && native.activeEditor(doc)?.app === app;
@@ -3935,6 +3940,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function takeSnapshot() {
       snapshot = /* @__PURE__ */ new Map();
       for (const el of els()) if (typeof el.id === "string" && el.id.startsWith("pmm-")) snapshot.set(el.id, el.version);
+      recordRoots();
+    }
+    function recordRoots() {
+      const live = els();
+      for (const root of trees.keys()) {
+        const el = live.find((e) => e.id === nodeId(root, root));
+        if (el && Number.isFinite(el.x)) lastRoot.set(root, { x: el.x, y: el.y });
+      }
     }
     function commit(mutate, roots) {
       if (!guard()) return false;
@@ -3968,8 +3981,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         }
         const texts = visibleNodes(tree).map((v) => textOf(v.node.uid, v.node));
         const sig = texts.join("\n");
-        if (sig !== fontSig && typeof measurer.ensureFonts === "function") {
-          fontSig = sig;
+        if (sig !== fontSig.get(root) && typeof measurer.ensureFonts === "function") {
+          fontSig.set(root, sig);
           Promise.resolve(measurer.ensureFonts(texts)).then((cleared) => {
             if (cleared && alive) commit(null, [root]);
           }).catch((error) => warn("fonts", error));
@@ -3995,6 +4008,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       watches.delete(root);
       trees.delete(root);
       rootPos.delete(root);
+      lastRoot.delete(root);
+      fontSig.delete(root);
       pendingRefresh.delete(root);
       if (ids.size && guard()) {
         app.updateScene({ elements: els().map((el) => ids.has(el.id) ? bump(el, { isDeleted: true }) : el), captureUpdate: "NEVER" });
@@ -4016,6 +4031,15 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       commit(null, [root]);
     }
     function refreshRoot(root) {
+      if (writer.isBusy?.(root)) {
+        if (idleRefresh.has(root)) return;
+        idleRefresh.add(root);
+        writer.onIdle(root, () => {
+          idleRefresh.delete(root);
+          if (alive) refreshRoot(root);
+        });
+        return;
+      }
       let raw = null;
       try {
         raw = writer.pullTree(root);
@@ -4050,7 +4074,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           return;
         }
         const roots = discoverRoots();
-        for (const root of roots) trees.set(root, null);
+        for (const root of roots) if (!trees.has(root)) trees.set(root, null);
         for (const root of roots) {
           ensureRoot(root);
           refreshRoot(root);
@@ -4068,6 +4092,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (el.id !== nodeId(mm.map, mm.uid) || !trees.get(mm.map) || !findNode(trees.get(mm.map), mm.uid)) return null;
       return { el, uid: mm.uid, root: mm.map, isRoot: mm.root === true };
     }
+    const selectedId = (root, uid) => !!state().selectedElementIds?.[nodeId(root, uid)];
     function select(root, uid) {
       app.updateScene({ appState: { selectedElementIds: { [nodeId(root, uid)]: true }, selectedGroupIds: {} }, captureUpdate: "NEVER" });
     }
@@ -4096,10 +4121,10 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (!alive) return;
       const st = state();
       const editingId = st.editingTextElement?.id ?? null;
-      const finished = prevEditingId && !editingId ? prevEditingId : null;
+      if (prevEditingId && !editingId) pendingFinished.add(prevEditingId);
       prevEditingId = editingId;
       const nonce = app.scene?.getSceneNonce?.();
-      if (!finished && !dirty && nonce !== void 0 && nonce === lastNonce) {
+      if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce !== void 0 && nonce === lastNonce) {
         if (input) placeInput();
         return;
       }
@@ -4110,12 +4135,17 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       }
       dirty = false;
       lastNonce = nonce;
+      const finishedIds = [...pendingFinished];
+      pendingFinished.clear();
+      const refreshRoots = [...pendingRefresh];
+      pendingRefresh.clear();
       try {
-        if (finished) nativeTextEdit(finished);
+        for (const id of finishedIds) nativeTextEdit(id);
         nativeChanges();
       } catch (error) {
         warn("change pass", error);
       }
+      for (const root of refreshRoots) if (trees.has(root)) refreshRoot(root);
       if (input) placeInput();
     }
     function nativeTextEdit(textId2) {
@@ -4144,12 +4174,13 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     }
     function nativeChanges() {
       const live = els();
+      const liveById = new Map(live.map((e) => [e.id, e]));
       let restored = false;
       for (const root of trees.keys()) {
         const tree = trees.get(root);
         if (!tree) continue;
         for (const v of visibleNodes(tree)) {
-          const el = live.find((e) => e.id === nodeId(root, v.node.uid));
+          const el = liveById.get(nodeId(root, v.node.uid));
           if (el && el.isDeleted && snapshot.get(el.id) !== el.version) restored = true;
         }
       }
@@ -4162,16 +4193,22 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         const tree = trees.get(root);
         if (!tree) continue;
         const plan = planMap({ elements: live, tree, sizes: sizer, textOf });
+        const rootEl = plan.info.get(root)?.el;
+        const was = lastRoot.get(root);
+        const dx = rootEl && was ? rootEl.x - was.x : 0;
+        const dy = rootEl && was ? rootEl.y - was.y : 0;
         for (const v of plan.nodes) {
           if (v.depth === 0) continue;
           const info = plan.info.get(v.node.uid);
           const pos = plan.positions[v.node.uid];
           if (!info.el || info.el.isDeleted || info.mm && info.mm.pinned === true || !pos) continue;
-          if (Math.abs(info.el.x - pos.x) > 2 || Math.abs(info.el.y - pos.y) > 2) pinPatch.set(info.el.id, true);
+          const off = (ox, oy) => Math.abs(info.el.x - (pos.x - ox)) > 2 || Math.abs(info.el.y - (pos.y - oy)) > 2;
+          if (off(0, 0) && off(dx, dy)) pinPatch.set(info.el.id, true);
         }
       }
       const roots = [...trees.keys()].filter((r) => trees.get(r));
-      commit(pinPatch.size ? (list) => list.map((el) => pinPatch.has(el.id) ? patchMarker(el, { pinned: true }) : el) : null, roots);
+      const wasCommitted = commit(pinPatch.size ? (list) => list.map((el) => pinPatch.has(el.id) ? patchMarker(el, { pinned: true }) : el) : null, roots);
+      if (!wasCommitted) recordRoots();
     }
     function writeString(root, uid, value, base3) {
       const tree = trees.get(root);
@@ -4233,7 +4270,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       s.top = `${r.top}px`;
       s.width = `${Math.max(r.width, 80 * zoom)}px`;
       s.height = `${r.height}px`;
-      s.fontSize = `${16 * zoom}px`;
+      const txt = els().find((e) => e.id === textId(input.rootUid, input.uid));
+      s.fontSize = `${(txt && Number.isFinite(txt.fontSize) ? txt.fontSize : 16) * zoom}px`;
     }
     function openInput({ root, uid, base: base3, placeholder = null }) {
       closeInput({ write: true });
@@ -4297,8 +4335,11 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const tree = trees.get(root);
       const found = tree ? findNode(tree, uid) : null;
       if (found?.parent) {
+        const at = found.parent.children.indexOf(found.node);
+        const anchor = at > 0 ? found.parent.children[at - 1] : found.parent;
         found.parent.children = found.parent.children.filter((c) => c.uid !== uid);
         commit(null, [root]);
+        if (selectedId(root, uid)) select(root, anchor.uid);
       }
       writer.discardPlaceholder(root, uid, placeholder).then(() => refreshRoot(root)).catch((error) => {
         warn("discard", error);
@@ -4559,7 +4600,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const cy = (st.height || 0) / (2 * zoom) - (st.scrollY || 0);
       rootPos.set(root, { x: cx - 70, y: cy - 24 });
       trees.set(root, { uid: root, string: PLACEHOLDER_ROOT, open: true, children: [] });
-      const job = writer.createChild(root, drawingUid, { uid: root, string: PLACEHOLDER_ROOT });
+      const job = writer.createChild(root, drawingUid, { uid: root, string: PLACEHOLDER_ROOT, unfold: false });
       ensureRoot(root);
       commit(null, [root]);
       select(root, root);
@@ -4676,7 +4717,6 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
 
 // src/host/mmwrites.js
 var TREE_PATTERN = "[:block/uid :block/string :block/open :block/order {:block/children ...}]";
-var EXCLUDED = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
 var COPY_CAP = 200;
 var byOrder2 = (a, b) => (a[":block/order"] ?? 0) - (b[":block/order"] ?? 0);
 var kids = (node) => (node?.[":block/children"] || []).slice().sort(byOrder2);
@@ -4736,9 +4776,9 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     const raw = pullRaw("[:block/uid :block/open]", uid);
     if (raw && raw[":block/open"] === false) await api.data.block.update({ block: { uid, open: true } });
   }
-  function createChild(rootUid, parentUid, { uid = api.util.generateUID(), string = "" } = {}) {
+  function createChild(rootUid, parentUid, { uid = api.util.generateUID(), string = "", unfold: doUnfold = true } = {}) {
     return run(rootUid, async () => {
-      await unfold(parentUid);
+      if (doUnfold) await unfold(parentUid);
       await createAt(parentUid, "last", uid, string);
       return uid;
     });
@@ -4798,7 +4838,7 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       let skipped2 = 0;
       const plan = (node) => {
         const string = node[":block/string"] ?? "";
-        if (EXCLUDED.test(string)) {
+        if (isExcludedString(string)) {
           walk(node, () => {
             skipped2 += 1;
           });
@@ -4833,7 +4873,7 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       let excluded = false;
       walk(tree, (n) => {
         uids.add(n[":block/uid"]);
-        if (EXCLUDED.test(n[":block/string"] ?? "")) excluded = true;
+        if (isExcludedString(n[":block/string"] ?? "")) excluded = true;
       });
       if (excluded) return { ok: false, reason: "excluded", count: uids.size };
       if (expect.count != null && expect.count !== uids.size) return { ok: false, reason: "changed", count: uids.size };
@@ -4909,7 +4949,24 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       }
     };
   }
-  return { createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  function onIdle(rootUid, fn) {
+    if (!busy(rootUid)) {
+      fn();
+      return;
+    }
+    let hooks = drainHooks.get(rootUid);
+    if (!hooks) {
+      hooks = /* @__PURE__ */ new Set();
+      drainHooks.set(rootUid, hooks);
+    }
+    const hook = () => {
+      hooks.delete(hook);
+      if (!hooks.size && drainHooks.get(rootUid) === hooks) drainHooks.delete(rootUid);
+      fn();
+    };
+    hooks.add(hook);
+  }
+  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
 }
 
 // src/host/measure.js
