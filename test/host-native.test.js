@@ -9,6 +9,7 @@ function makeApp({ svg = "<svg/>", throwOnExecute = false, silent = false } = {}
     updateScene(u) { this.updates.push(u); Object.assign(this.state, u.appState); },
     getSceneElementsIncludingDeleted: () => [{ id: "a" }, { id: "gone", isDeleted: true }],
     actionManager: {
+      updater: (r) => { if (r && typeof r.then === "function") r.then((v) => app.updateScene({ appState: v })); },
       actions: { copyAsSvg: { name: "copyAsSvg" } },
       executeAction: async () => {
         if (throwOnExecute) throw new Error("exec failed");
@@ -174,14 +175,18 @@ test("withClipboard runs behind an in-flight capture", async () => {
   assert.deepEqual(order, ["capture-end", "write"]);
 });
 
-test("F2: toast:null is applied after the copyAsSvg action returns its own toast", async () => {
+test("F2: toast:null lands after the toast, executeAction returns nothing (Roam contract)", async () => {
   const app = makeApp({ silent: true });
   const clipboard = makeClipboard();
   app.clipboard = clipboard;
-  app.actionManager.executeAction = async () => {
-    await clipboard.writeText("<svg>x</svg>");
-    await new Promise((r) => setTimeout(r, 30));
-    app.updateScene({ appState: { toast: { message: "Copied selection to clipboard as SVG" } } });
+  app.actionManager.executeAction = function () {
+    // void return; perform promise only reaches this.updater, toast set several ticks after writeText
+    this.updater((async () => {
+      await clipboard.writeText("<svg>x</svg>");
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 30));
+      return { toast: { message: "Copied selection to clipboard as SVG" } };
+    })());
   };
   const svg = await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200 });
   assert.equal(svg, "<svg>x</svg>");
@@ -191,11 +196,33 @@ test("F2: toast:null is applied after the copyAsSvg action returns its own toast
   assert.deepEqual(last.selectedElementIds, { keep: true });
 });
 
+test("F2: updater is restored after capture", async () => {
+  const app = makeApp();
+  const clipboard = makeClipboard();
+  app.clipboard = clipboard;
+  const orig = app.actionManager.updater;
+  await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200 });
+  assert.equal(app.actionManager.updater, orig);
+});
+
+test("F2: without an updater, polls for the toast before clearing it", async () => {
+  const app = makeApp({ silent: true });
+  delete app.actionManager.updater;
+  const clipboard = makeClipboard();
+  app.clipboard = clipboard;
+  app.actionManager.executeAction = () => {
+    clipboard.writeText("<svg>x</svg>");
+    setTimeout(() => app.updateScene({ appState: { toast: { message: "Copied" } } }), 40);
+  };
+  await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200 });
+  assert.equal(app.state.toast, null);
+});
+
 test("F2: a never-settling action only delays restore by doneWaitMs", async () => {
   const app = makeApp({ silent: true });
   const clipboard = makeClipboard();
   app.clipboard = clipboard;
-  app.actionManager.executeAction = () => { clipboard.writeText("<svg>x</svg>"); return new Promise(() => {}); };
+  app.actionManager.executeAction = function () { clipboard.writeText("<svg>x</svg>"); this.updater(new Promise(() => {})); };
   const started = Date.now();
   await captureSelectionSvg(app, ["a"], { clipboard, raf: (cb) => cb(), timeoutMs: 200, doneWaitMs: 50 });
   assert.ok(Date.now() - started < 500);
