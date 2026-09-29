@@ -105,3 +105,13 @@ test("simplifyPoly: ellipse stays <=48 points, area within 3%, string under 400 
   for (let i = 0; i < 300; i++) { const t = (2 * Math.PI * i) / 300; noisy.push(0.5 + 0.45 * Math.cos(t) + (i % 2) * 0.004, 0.5 + 0.45 * Math.sin(t)); }
   assert.ok(simplifyPoly(noisy).length / 2 <= 48);
 });
+
+test("simplifyPoly: collinear and sliver lassos stay within 48 points", () => {
+  const line = [];
+  for (let i = 0; i < 300; i++) line.push(i / 300, i / 300);
+  assert.ok(simplifyPoly(line).length <= 96);
+  const saw = [];
+  for (let i = 0; i < 100; i++) saw.push(i / 100, i % 2 ? 0.504 : 0.5);
+  saw.push(1, 0.5);
+  assert.ok(simplifyPoly(saw).length <= 96);
+});

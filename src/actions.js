@@ -393,10 +393,10 @@ export function createActions({
     },
   };
 
-  function findRenderedImage(blockUid) {
+  function findRenderedImage(blockUid, index = 0) {
     for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
       if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen")) continue;
-      const img = el.querySelector("img.rm-inline-img:not(.rm-inline-img--excalidraw)");
+      const img = el.querySelectorAll("img.rm-inline-img:not(.rm-inline-img--excalidraw)")[index];
       if (img) return img;
     }
     return null;
@@ -497,7 +497,17 @@ export function createActions({
         toaster.show("Could not open image", { kind: "error" });
         return null;
       }
-      const img = await waitFor(() => findRenderedImage(uid), 3000, 50, aborted);
+      const settled = (img) => {
+        if (!img || !(img.naturalWidth > 0)) return null;
+        const r = img.getBoundingClientRect?.();
+        return r && r.width > 0 && r.height > 0 ? img : null;
+      };
+      const index = region.i || 0;
+      let img = await waitFor(() => settled(findRenderedImage(uid, index)), 3000, 50, aborted);
+      if (img) {
+        await sleep(100);
+        img = settled(findRenderedImage(uid, index)) || img;
+      }
       if (img && !disposed) {
         const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
         if (f) {

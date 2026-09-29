@@ -252,7 +252,7 @@ test("regionSceneBBox frame adds pad, cframe is exact", () => {
     rect("plain", 0, 0, 5, 5),
   ];
   assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els, { frameRendering: { name: false } }).bbox, [40, 50, 460, 370]);
-  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els, {}).bbox, [40, 39.5, 460, 370]);
+  assert.deepEqual(regionSceneBBox({ kind: "frame", frameId: "fr", pad: 10 }, els, {}).bbox, [40, 29.5, 460, 370]);
   assert.deepEqual(regionSceneBBox({ kind: "cframe", frameId: "fr" }, els, {}).bbox, [50, 60, 450, 360]);
   assert.equal(regionSceneBBox({ kind: "cframe", frameId: "plain" }, els).error, "not-frame");
   assert.equal(regionSceneBBox({ kind: "cframe", frameId: "zzz" }, els).error, "no-elements");

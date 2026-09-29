@@ -209,7 +209,7 @@ export function regionSceneBBox(region, elements, appState) {
     const b = elementBounds(frame);
     const pad = region.kind === "cframe" ? 0 : (region.pad ?? 10);
     let top = b[1] - pad;
-    if (region.kind === "frame" && showsFrameLabel(appState)) top = Math.min(top, b[1] - FRAME_LABEL_HEIGHT);
+    if (region.kind === "frame" && showsFrameLabel(appState)) top = b[1] - pad - FRAME_LABEL_HEIGHT;
     return { bbox: [b[0] - pad, top, b[2] + pad, b[3] + pad], missing: [] };
   }
   return { error: "unsupported-kind" };

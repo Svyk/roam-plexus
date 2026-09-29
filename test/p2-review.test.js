@@ -120,7 +120,7 @@ const imgEl = { id: "block-input-x-blk000001", closest: () => null };
 const plainImage = (rect = { left: 0, top: 0, width: 200, height: 100 }) => ({ getBoundingClientRect: () => rect, naturalWidth: 400, naturalHeight: 200 });
 function plain(picked) {
   const img = plainImage();
-  const doc = fakeCanvasDoc({ querySelectorAll: () => [{ ...imgEl, querySelector: () => img }] });
+  const doc = fakeCanvasDoc({ querySelectorAll: () => [{ ...imgEl, querySelectorAll: () => [img] }] });
   return build({
     doc,
     pullBlock: () => ({ string: "text ![alt](https://x/y.png) tail" }),
@@ -168,7 +168,7 @@ const blockDoc = () => fakeCanvasDoc({
   querySelectorAll: () => [{
     id: "block-input-blk000001",
     closest: () => null,
-    querySelector: () => ({ getBoundingClientRect: () => ({ left: 100, top: 200, width: 400, height: 200 }), naturalWidth: 800, naturalHeight: 400 }),
+    querySelectorAll: () => [{ getBoundingClientRect: () => ({ left: 100, top: 200, width: 400, height: 200 }), naturalWidth: 800, naturalHeight: 400 }],
   }],
 });
 
@@ -360,4 +360,27 @@ test("image tool cancels on wheel, scroll and resize instead of using a stale re
     (type === "resize" ? view : doc).dispatchEvent(new Event(type));
     assert.equal(await tool, null);
   }
+});
+
+test("F5: spotlight waits for a loaded, laid-out image", async () => {
+  let polls = 0;
+  const img = {
+    getBoundingClientRect: () => (polls < 3 ? { left: 100, top: 200, width: 0, height: 0 } : { left: 100, top: 200, width: 400, height: 200 }),
+    get naturalWidth() { polls += 1; return polls < 3 ? 0 : 800; },
+    naturalHeight: 400,
+  };
+  const doc = fakeCanvasDoc({ querySelectorAll: () => [{ id: "block-input-blk000001", closest: () => null, querySelectorAll: () => [img] }] });
+  const spots = [];
+  const t = build({ pullBlock: () => ({ string: "{{[[plexus-region]]: k=imgrect d=blk000001 i=0 f=0.25,0.5,0.5,0.25}}" }), doc, spotlight: (a) => { spots.push(a.rect); } });
+  await t.actions.openRegion("reg000001");
+  assert.deepEqual(spots, [{ left: 200, top: 300, width: 200, height: 50 }]);
+});
+
+test("F5: spotlight measures the image at region.i", async () => {
+  const mk = (left) => ({ getBoundingClientRect: () => ({ left, top: 0, width: 100, height: 100 }), naturalWidth: 100, naturalHeight: 100 });
+  const doc = fakeCanvasDoc({ querySelectorAll: () => [{ id: "block-input-blk000001", closest: () => null, querySelectorAll: () => [mk(0), mk(500)] }] });
+  const spots = [];
+  const t = build({ pullBlock: () => ({ string: "{{[[plexus-region]]: k=imgrect d=blk000001 i=1 f=0,0,0.5,0.5}}" }), doc, spotlight: (a) => { spots.push(a.rect); } });
+  await t.actions.openRegion("reg000001");
+  assert.equal(spots[0].left, 500);
 });

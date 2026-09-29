@@ -82,6 +82,10 @@ export function simplifyPoly(p, epsilon = 0.003, maxPoints = 48) {
     if (ring.length <= maxPoints) break;
     eps *= 1.3;
   }
+  if (result.length > maxPoints) {
+    const step = result.length / maxPoints;
+    result = Array.from({ length: maxPoints }, (_, i) => result[Math.floor(i * step)]);
+  }
   return result.flat().map((n) => Math.round(n * 1000) / 1000);
 }
 
