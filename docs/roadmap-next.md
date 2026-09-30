@@ -412,7 +412,7 @@ S · value medium · depends: none · Fable next 3/4 · Opus next 3/4
 6. The today card re-resolves at a simulated midnight. (The query-node part was dropped with EMB-3.)
 7. Hotkeys appear in the palette and canvas menu; typing bench +0 with the editor closed and the picker closed.
 
-### P10: Think in bullets while drawing
+### P10: Think in bullets while drawing — done 2026-09-30, v0.10.0 (`55cf9bf`)
 
 **Goal.** Keep the Roam outline visible while drawing full-screen, drag bullets from it (or the sidebar) onto the canvas, and make `[[page]]` / `((uid))` tokens inside text elements clickable. The owner's words: region blocks as collapsed children "is the way Roam thinking happens"; this phase keeps that view on screen.
 
