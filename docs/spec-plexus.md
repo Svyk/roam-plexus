@@ -370,6 +370,15 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Typing | +0.12 ms/key (two palette entries) |
 | Not measured | OS capture of Ctrl+Alt+Arrow (CDP bypasses the OS); image refetch after a restore; first edit of a builder text with `fontFamily ≠ 5` |
 
+#### Phase 13 measured facts (2026-09-30, Readwisenotes `1929...`)
+
+| Item | Result | Consequence |
+|---|---|---|
+| Native align / distribute | `actionManager.actions` has `alignTop`, `alignBottom`, `alignLeft`, `alignRight`, `alignVerticallyCentered`, `alignHorizontallyCentered`, `distributeHorizontally`, `distributeVertically`, `flipHorizontal`, `flipVertical`, `group`, `ungroup`. `executeAction(alignTop, "api")` on three bound boxes moved them to one top and re-routed the bound arrow (points changed, both bindings kept) | Plain `updateScene` moves do not re-route arrows; AUTH-9 either uses these actions or recomputes the endpoints of arrows bound to moved elements in the same write |
+| Mind-map nodes in frames | A map node's `frameId` set to a frame stayed through 3 s of reconcile passes, and setting it back to `null` stuck | MM-12 lanes can be frames holding map nodes |
+| Opening a drawing for a write | `newDrawing` refuses while another editor is open ("Close the open drawing first"); `openDrawingOnce` navigates and clicks the full-screen icon; the P5 migration pasted elements into freshly opened native drawings and Roam saved them | Saving a template means: close, open the template drawing, write, close, reopen the original |
+| Public API | `RoamPlexus`: `build`, `create`, `open`, `whenOpen`, `scene`, `thumbnail`, `drawingsOn`, `regionsOf`, events | Templates reuse `create` / `thumbnail`; starters use `build` |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.
