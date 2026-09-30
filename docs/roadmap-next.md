@@ -325,7 +325,7 @@ S · value high · depends: none · Fable now 4/5 · Opus next 4/5
 10. With the editor mounted, "Copy crop as PNG" pastes a 2x crop into a Word document; with the editor closed, 1x with a toast. `:edit/time` unchanged after hot capture; a frame-kind crop keeps its label at 2x.
 11. Compass: both repos green and published; the published `extension.js` of each matches its local build.
 
-### P9: Roam onto the canvas
+### P9: Roam onto the canvas — done 2026-09-29, v0.9.0 (`64cd0e9`)
 
 **Goal.** Create drawings where you are, drop blocks and pages by search or paste instead of the clipboard, place many bullets at once, create note cards as real blocks, and add a live today card.
 
