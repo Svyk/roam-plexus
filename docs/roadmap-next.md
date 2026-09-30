@@ -451,7 +451,7 @@ M · value high · depends: none · Fable next 4/5 · Opus later 4/4
 5. Modifier-click on a `[[token]]` navigates, Shift opens the sidebar, several links show a chooser; double-click still edits.
 6. Unload leaves no dock and no listeners.
 
-### P11: Out the door
+### P11: Out the door — done 2026-09-30, v0.11.0 (`4b5b8a0`)
 
 **Goal.** Frames to PDF pages, frame presets, embed text on slides, and decks driven by the outline, with speaker notes from blocks, a laser, and clean paste from canvas to block.
 
