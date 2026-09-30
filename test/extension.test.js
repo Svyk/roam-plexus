@@ -828,6 +828,8 @@ test("link selected writes relationPlan under the source lock and undo deletes b
     { id: "m1", type: "rectangle", x: 0, y: 0, width: 20, height: 20, customData: { plexus: { mm: { uid: "srcuid001" } } } },
     { id: "l1", type: "rectangle", x: 50, y: 0, width: 20, height: 20, link: "((dstuid001))" },
   ];
+  const hadNav = globalThis.navigator != null;
+  if (!hadNav) globalThis.navigator = {};
   const previous = globalThis.navigator.locks;
   const names = [];
   globalThis.navigator.locks = {
@@ -866,7 +868,8 @@ test("link selected writes relationPlan under the source lock and undo deletes b
       assert.equal(confirms.length, 0);
     });
   } finally {
-    if (previous === undefined) delete globalThis.navigator.locks;
+    if (!hadNav) delete globalThis.navigator;
+    else if (previous === undefined) delete globalThis.navigator.locks;
     else globalThis.navigator.locks = previous;
   }
 });
