@@ -15,6 +15,8 @@ export const BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d
 export const LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
 export const CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
 export const isCauseLayout = (layout) => layout === "cause" || layout === "fishbone";
+// Phase 13: the flow layout is not in LAYOUTS (no Alt+L cycle) and never reaches layoutTree; flow.js owns it.
+export { FLOW_LAYOUT, FLOW_DECISION_WRAP, drawnTree, flowParts, flowEditable, isDecision, laneOf, branchLabel } from "./flow.js";
 
 const EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
 export const isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);

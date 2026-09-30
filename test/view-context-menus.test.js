@@ -186,7 +186,7 @@ function node(tag) {
   };
   return n;
 }
-function canvas({ rect = { top: 100, bottom: 300 }, innerHeight = 1000, items } = {}) {
+function canvas({ rect = { top: 100, bottom: 300 }, innerHeight = 1000, innerWidth = 1000, items } = {}) {
   const container = node("div");
   const ul = node("ul");
   const react = node("li"); // React's own item
@@ -195,7 +195,7 @@ function canvas({ rect = { top: 100, bottom: 300 }, innerHeight = 1000, items } 
   popover.style.top = "100px";
   popover.getBoundingClientRect = () => rect;
   ul.closest = () => popover;
-  const doc = { createElement: node, defaultView: { innerHeight } };
+  const doc = { createElement: node, defaultView: { innerHeight, innerWidth } };
   const queue = [];
   let id = 0;
   const raf = (fn) => { queue.push([++id, fn]); return id; };
@@ -520,7 +520,71 @@ test("canvas menu: P12 items call the tools, and the mind-map items follow mapOp
   assert.match(item(items, "mm-layout-cause").label, /\(current\)/);
   assert.doesNotMatch(item(items, "mm-layout-right").label, /current/);
   assert.equal(item(items, "mm-attr-edges").label, "Plexus: Attribute blocks as edges: off");
-  for (const id of ["restore-version", "chart-json", "to-outline", "copy-markdown", "mm-layout-fishbone", "mm-attr-edges"]) item(items, id).run();
+  for (const id of ["restore-version", "chart-json", "to-outline", "copy-markdown", "mm-layout-fishbone", "mm-layout-flow", "mm-attr-edges"]) item(items, id).run();
   await tick();
-  assert.deepEqual(calls, ["restore", "chart", ["outline", { focusedUid: "drw000001" }], ["md", { focusedUid: "drw000001" }], ["layout", "fishbone"], ["attr", true]]);
+  assert.deepEqual(calls, ["restore", "chart", ["outline", { focusedUid: "drw000001" }], ["md", { focusedUid: "drw000001" }], ["layout", "fishbone"], ["layout", "flow"], ["attr", true]]);
+  assert.equal(item(items, "mm-layout-flow").label, "Plexus: Mind map layout: Flow");
+});
+
+test("canvas items: Arrange is a submenu built from ARRANGE_OPS, hidden when nothing can run", async () => {
+  const { ARRANGE_OPS } = await import("../src/model/arrange.js");
+  const ran = [];
+  let allowed = new Set(["row", "swap"]);
+  const arrange = { canRun: (op) => allowed.has(op), run: (op) => { ran.push(op); return true; } };
+  const build = () => plexusCanvasItems({ app: {}, native: { selectedElementIds: () => [] }, actions: {}, openSettings() {}, drawingUid: "drw000001", mac: false, arrange });
+  const arrangeItem = (items) => items.find((i) => i.id === "arrange");
+  let item = arrangeItem(build());
+  assert.equal(item.label, "Plexus: Arrange \u203a");
+  assert.equal(item.enabled, true);
+  assert.deepEqual(item.children.map((c) => c.label), ARRANGE_OPS.map((o) => o.label));
+  assert.deepEqual(item.children.filter((c) => c.enabled).map((c) => c.id), ["arrange-row", "arrange-swap"]);
+  item.children.find((c) => c.id === "arrange-swap").run();
+  assert.deepEqual(ran, ["swap"]);
+  allowed = new Set();
+  assert.equal(arrangeItem(build()).enabled, false);
+  assert.equal(plexusCanvasItems({ app: {}, native: { selectedElementIds: () => [] }, actions: {}, openSettings() {}, mac: false }).find((i) => i.id === "arrange").enabled, false);
+});
+
+test("canvas menu submenu opens on hover and click, flips left, clamps, skips when no child is enabled, and dies on dispose", () => {
+  const ran = [];
+  const sub = { id: "arr", label: "Arrange \u203a", enabled: true, children: [
+    { id: "a", label: "A", enabled: true, run: () => ran.push("a") },
+    { id: "b", label: "B", enabled: false, hint: "Select two", run: () => ran.push("b") },
+  ] };
+  const c = canvas({ items: [sub, { id: "dead", label: "Dead", enabled: true, children: [{ id: "x", label: "X", enabled: false }] }] });
+  c.container.ul = c.ul; c.contextmenu(); c.flush();
+  const ours = c.ul.children.filter((n) => n.attrs["data-plexus-item"]);
+  assert.deepEqual(ours.map((n) => n.tag), ["hr", "li"], "the all-disabled submenu is not injected");
+  const li = ours[1];
+  assert.equal(li.attrs["data-testid"], "plexus-arr");
+  const [button, flyout] = li.children;
+  assert.equal(flyout.tag, "ul");
+  assert.equal(flyout.attrs["data-plexus-item"], "1");
+  assert.equal(flyout.children.length, 2);
+  assert.equal(flyout.children[1].children[0].disabled, true);
+  li.removeAttribute = (k) => { delete li.attrs[k]; };
+  button.getBoundingClientRect = () => ({ left: 700, right: 900, top: 300, bottom: 324, width: 200, height: 24 });
+  flyout.getBoundingClientRect = () => ({ left: 900, right: 1100, top: 300, bottom: 400, width: 200, height: 100 });
+  li.listeners.mouseenter[0][0]();
+  assert.equal(li.attrs["data-open"], "1");
+  assert.equal(flyout.style.position, "fixed");
+  assert.equal(flyout.style.left, "500px", "flips to the left when it would leave the viewport");
+  assert.equal(flyout.style.top, "300px");
+  button.getBoundingClientRect = () => ({ left: 100, right: 300, top: 800, bottom: 824, width: 200, height: 24 });
+  flyout.getBoundingClientRect = () => ({ left: 300, right: 500, top: 800, bottom: 1000, width: 200, height: 200 });
+  li.listeners.mouseenter[0][0]();
+  assert.equal(flyout.style.left, "300px");
+  assert.equal(flyout.style.top, "792px", "clamps the flyout to the bottom of the viewport");
+  li.listeners.mouseleave[0][0]();
+  assert.equal(li.attrs["data-open"], undefined);
+  let stopped = 0;
+  button.listeners.click[0][0]({ preventDefault() {}, stopPropagation() { stopped++; } });
+  assert.equal(li.attrs["data-open"], "1");
+  assert.equal(stopped, 1);
+  assert.deepEqual(c.states, [], "opening the flyout leaves the canvas menu open");
+  flyout.children[0].children[0].listeners.click[0][0]({});
+  assert.deepEqual(c.states, [{ contextMenu: null }]);
+  assert.deepEqual(ran, ["a"]);
+  c.menu();
+  assert.equal(c.container.listeners.contextmenu.length, 0);
 });

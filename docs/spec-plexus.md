@@ -379,6 +379,25 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Opening a drawing for a write | `newDrawing` refuses while another editor is open ("Close the open drawing first"); `openDrawingOnce` navigates and clicks the full-screen icon; the P5 migration pasted elements into freshly opened native drawings and Roam saved them | Saving a template means: close, open the template drawing, write, close, reopen the original |
 | Public API | `RoamPlexus`: `build`, `create`, `open`, `whenOpen`, `scene`, `thumbnail`, `drawingsOn`, `regionsOf`, events | Templates reuse `create` / `thumbnail`; starters use `build` |
 
+#### Phase 13 live acceptance (2026-09-30, Readwisenotes `1929...`, trusted CDP)
+
+| Item | Result |
+|---|---|
+| Flow render | 3 locked lane frames, a decision diamond, Yes/No labels, CCP and Hazard chips, and a dashed loop |
+| b | F2 keeps the `#CCP1` suffix and the `Yes:` label |
+| d | Two reopens leave 3 lane regions |
+| e | Zero writes over 10 s on right, cause and fishbone maps |
+| i | Picker lists 8 starters. Esc closes only the picker. Starter tiles have no `.plexus-template-thumb`; user tiles do. Tile text uses `.plexus-portal .plexus-template-tile`, which beats `.bp3-dark button` on color |
+| Starters | HACCP flow 30, Fishbone 21, Swab-site map 21, 5-Why 20, 16:9 slide 3. Each insert had valid bindings. One Cmd+Z removed each |
+| f / h | Save selection wrote a `Plexus/Templates` block and reopened the original drawing. An inserted image with `firebaseUrl` showed |
+| g | Closing the template editor during the save poll kept a 20-element block and toasted "Template may be incomplete". The poll is 40 ms and checks for a closed editor before it treats a persisted count as success |
+| j / k | Arrange as row re-routed bound arrows in one undo step. An elbow arrow kept its shape and showed the toast |
+| a | Locked lane frames clip members (`getElementsAtPosition` misses a member outside the frame). The Warehouse region ref rendered a crop, natural size 236×799. An in-place type patch repaints only when `version` and `versionNonce` bump |
+| c | Recorded miss, not a blocker. Alt+F on the selected decision hid its children and removed the dashed loop arrow. A second Alt+F restored the arrow |
+| m | Unload with the template picker open left 0 `.plexus-portal`, 0 `.plexus-root`, and listener counts back at the unloaded baseline (window 207, document 125). The same cleanup runs after disposers, one macrotask later, because a queued discovery callback can reclaim a node |
+| Typing | +0.04 ms/key. Five interleaved rounds, 42 keys, 5 s settle, editor closed. Loaded means 12.645, 12.540, 12.476, 12.543, 12.538 (mean 12.548). Unloaded means 12.383, 12.595, 12.462, 12.593, 12.510 (mean 12.509). A `body:has()` rule that hid the toolbar was on the keystroke path and measured about +0.20 to +0.25 before it was replaced by a class set only while the editor is mounted |
+| Palette | Still exactly "Plexus: Commands…" and "Plexus: Mind map" |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.

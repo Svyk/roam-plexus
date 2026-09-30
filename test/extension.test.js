@@ -310,7 +310,8 @@ test("the command list carries all 38 labels and hotkeys, and captures the focus
       "Refresh crops for open drawing", "Clear crop cache", "Audit regions on this page", "Audit regions in graph",
       "Restore before last Plexus change",
       "Restore an earlier version\u2026", "Cause-and-effect from JSON\u2026", "Drawing to outline\u2026", "Copy as Roam markdown",
-      "Mind map layout: Right", "Mind map layout: Cause", "Mind map layout: Fishbone", "Mind map: attribute blocks as edges",
+      "Mind map layout: Right", "Mind map layout: Cause", "Mind map layout: Fishbone", "Mind map layout: Flow",
+      "Insert template\u2026", "New drawing from template\u2026", "Save selection as template\u2026", "Mind map: attribute blocks as edges",
       "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)", "Region settings",
     ]);
     assert.deepEqual(Object.fromEntries(commands.filter((c) => c.hotkey).map((c) => [c.label, c.hotkey])), {

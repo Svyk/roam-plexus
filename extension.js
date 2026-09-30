@@ -1,4 +1,4 @@
-/* Plexus v0.12.0 | MIT | generated; edit src/ */
+/* Plexus v0.13.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -6,8 +6,18 @@ var __export = (target, all) => {
 };
 
 // src/lifecycle.js
+var SWEEP_REMOVE = ".plexus-portal, .plexus-root, .plexus-offscreen, [data-plexus-dock]";
+var SWEEP_CLASSES = ["plexus-hidden", "plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden", "plexus-dock-open", "plexus-dock-narrowed"];
 function isPromiseLike(value) {
   return value != null && typeof value.then === "function";
+}
+function sweepExtensionDom(doc) {
+  const body = doc?.body;
+  if (!body?.querySelectorAll) return;
+  for (const el of body.querySelectorAll(SWEEP_REMOVE)) el.remove?.();
+  const marked = SWEEP_CLASSES.map((name) => "." + name).join(", ");
+  for (const el of body.querySelectorAll(marked)) el.classList?.remove?.(...SWEEP_CLASSES);
+  body.classList?.remove?.("plexus-dock-open", "plexus-excal-popover");
 }
 async function callSafely(disposer) {
   const result = disposer();
@@ -2563,7 +2573,13 @@ var FRAME_PRESETS = Object.freeze([
 var DEFAULT_PRESET = "16:9";
 var presetLabel = (id) => (FRAME_PRESETS.find((p) => p.id === id) ?? FRAME_PRESETS[2]).label;
 var POPOVER_STOP = ["keydown", "keyup", "keypress", "pointerdown", "pointerup", "mousedown", "click", "wheel"];
-function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeSlide, onLayout, doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
+var EXCAL_POPOVER_CLASS = "plexus-excal-popover";
+function syncExcalPopoverClass(outerEl, body) {
+  const open5 = !!outerEl?.querySelector?.(".popover");
+  body?.classList?.toggle?.(EXCAL_POPOVER_CLASS, open5);
+  return open5;
+}
+function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeSlide, onLayout, doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack, MutationObserverImpl = globalThis.MutationObserver }) {
   const view2 = doc.defaultView;
   const mac = /mac|iphone|ipad/i.test(String(view2?.navigator?.platform ?? ""));
   const withKey = (name, id) => {
@@ -2577,7 +2593,16 @@ function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeS
   let refreshTimer = null;
   let popover = null;
   let popoverButton = null;
+  let popoverWatch = null;
   let lastPreset = DEFAULT_PRESET;
+  const stopPopoverWatch = () => {
+    try {
+      popoverWatch?.disconnect?.();
+    } catch {
+    }
+    popoverWatch = null;
+    doc.body?.classList?.remove?.(EXCAL_POPOVER_CLASS);
+  };
   const inside2 = (root, t) => !!root && !!t && (root === t || !!root.contains?.(t));
   const onDocPointerDown = (e) => {
     if (inside2(popover, e?.target) || inside2(popoverButton, e?.target)) return;
@@ -2723,6 +2748,7 @@ function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeS
   };
   const hide = () => {
     closePopover();
+    stopPopoverWatch();
     popoverButton = null;
     view2?.removeEventListener("resize", place);
     if (refreshTimer != null) {
@@ -2731,6 +2757,7 @@ function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeS
     }
     outer?.removeEventListener?.("pointerup", scheduleRefresh, true);
     outer?.removeEventListener?.("keyup", scheduleRefresh, true);
+    for (const el of doc.body?.querySelectorAll?.(".plexus-portal.plexus-toolbar") || []) el.remove?.();
     bar?.remove();
     bar = null;
     outer = null;
@@ -2741,6 +2768,15 @@ function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeS
     show(outerEl) {
       hide();
       outer = outerEl;
+      if (typeof MutationObserverImpl === "function") {
+        try {
+          popoverWatch = new MutationObserverImpl(() => syncExcalPopoverClass(outer, doc.body));
+          popoverWatch.observe(outerEl, { childList: true, subtree: true });
+        } catch {
+          popoverWatch = null;
+        }
+      }
+      syncExcalPopoverClass(outerEl, doc.body);
       bar = doc.createElement("div");
       bar.className = "plexus-portal plexus-toolbar";
       bar.style.zIndex = String(baseZIndex(doc, outerEl) + 1);
@@ -4267,7 +4303,7 @@ var within2 = (node, root) => {
 };
 var hasText = (children) => (children || []).some((c) => String(c?.string ?? "").trim() || hasText(c?.children));
 function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTimer }) {
-  let current4 = null;
+  let current6 = null;
   const view2 = doc.defaultView;
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
@@ -4276,9 +4312,9 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
   const later = setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const unlater = clearTimer ?? ((id) => clearTimeout(id));
   const close2 = () => {
-    const state = current4;
+    const state = current6;
     if (!state) return;
-    current4 = null;
+    current6 = null;
     state.teardown();
     state.dialog.removeEventListener?.("keydown", state.onKey);
     state.dialog.removeEventListener?.("keyup", state.onKeyUp);
@@ -4299,7 +4335,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
     }
   };
   return {
-    isOpen: () => !!current4,
+    isOpen: () => !!current6,
     close: close2,
     dispose: close2,
     // slides: [{ name, url|null, notes?: { rootUid, onAdd? } }]. Returns a handle; setSlide fills a slide that was not ready yet.
@@ -4375,7 +4411,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
       let cssW = 0;
       let cssH = 0;
       const ctx = safe(() => canvas.getContext?.("2d")) ?? null;
-      const live3 = () => current4?.dialog === dialog;
+      const live3 = () => current6?.dialog === dialog;
       const unmountNotes = () => {
         for (const el of noteHosts) {
           try {
@@ -4688,26 +4724,26 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
         }
         view2?.removeEventListener?.("resize", onResize);
       };
-      current4 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
+      current6 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
       doc.body.append(dialog);
       show();
       dialog.showModal();
       sizeCanvas();
       dialog.focus?.();
-      const state = current4;
+      const state = current6;
       return {
         setSlide(i, patch) {
-          if (current4 !== state || !list[i]) return;
+          if (current6 !== state || !list[i]) return;
           Object.assign(list[i], patch);
           if (i === at || i === at + 1) show();
           if (i === at && patch && "notes" in patch) renderNotes();
         },
-        isOpen: () => current4 === state,
+        isOpen: () => current6 === state,
         close: () => {
-          if (current4 === state) close2();
+          if (current6 === state) close2();
         },
         notice: (text) => {
-          if (current4 === state) notice(text);
+          if (current6 === state) notice(text);
         }
       };
     }
@@ -5320,7 +5356,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       openInSidebar: s.openInSidebar
     };
   };
-  const prune = () => {
+  const prune2 = () => {
     if (roots.size + aliases.size < pruneAt) return;
     for (const [root, info] of [...roots]) if (!root.isConnected) {
       dropInfo(info);
@@ -5609,7 +5645,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       root.className = `plexus-root plexus-regionref plexus-regionref--${mode}`;
       root.title = label;
       btn.parentNode.insertBefore(root, btn.nextSibling);
-      prune();
+      prune2();
       const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, disposers: [], hosts: [], extras: [] };
       roots.set(root, info);
       if (ctx.refEl && mode !== "link") {
@@ -5723,7 +5759,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       anchor.setAttribute(ALIAS_CLAIMED, "1");
       const info = { uid, disposers: [] };
       aliases.set(anchor, info);
-      prune();
+      prune2();
       const currentUid = () => anchor.dataset?.linkUid ?? anchor.getAttribute?.("data-link-uid");
       const hoverEntry = async () => {
         const u = currentUid();
@@ -6308,12 +6344,12 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
     rings.set(drawingUid, ring);
     while (rings.size > maxDrawings) rings.delete(rings.keys().next().value);
   }
-  function deltaOf(current4, nextEls) {
+  function deltaOf(current6, nextEls) {
     const nextById = new Map(nextEls.map((e) => [e?.id, e]));
     const curIds = /* @__PURE__ */ new Set();
     const before = [];
     let removed = 0;
-    for (const el of current4) {
+    for (const el of current6) {
       if (!el) continue;
       curIds.add(el.id);
       if (el.isDeleted) continue;
@@ -6328,26 +6364,26 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
   function guardedWrite(app, opts = {}) {
     if (disposed || !app) return false;
     const { drawingUid, next, label = "Change", captureUpdate, appState, force = false } = opts;
-    const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const nextEls = typeof next === "function" ? next(current4) : next;
+    const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const nextEls = typeof next === "function" ? next(current6) : next;
     if (!Array.isArray(nextEls)) return false;
-    const before = liveCount(current4);
+    const before = liveCount(current6);
     const after = liveCount(nextEls);
     if (!force && before > 10 && after * 5 <= before) {
-      refuse2(app, opts, before - after, before, current4);
+      refuse2(app, opts, before - after, before, current6);
       return false;
     }
-    const delta = captureUpdate !== "NEVER" ? deltaOf(current4, nextEls) : null;
+    const delta = captureUpdate !== "NEVER" ? deltaOf(current6, nextEls) : null;
     app.updateScene({ elements: nextEls, ...appState ? { appState } : {}, ...captureUpdate !== void 0 ? { captureUpdate } : {} });
     if (delta && delta.removed > 0 && drawingUid) push(drawingUid, { drawingUid, time: now(), label, before: delta.before, added: delta.added });
     return true;
   }
-  function refuse2(app, opts, n, m, current4) {
+  function refuse2(app, opts, n, m, current6) {
     const { drawingUid, next, label = "Change", captureUpdate, appState, onApplyAnyway } = opts;
     const key = `${drawingUid}|${label}|${n}|${m}`;
     if (pending && pending.key === key && now() < pending.until) return;
     const token = { key, until: now() + ACTION_MS };
-    const sig = signature(current4);
+    const sig = signature(current6);
     const run = () => {
       dropPending(token);
       if (disposed) return;
@@ -6405,10 +6441,10 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
       for (const id of entry.added) added.add(id);
     }
     for (const id of added) before.delete(id);
-    const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const byId = new Map(current4.map((e) => [e?.id, e]));
+    const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const byId = new Map(current6.map((e) => [e?.id, e]));
     const stamp = Date.now();
-    const elements = current4.map((el) => {
+    const elements = current6.map((el) => {
       const old = before.get(el?.id);
       if (old) return { ...old, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
       if (el && added.has(el.id) && !el.isDeleted) return { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
@@ -6461,6 +6497,358 @@ function arrowLabelWrapWidth(arrowWidth, fontSize) {
   return Math.max(0.7 * arrowWidth, 11 * fontSize);
 }
 
+// src/model/flow.js
+var FLOW_LAYOUT = "flow";
+var FLOW_DECISION_WRAP = 160;
+var FLOW_ROOT_FONT = 20;
+var FLOW_STEP_FONT = 16;
+var FLOW_CHIP_FONT = 12;
+var FLOW_PAD = 24;
+var FLOW_H_GAP = 40;
+var FLOW_ROW_GAP = 70;
+var FLOW_LANE_GAP = 40;
+var LANE_BLOCK_RE = /^\s*Lane::/;
+var LANE_VALUE_RE = /^\s*Lane::\s*([\s\S]*)$/;
+var REF_ONLY_RE = /^\(\(([^()\s]+)\)\)$/;
+var LABEL_RE = /^([^:\s[\]{}()#][^:\n[\]{}()#]{0,11}):[ \t]+/;
+var TOKEN_SRC = String.raw`#(?:decision|end|hazard|CCP\d*)(?![\p{L}\p{N}_/-])|#lane/[\p{L}\p{N}_/-]+|#\[\[(?:lane/[^\]]+|CCP[^\]]*|hazard)\]\]`;
+var SUFFIX_RE = new RegExp(String.raw`(?:(?:^|[ \t]+)(?:${TOKEN_SRC}))+[ \t]*$`, "iu");
+var TOKEN_RE = new RegExp(TOKEN_SRC, "giu");
+var INLINE_LANE_RE = /#\[\[lane\/([^\]]+)\]\]|(?:^|[\s(])#lane\/([\p{L}\p{N}_/-]+)/giu;
+var tidy = (s) => String(s).replace(/\s+/g, " ").trim();
+var tagsOf = (suffix) => suffix ? suffix.match(TOKEN_RE) || [] : [];
+var hasTag = (suffix, name) => tagsOf(suffix).some((t) => t.toLowerCase() === `#${name}`);
+function flowParts(string, { branch = false } = {}) {
+  const s = typeof string === "string" ? string : "";
+  const tp = taskParts(s);
+  let rest = tp.rest;
+  let label = "";
+  if (branch) {
+    const m = LABEL_RE.exec(rest);
+    if (m) {
+      label = m[1];
+      rest = rest.slice(m[0].length);
+    }
+  }
+  const sm = SUFFIX_RE.exec(rest);
+  return { task: tp.prefix, label, body: sm ? rest.slice(0, sm.index) : rest, suffix: sm ? sm[0] : "" };
+}
+function isDecision(string, opts) {
+  const p = flowParts(string, opts);
+  return p.body.trimEnd().endsWith("?") || hasTag(p.suffix, "decision");
+}
+function chipsOf(string, opts) {
+  const out = [];
+  let ccp = null;
+  let hazard = false;
+  for (const t of tagsOf(flowParts(string, opts).suffix)) {
+    const low = t.toLowerCase();
+    if (ccp === null && (low.startsWith("#ccp") || low.startsWith("#[[ccp"))) {
+      const rest = low.startsWith("#[[") ? t.slice(3, -2).replace(/^CCP/i, "").trim() : t.slice(4).trim();
+      ccp = rest ? `CCP ${rest}` : "CCP";
+    } else if (low === "#hazard" || low === "#[[hazard]]") hazard = true;
+  }
+  if (ccp !== null) out.push({ kind: "ccp", text: ccp });
+  if (hazard) out.push({ kind: "hazard", text: "Hazard" });
+  return out;
+}
+function laneOf(node) {
+  if (!node) return null;
+  for (const c of node.children || []) {
+    const m2 = LANE_VALUE_RE.exec(typeof c.string === "string" ? c.string : "");
+    if (!m2) continue;
+    const v = m2[1].trim();
+    if (v === "") continue;
+    const name = tidy(plainText(v));
+    if (name !== "" && name !== "·") return name;
+  }
+  const s = typeof node.string === "string" ? node.string : "";
+  const re = new RegExp(INLINE_LANE_RE.source, "giu");
+  const m = re.exec(s);
+  if (m) {
+    const name = tidy(m[1] !== void 0 ? m[1] : m[2]);
+    if (name !== "") return name;
+  }
+  return null;
+}
+var isLaneBlock = (c) => LANE_BLOCK_RE.test(typeof c.string === "string" ? c.string : "");
+var refTarget = (c) => {
+  const m = REF_ONLY_RE.exec(typeof c.string === "string" ? c.string.trim() : "");
+  return m ? m[1] : null;
+};
+var hasDrawableKids = (c) => c.children.some((k) => !isLaneBlock(k) && refTarget(k) === null);
+function flowControls(tree) {
+  const controls = /* @__PURE__ */ new Set();
+  const refs = /* @__PURE__ */ new Map();
+  if (!tree) return { controls, refs };
+  const steps = /* @__PURE__ */ new Set([tree.uid]);
+  const cands = [];
+  (function walk2(n) {
+    for (const c of n.children) {
+      if (isLaneBlock(c)) {
+        controls.add(c.uid);
+        continue;
+      }
+      const t = refTarget(c);
+      if (t !== null && !hasDrawableKids(c)) cands.push({ uid: c.uid, parent: n.uid, target: t });
+      else steps.add(c.uid);
+      walk2(c);
+    }
+  })(tree);
+  for (const c of cands) {
+    if (controls.has(c.parent)) {
+      controls.add(c.uid);
+      continue;
+    }
+    if (!steps.has(c.target) || c.target === c.uid || c.target === c.parent) continue;
+    controls.add(c.uid);
+    refs.set(c.uid, c);
+  }
+  return { controls, refs };
+}
+function prune(n, controls) {
+  return { ...n, children: n.children.filter((c) => !controls.has(c.uid)).map((c) => prune(c, controls)) };
+}
+function drawnTree(tree, { layout, attrEdges = false } = {}) {
+  if (!tree) return tree;
+  if (layout !== FLOW_LAYOUT) return visualTree(tree, { attrEdges });
+  return prune(tree, flowControls(tree).controls);
+}
+function flowEditable(node, displayed, { branch = false } = {}) {
+  if (!node || typeof displayed !== "string") return null;
+  let text = displayed;
+  if (isFolded(node)) {
+    const suffix = ` (+${countHidden(node)})`;
+    if (!text.endsWith(suffix)) return null;
+    text = text.slice(0, -suffix.length);
+  }
+  const parts = flowParts(node.string, { branch });
+  if (parts.task) {
+    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
+    else if (text === "☐" || text === "☑") text = "";
+  }
+  if (hasMarkup(parts.body)) return null;
+  if (text === "" || text === "·") return null;
+  const next = parts.task + (parts.label ? `${parts.label}: ` : "") + text + parts.suffix;
+  return next === node.string ? null : next;
+}
+function flowStructure(tree) {
+  const out = { root: tree ? tree.uid : null, steps: [], byUid: /* @__PURE__ */ new Map(), edges: [], lanes: [""], hasLanes: false, dtree: null };
+  if (!tree) return out;
+  const { controls, refs } = flowControls(tree);
+  const dtree = prune(tree, controls);
+  out.dtree = dtree;
+  const raw = /* @__PURE__ */ new Map();
+  const parentRaw = /* @__PURE__ */ new Map();
+  (function idx(n, p) {
+    raw.set(n.uid, n);
+    parentRaw.set(n.uid, p);
+    for (const c of n.children) if (!controls.has(c.uid)) idx(c, n.uid);
+  })(tree, null);
+  const visible = /* @__PURE__ */ new Set();
+  (function vis(n) {
+    visible.add(n.uid);
+    for (const c of visibleChildren(n)) vis(c);
+  })(dtree);
+  const resolve = (uid) => {
+    let u = uid;
+    while (u != null && !visible.has(u)) u = parentRaw.get(u) ?? null;
+    return u;
+  };
+  const loopsOf = /* @__PURE__ */ new Map();
+  for (const r of refs.values()) {
+    const p = raw.get(r.parent);
+    if (!p || !visible.has(r.parent) || p.open === false) continue;
+    const to = resolve(r.target);
+    if (to == null || to === r.parent) continue;
+    if (!loopsOf.has(r.parent)) loopsOf.set(r.parent, []);
+    loopsOf.get(r.parent).push({ from: r.parent, to, kind: "loop", label: "", primary: false, via: r.uid });
+  }
+  const add = (node, parentUid, type, rank, lane, pred, branchHead, label, chips) => {
+    const step = { uid: node.uid, node, parentUid, pred, rank, lane, type, branchHead, label, chips };
+    out.steps.push(step);
+    out.byUid.set(node.uid, step);
+    return step;
+  };
+  add(dtree, null, "root", 0, "", null, false, "", []);
+  function processStep(node, parentUid, pending, laneFromUid, branchHead) {
+    const parts = flowParts(node.string, { branch: branchHead });
+    const kids2 = visibleChildren(node);
+    const dec = isDecision(node.string, { branch: branchHead });
+    const withBranches = dec && kids2.length > 0;
+    const isEnd = !dec && hasTag(parts.suffix, "end");
+    const tagEnd = hasTag(parts.suffix, "end");
+    const laneFrom = out.byUid.get(laneFromUid);
+    const primary = pending.length === 1 && pending[0].kind !== "merge" ? pending[0] : null;
+    const rank = pending.length ? 1 + Math.max(...pending.map((p) => out.byUid.get(p.from).rank)) : laneFrom.rank + 1;
+    const explicit = laneOf(raw.get(node.uid));
+    const lane = explicit !== null ? explicit : primary ? out.byUid.get(primary.from).lane : laneFrom.lane;
+    const step = add(node, parentUid, dec ? "decision" : isEnd ? "end" : "step", rank, lane, primary ? primary.from : null, branchHead && !!primary, parts.label, chipsOf(node.string, { branch: branchHead }));
+    if (primary) out.edges.push({ from: primary.from, to: node.uid, kind: primary.kind, label: branchHead ? parts.label : "", primary: true });
+    else for (const p of pending) out.edges.push({ from: p.from, to: node.uid, kind: "merge", label: "", primary: false });
+    if (withBranches) {
+      const tails = [];
+      for (const k of kids2) {
+        for (const t of processStep(k, node.uid, [{ from: node.uid, kind: "branch" }], node.uid, true)) {
+          if (!t.noMerge) tails.push({ from: t.from, kind: "merge", noMerge: false });
+        }
+      }
+      return tails;
+    }
+    const own = tagEnd ? [] : [{ from: node.uid, kind: "seq", noMerge: (loopsOf.get(node.uid) || []).length > 0 }];
+    if (kids2.length === 0) return own;
+    const rest = processSeq(kids2, own, node.uid);
+    return tagEnd ? [] : rest;
+  }
+  function processSeq(items, pending, ownerUid) {
+    let p = pending;
+    let prev = ownerUid;
+    for (const it of items) {
+      p = processStep(it, ownerUid, p, prev, false);
+      prev = it.uid;
+    }
+    return p;
+  }
+  processSeq(visibleChildren(dtree), [{ from: dtree.uid, kind: "seq", noMerge: false }], dtree.uid);
+  for (const s of out.steps) for (const l of loopsOf.get(s.uid) || []) out.edges.push(l);
+  const seen = /* @__PURE__ */ new Set([""]);
+  for (const s of out.steps) if (!seen.has(s.lane)) {
+    seen.add(s.lane);
+    out.lanes.push(s.lane);
+  }
+  out.hasLanes = out.lanes.length > 1;
+  return out;
+}
+function flowLayout(struct, { sizes, chipSize = () => ({ width: 40, height: 20 }), labelWidth = () => 0, anchor = { x: 0, y: 0 } }) {
+  const positions = {};
+  const chips = /* @__PURE__ */ new Map();
+  const frames = [];
+  const steps = struct.steps;
+  if (steps.length === 0) return { positions, chips, frames };
+  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
+  const ranks = [...new Set(steps.map((s) => s.rank))].sort((a, b) => a - b);
+  const cell = /* @__PURE__ */ new Map();
+  for (const s of steps) {
+    const k = `${s.rank}
+${s.lane}`;
+    if (!cell.has(k)) cell.set(k, []);
+    cell.get(k).push(s);
+  }
+  const rowH = /* @__PURE__ */ new Map();
+  for (const r of ranks) rowH.set(r, 0);
+  for (const s of steps) rowH.set(s.rank, Math.max(rowH.get(s.rank), sz(s.uid).height));
+  const rowY = /* @__PURE__ */ new Map();
+  let y = 0;
+  for (const r of ranks) {
+    rowY.set(r, y);
+    y += rowH.get(r) + FLOW_ROW_GAP;
+  }
+  const totalH = y - FLOW_ROW_GAP;
+  const gapBetween = (a, b) => Math.max(FLOW_H_GAP, Math.max(labelWidth(a.uid), labelWidth(b.uid)) + 24);
+  const cellW = (members) => {
+    let w = 0;
+    members.forEach((m, i) => {
+      w += sz(m.uid).width + (i ? gapBetween(members[i - 1], m) : 0);
+    });
+    return w;
+  };
+  const chipRects = /* @__PURE__ */ new Map();
+  for (const s of steps) {
+    if (s.chips.length) chipRects.set(s.uid, s.chips.map((c, i) => ({ ...c, ...chipSize(s.uid, i, c) })));
+  }
+  const inner2 = /* @__PURE__ */ new Map();
+  const over = /* @__PURE__ */ new Map();
+  for (const lane of struct.lanes) {
+    inner2.set(lane, 0);
+    over.set(lane, 0);
+  }
+  for (const [k, members] of cell) {
+    const lane = k.slice(k.indexOf("\n") + 1);
+    inner2.set(lane, Math.max(inner2.get(lane), cellW(members)));
+  }
+  for (const s of steps) {
+    const cr = chipRects.get(s.uid);
+    if (cr) over.set(s.lane, Math.max(over.get(s.lane), cr[0].width / 2));
+  }
+  const colX = /* @__PURE__ */ new Map();
+  const colW = /* @__PURE__ */ new Map();
+  let x = 0;
+  for (const lane of struct.lanes) {
+    const w = inner2.get(lane) + 2 * FLOW_PAD + over.get(lane);
+    colX.set(lane, x);
+    colW.set(lane, w);
+    x += w + FLOW_LANE_GAP;
+  }
+  for (const [k, members] of cell) {
+    const [rs, lane] = [Number(k.slice(0, k.indexOf("\n"))), k.slice(k.indexOf("\n") + 1)];
+    let cx = colX.get(lane) + FLOW_PAD + (inner2.get(lane) - cellW(members)) / 2;
+    members.forEach((m, i) => {
+      if (i) cx += gapBetween(members[i - 1], m);
+      const s = sz(m.uid);
+      positions[m.uid] = { x: cx, y: rowY.get(rs) + (rowH.get(rs) - s.height) / 2 };
+      cx += s.width;
+    });
+  }
+  const dx = anchor.x - positions[struct.root].x;
+  const dy = anchor.y - positions[struct.root].y;
+  for (const uid of Object.keys(positions)) positions[uid] = { x: positions[uid].x + dx, y: positions[uid].y + dy };
+  for (const s of steps) {
+    const cr = chipRects.get(s.uid);
+    if (!cr) continue;
+    const p = positions[s.uid];
+    const w = sz(s.uid).width;
+    let cx = p.x + w - cr[0].width / 2;
+    chips.set(s.uid, cr.map((c, i) => {
+      if (i) cx -= c.width + 4;
+      return { ...c, x: cx, y: p.y - c.height / 2 };
+    }));
+  }
+  for (const lane of struct.lanes) {
+    if (lane === "") continue;
+    frames.push({ name: lane, x: colX.get(lane) + dx, y: -FLOW_PAD + dy, width: colW.get(lane), height: totalH + 2 * FLOW_PAD });
+  }
+  return { positions, chips, frames };
+}
+function exitDistance(r, tx, ty) {
+  const cx = r.x + r.width / 2;
+  const cy = r.y + r.height / 2;
+  const dx = tx - cx;
+  const dy = ty - cy;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return { ux: 0, uy: 1, d: 0, cx, cy };
+  const hw = r.width / 2;
+  const hh = r.height / 2;
+  let s;
+  if (r.type === "diamond") s = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+  else if (r.type === "ellipse") s = 1 / Math.hypot(dx / hw, dy / hh);
+  else s = 1 / Math.max(Math.abs(dx) / hw, Math.abs(dy) / hh);
+  return { ux: dx / len, uy: dy / len, d: s * len, cx, cy };
+}
+function flowRoute(a, b, adjacent, gap) {
+  let sx;
+  let sy;
+  let ex;
+  let ey;
+  if (adjacent) {
+    sx = a.x + a.width / 2;
+    sy = a.y + a.height;
+    ex = b.x + b.width / 2;
+    ey = b.y;
+  } else {
+    const bx = b.x + b.width / 2;
+    const by = b.y + b.height / 2;
+    const ax = a.x + a.width / 2;
+    const ay = a.y + a.height / 2;
+    const ea = exitDistance(a, bx, by);
+    const eb = exitDistance(b, ax, ay);
+    sx = ea.cx + ea.ux * (ea.d + gap);
+    sy = ea.cy + ea.uy * (ea.d + gap);
+    ex = eb.cx + eb.ux * (eb.d + gap);
+    ey = eb.cy + eb.uy * (eb.d + gap);
+  }
+  return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
+}
+
 // src/model/mindmap.js
 var MAX_TEXT_WIDTH = 240;
 var PAD_X = 14;
@@ -6496,7 +6884,7 @@ function pick2(obj, name) {
   return v !== void 0 ? v : obj[name];
 }
 function treeFromPull(pull, opts = {}) {
-  const prune = opts.prune instanceof Set ? opts.prune : null;
+  const prune2 = opts.prune instanceof Set ? opts.prune : null;
   const cap = Number.isFinite(opts.maxVisible) ? opts.maxVisible : Infinity;
   let visible = 0;
   let truncated = false;
@@ -6507,7 +6895,7 @@ function treeFromPull(pull, opts = {}) {
     const str = typeof string === "string" ? string : "";
     if (isExcludedString(str)) return null;
     if (!isRoot && isHiddenString(str)) return null;
-    if (!isRoot && prune && prune.has(uid)) return null;
+    if (!isRoot && prune2 && prune2.has(uid)) return null;
     if (visible >= cap) {
       truncated = true;
       return null;
@@ -6532,11 +6920,11 @@ function treeFromPull(pull, opts = {}) {
 var isFolded = (node) => node.open === false && node.children.length > 0;
 function countHidden(node) {
   let n = 0;
-  const stack = [...node.children];
-  while (stack.length) {
-    const c = stack.pop();
+  const stack2 = [...node.children];
+  while (stack2.length) {
+    const c = stack2.pop();
     n += 1;
-    for (const k of c.children) stack.push(k);
+    for (const k of c.children) stack2.push(k);
   }
   return n;
 }
@@ -6557,11 +6945,11 @@ function visibleNodes(tree) {
 }
 var allUids = (tree) => {
   const set = /* @__PURE__ */ new Set();
-  const stack = tree ? [tree] : [];
-  while (stack.length) {
-    const n = stack.pop();
+  const stack2 = tree ? [tree] : [];
+  while (stack2.length) {
+    const n = stack2.pop();
     set.add(n.uid);
-    for (const c of n.children) stack.push(c);
+    for (const c of n.children) stack2.push(c);
   }
   return set;
 };
@@ -7626,7 +8014,7 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
       drawingUid: uid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current4) => [...current4, ...elements],
+      next: (current6) => [...current6, ...elements],
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
     if (!ok) throw new Error(`Not applied: ${label} was refused`);
@@ -8064,7 +8452,7 @@ function resolveDrop({ plan, tree, dragged, point, layout }) {
     }
   }
   if (!byUid.has(dragged)) return refuse("missing");
-  const rectOf = (uid) => {
+  const rectOf2 = (uid) => {
     const p = plan.positions?.[uid];
     const s = plan.info?.get?.(uid)?.size;
     return p && s ? { x: p.x, y: p.y, width: s.width, height: s.height } : null;
@@ -8073,11 +8461,11 @@ function resolveDrop({ plan, tree, dragged, point, layout }) {
   for (const v of nodes) if (v.parent && sub.has(v.parent.uid)) sub.add(v.node.uid);
   for (const v of nodes) {
     if (sub.has(v.node.uid)) continue;
-    const r = rectOf(v.node.uid);
+    const r = rectOf2(v.node.uid);
     if (r && inside(inner(r), point.x, point.y)) return { type: "reparent", parentUid: v.node.uid, ring: r };
   }
   for (const uid of sub) {
-    const r = rectOf(uid);
+    const r = rectOf2(uid);
     if (!r) continue;
     if (uid === dragged) {
       if (inside(r, point.x, point.y)) return { type: "pin" };
@@ -8092,7 +8480,7 @@ function resolveDrop({ plan, tree, dragged, point, layout }) {
   for (const [parentUid, list] of kids2) {
     const sibs = list.filter((v) => v.node.uid !== dragged && plan.info?.get?.(v.node.uid)?.mm?.pinned !== true);
     if (!sibs.length) continue;
-    const rs = sibs.map((v) => ({ v, r: rectOf(v.node.uid) }));
+    const rs = sibs.map((v) => ({ v, r: rectOf2(v.node.uid) }));
     if (rs.some((x) => !x.r)) continue;
     let lo = Infinity;
     let hi = -Infinity;
@@ -8144,6 +8532,13 @@ var edgeId = (root, childUid) => `pmm-${root}-${childUid}-e`;
 var boundaryId = (root, uid) => `pmm-${root}-${uid}-b`;
 var labelId = (root, childUid) => `${edgeId(root, childUid)}-t`;
 var spineId = (root) => `pmm-${root}-${root}-s`;
+var lanePrefix = (root) => `pmm-${root}-lane-`;
+var laneId = (root, name) => `${lanePrefix(root)}${fnv1a(name)}`;
+var chipId = (root, uid, n) => `pmm-${root}-${uid}-c-${n}`;
+var chipTextId = (root, uid, n) => `${chipId(root, uid, n)}-t`;
+var mergeId = (root, tailUid) => `pmm-${root}-${tailUid}-m`;
+var loopId = (root, refUid) => `pmm-${root}-${refUid}-l`;
+var CHIP_FILLS = Object.freeze({ ccp: "#ffc9c9", hazard: "#ffd8a8" });
 var rnd2 = () => Math.floor(Math.random() * 2147483646) + 1;
 var mmOf = (el) => el && el.customData && el.customData.plexus && el.customData.plexus.mm || void 0;
 function withMM(customData, mm2) {
@@ -8199,19 +8594,22 @@ function base(id, type, x, y, width, height, extra) {
     ...extra
   };
 }
-function buildNode({ map, uid, x, y, width, height, backgroundColor, mm: mm2, boundElements, opacity, strokeStyle }) {
-  return base(nodeId(map, uid), "rectangle", x, y, width, height, {
+var roundnessFor = (type) => type === "diamond" ? { type: 2 } : type === "ellipse" ? null : { type: 3 };
+function buildNode({ map, uid, x, y, width, height, backgroundColor, mm: mm2, boundElements, opacity, strokeStyle, type = "rectangle", frameId: frameId2 }) {
+  return base(nodeId(map, uid), type, x, y, width, height, {
     backgroundColor,
-    roundness: { type: 3 },
+    roundness: roundnessFor(type),
+    ...frameId2 ? { frameId: frameId2 } : {},
     boundElements: boundElements || [],
     customData: withMM(null, mm2),
     ...opacity !== void 0 ? { opacity } : {},
     ...strokeStyle !== void 0 ? { strokeStyle } : {}
   });
 }
-function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity }) {
+function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity, frameId: frameId2 }) {
   return base(textId(map, uid), "text", x, y, width, height, {
     ...opacity !== void 0 ? { opacity } : {},
+    ...frameId2 ? { frameId: frameId2 } : {},
     text,
     originalText,
     fontSize,
@@ -8223,18 +8621,19 @@ function buildText({ map, uid, x, y, width, height, text, originalText, fontSize
     lineHeight: LINE_HEIGHT
   });
 }
-function buildEdge({ map, parentUid, childUid, x, y, points, via, unboundStart = false, boundElements }) {
+function buildEdge({ map, parentUid, childUid, x, y, points, via, unboundStart = false, boundElements, id, mm: mm2, arrow = false, dashed = false }) {
   const [, [dx, dy]] = points;
-  return base(edgeId(map, childUid), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
+  return base(id || edgeId(map, childUid), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
     points,
+    ...dashed ? { strokeStyle: "dashed" } : {},
     lastCommittedPoint: null,
     startBinding: unboundStart ? null : { elementId: nodeId(map, parentUid), focus: 0, gap: EDGE_GAP },
     endBinding: { elementId: nodeId(map, childUid), focus: 0, gap: EDGE_GAP },
     startArrowhead: null,
-    endArrowhead: null,
+    endArrowhead: arrow ? "arrow" : null,
     elbowed: false,
     ...boundElements && boundElements.length ? { boundElements } : {},
-    customData: withMM(null, edgeMM(map, parentUid, childUid, via))
+    customData: withMM(null, mm2 || edgeMM(map, parentUid, childUid, via))
   });
 }
 var edgeMM = (map, parentUid, childUid, via) => ({ edge: [parentUid, childUid], map, ...via ? { via } : {} });
@@ -8250,6 +8649,39 @@ function buildLabel({ map, childUid, x, y, width, height, text, originalText }) 
     autoResize: true,
     lineHeight: LINE_HEIGHT,
     customData: withMM(null, { label: childUid, map })
+  });
+}
+function buildChip({ map, uid, n, kind, x, y, width, height, frameId: frameId2 }) {
+  return base(chipId(map, uid, n), "rectangle", x, y, width, height, {
+    backgroundColor: CHIP_FILLS[kind] || CHIP_FILLS.ccp,
+    strokeWidth: 1,
+    roundness: { type: 3 },
+    boundElements: [{ id: chipTextId(map, uid, n), type: "text" }],
+    customData: withMM(null, { chip: uid, kind, map }),
+    ...frameId2 ? { frameId: frameId2 } : {}
+  });
+}
+function buildChipText({ map, uid, n, x, y, width, height, text, originalText, frameId: frameId2 }) {
+  return base(chipTextId(map, uid, n), "text", x, y, width, height, {
+    text,
+    originalText,
+    fontSize: FLOW_CHIP_FONT,
+    fontFamily: 5,
+    textAlign: "center",
+    verticalAlign: "middle",
+    containerId: chipId(map, uid, n),
+    autoResize: true,
+    lineHeight: LINE_HEIGHT,
+    ...frameId2 ? { frameId: frameId2 } : {}
+  });
+}
+function buildLane({ map, name, x, y, width, height }) {
+  return base(laneId(map, name), "frame", x, y, width, height, {
+    strokeColor: "#bbbbbb",
+    roughness: 0,
+    locked: true,
+    name,
+    customData: withMM(null, { lane: name, map })
   });
 }
 function buildSpine({ map, x, y, points }) {
@@ -8310,8 +8742,29 @@ function edgeGeometry(p, c, layout, start) {
   }
   return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
 }
-function textRect(node, textWidth, textHeight) {
+function textRect(node, textWidth, textHeight, type = "rectangle") {
+  if (type === "ellipse" || type === "diamond") {
+    const ell = type === "ellipse";
+    let ox = 5;
+    let oy = 5;
+    if (ell) {
+      ox += node.width / 2 * (1 - Math.SQRT2 / 2);
+      oy += node.height / 2 * (1 - Math.SQRT2 / 2);
+    } else {
+      ox += node.width / 4;
+      oy += node.height / 4;
+    }
+    const maxW = (ell ? Math.round(node.width / 2 * Math.SQRT2) : Math.round(node.width / 2)) - 10;
+    const maxH = (ell ? Math.round(node.height / 2 * Math.SQRT2) : Math.round(node.height / 2)) - 10;
+    return { x: node.x + ox + (maxW / 2 - textWidth / 2), y: node.y + oy + (maxH / 2 - textHeight / 2) };
+  }
   return { x: node.x + (node.width - textWidth) / 2, y: node.y + (node.height - textHeight) / 2 };
+}
+function containerDimension(dimension, type) {
+  const d = Math.ceil(dimension);
+  if (type === "ellipse") return Math.round((d + 10) / Math.SQRT2 * 2);
+  if (type === "diamond") return 2 * (d + 10);
+  return d + 10;
 }
 var makeSizer = (measure2) => (text, fontSize, _uid, maxWidth) => nodeSize(text, fontSize, measure2, maxWidth);
 var close = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= TOL;
@@ -8337,7 +8790,7 @@ function mergeBound(existing, prefix, desired) {
   return out;
 }
 var colorFor = (v) => v.depth === 0 ? ROOT_COLOR : BRANCH_COLORS[v.branchIndex % BRANCH_COLORS.length];
-var schemeFill = (v, scheme) => scheme === "cause" ? CAUSE_FILLS[Math.min(v.depth, 3)] : colorFor(v);
+var schemeFill = (v, scheme) => scheme === "cause" ? CAUSE_FILLS[Math.min(v.depth, 3)] : scheme === "flow" ? v.depth === 0 ? ROOT_COLOR : BRANCH_COLORS[0] : colorFor(v);
 var EVIDENCE_RE = /#\[\[evidence\]\]|(?:^|[\s(])#evidence(?![\p{L}\p{N}_/-]|[.:][\p{L}\p{N}_/-])/iu;
 function fullSize(s, text, fs) {
   const out = { ...s };
@@ -8365,10 +8818,12 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos, tag
   const rootEl = byId.get(nodeId(root, root));
   const rootMM = mmOf(rootEl) || {};
   const dir = rootMM.layout || layout;
-  const family = isCauseLayout(dir) ? "cause" : "branch";
-  const oldScheme = rootMM.scheme === "cause" ? "cause" : "branch";
+  const flow = dir === FLOW_LAYOUT;
+  const family = flow ? "flow" : isCauseLayout(dir) ? "cause" : "branch";
+  const oldScheme = rootMM.scheme === "cause" ? "cause" : rootMM.scheme === "flow" ? "flow" : "branch";
   const attrEdges = rootEl ? rootMM.attrEdges === true : !!(rootDefaults && rootDefaults.attrEdges === true);
-  const vtree = visualTree(tree, { attrEdges });
+  const vtree = drawnTree(tree, { layout: dir, attrEdges });
+  const fstruct = flow ? flowStructure(tree) : null;
   const nodes = visibleNodes(vtree);
   const uids = allUids(tree);
   const storedBounds = Array.isArray(rootMM.bounds) ? rootMM.bounds : [];
@@ -8380,12 +8835,21 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos, tag
   const tags = tagColors instanceof Map ? tagColors : /* @__PURE__ */ new Map();
   for (const v of nodes) {
     const n = v.node;
-    const fs = fontSizeForDepth(v.depth);
-    let base2 = textOf ? textOf(n.uid, n) : plainText(n.string, () => "…");
+    const st = flow ? fstruct.byUid.get(n.uid) : null;
+    const fs = flow ? v.depth === 0 ? FLOW_ROOT_FONT : FLOW_STEP_FONT : fontSizeForDepth(v.depth);
+    const fp = flow ? flowParts(n.string, { branch: st.branchHead }) : null;
+    const shown = flow ? { ...n, string: fp.task + fp.body } : n;
+    let base2 = textOf ? textOf(n.uid, shown) : plainText(shown.string, () => "…");
     if (v.depth === 0 && family === "cause") base2 = `★ ${base2}`;
     const text = isFolded(n) ? `${base2} (+${countHidden(n)})` : base2;
-    const raw = typeof sizes === "function" ? { ...sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
+    const wrap = flow && st.type === "decision" ? FLOW_DECISION_WRAP : void 0;
+    const raw = typeof sizes === "function" ? { ...wrap ? sizes(text, fs, n.uid, wrap) : sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
     const s = fullSize(raw, text, fs);
+    const shape = flow ? st.type === "decision" ? "diamond" : st.type === "root" || st.type === "end" ? "ellipse" : "rectangle" : "rectangle";
+    if (shape !== "rectangle") {
+      s.width = containerDimension(s.textWidth + 4, shape);
+      s.height = containerDimension(s.textHeight + 4, shape);
+    }
     sizeMap[n.uid] = s;
     const el = byId.get(nodeId(root, n.uid));
     const mm2 = mmOf(el);
@@ -8396,11 +8860,14 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos, tag
       size: s,
       el,
       mm: mm2,
+      shape,
       tag: tagColor(n.string, tags),
       done: taskState(n.string) === "DONE",
       dash: family === "cause" && EVIDENCE_RE.test(n.string)
     });
-    if (v.depth > 0) {
+    if (flow) {
+      if (st.branchHead && fp.label) labels.set(n.uid, fp.label);
+    } else if (v.depth > 0) {
       const lt = n.edgeLabel !== void 0 ? n.edgeLabel : family === "cause" ? CAUSE_LABEL : null;
       if (lt) labels.set(n.uid, lt);
     }
@@ -8428,22 +8895,43 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos, tag
   let positions;
   let spine = null;
   let slotX = {};
-  if (dir === "fishbone") {
+  let flowInfo = null;
+  if (flow) {
+    const chipSize = (uid, i, chip) => {
+      const key = `${uid}-c${i}`;
+      const raw = typeof sizes === "function" ? { ...sizes(chip.text, FLOW_CHIP_FONT, key) } : { ...sizes && sizes[key] || { width: chip.text.length * 7 + 2 * PAD_X } };
+      const cs = fullSize(raw, chip.text, FLOW_CHIP_FONT);
+      return { width: cs.textWidth + 12, height: containerDimension(cs.textHeight, "rectangle"), textWidth: cs.textWidth, textHeight: cs.textHeight, wrapped: cs.text };
+    };
+    const labelWidth = (uid) => labels.has(uid) ? labelSize(uid, labels.get(uid), baseWrap).textWidth : 0;
+    const lay = flowLayout(fstruct, { sizes: sizeMap, chipSize, labelWidth, anchor });
+    positions = lay.positions;
+    const edges = fstruct.edges.map((e) => ({ ...e, id: e.primary ? edgeId(root, e.to) : e.kind === "merge" ? mergeId(root, e.from) : loopId(root, e.via) }));
+    const arrows = /* @__PURE__ */ new Map();
+    for (const e of edges) for (const u of [e.from, e.to]) {
+      if (!arrows.has(u)) arrows.set(u, []);
+      arrows.get(u).push(e.id);
+    }
+    flowInfo = { struct: fstruct, chips: lay.chips, frames: lay.frames, edges, arrows };
+  } else if (dir === "fishbone") {
     const fb = fishboneLayout({ tree: vtree, sizes: sizeMap, pinned, root: anchor, gapOf });
     positions = fb.positions;
     spine = fb.spine;
     slotX = fb.slotX;
   } else positions = layoutTree({ tree: vtree, sizes: sizeMap, layout: dir, pinned, root: anchor, gapOf });
-  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges };
+  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges, flow: flowInfo };
 }
 function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, tagColors, rootDefaults }) {
   const ops = { add: [], update: [], remove: [] };
   if (!tree) return ops;
   const plan = planMap({ elements, tree, sizes, layout, textOf, rootPos, tagColors, rootDefaults });
   const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX } = plan;
-  const fishbone = dir === "fishbone";
+  const flow = plan.flow;
+  const fishbone2 = dir === "fishbone";
   const pre = idPrefix(root);
+  const lpre = lanePrefix(root);
   const desiredIds = /* @__PURE__ */ new Set();
+  const desiredFrame = /* @__PURE__ */ new Map();
   const patches = /* @__PURE__ */ new Map();
   const patchOf = (id) => {
     if (!patches.has(id)) patches.set(id, {});
@@ -8457,13 +8945,16 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     else if (Array.isArray(mm2.edge)) canon = edgeId(root, mm2.edge[1]);
     else if (typeof mm2.label === "string") canon = labelId(root, mm2.label);
     else if (mm2.spine) canon = spineId(root);
+    else if (typeof mm2.lane === "string") canon = laneId(root, mm2.lane);
+    else if (typeof mm2.chip === "string") canon = chipId(root, mm2.chip, mm2.kind === "hazard" ? 1 : 0);
+    else if (mm2.flow && typeof mm2.flow === "object") canon = mm2.flow.kind === "merge" ? mergeId(root, mm2.flow.from) : mm2.flow.via ? loopId(root, mm2.flow.via) : null;
     else if (mm2.uid) canon = nodeId(root, mm2.uid);
     if (canon !== null && el.id !== canon) patchOf(el.id).customData = withoutMM(el.customData);
   }
   const kidEdges = /* @__PURE__ */ new Map();
   const finalRect = /* @__PURE__ */ new Map();
   for (const v of nodes) {
-    if (v.parent && !(fishbone && v.depth === 1)) {
+    if (v.parent && !flow && !(fishbone2 && v.depth === 1)) {
       if (!kidEdges.has(v.parent.uid)) kidEdges.set(v.parent.uid, []);
       kidEdges.get(v.parent.uid).push(v.node.uid);
     }
@@ -8474,21 +8965,100 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
   const addEdges = [];
   const addBodies = [];
   const addLabels = [];
+  const doEdge = ({ eid, parentUid, childUid, g, wantEdgeMM, via, boneStart, arrow = false, dashed = false, labelUid = null }) => {
+    const pid = nodeId(root, parentUid);
+    const nid = nodeId(root, childUid);
+    const e = byId.get(eid);
+    const [, [dx, dy]] = g.points;
+    const lid = labelId(root, childUid);
+    let label = null;
+    const ltext = labelUid !== null ? labels.get(labelUid) : null;
+    if (ltext) {
+      const foreign = e && (Array.isArray(e.boundElements) ? e.boundElements : []).some((b) => {
+        if (!b || b.type !== "text" || b.id === lid) return false;
+        const t = byId.get(b.id);
+        return t && !t.isDeleted && t.type === "text";
+      });
+      if (!foreign) {
+        const ls = labelSize(labelUid, ltext, arrowLabelWrapWidth(Math.abs(dx), LABEL_FONT2));
+        const lr = arrowLabelRect({ x: g.x, y: g.y, points: g.points }, ls.textWidth, ls.textHeight);
+        label = { x: lr.x, y: lr.y, width: ls.textWidth, height: ls.textHeight, text: ls.text, originalText: ltext };
+      }
+    }
+    const edgeBound = label ? [{ id: lid, type: "text" }] : [];
+    if (label) {
+      desiredIds.add(lid);
+      const lt = byId.get(lid);
+      if (!lt) addLabels.push(buildLabel({ map: root, childUid, ...label }));
+      else {
+        const lp = patchOf(lid);
+        if (lt.isDeleted) lp.isDeleted = false;
+        for (const k of ["x", "y", "width", "height"]) if (!close(lt[k], label[k])) lp[k] = label[k];
+        if (Math.abs(lt.angle || 0) > 1e-6) lp.angle = 0;
+        if (lt.text !== label.text) lp.text = label.text;
+        if (lt.originalText !== label.originalText) lp.originalText = label.originalText;
+        if (lt.fontSize !== LABEL_FONT2) lp.fontSize = LABEL_FONT2;
+        if (lt.fontFamily !== FONT_FAMILY) lp.fontFamily = FONT_FAMILY;
+        if (lt.textAlign !== "center") lp.textAlign = "center";
+        if (lt.verticalAlign !== "middle") lp.verticalAlign = "middle";
+        if (Math.abs((lt.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) lp.lineHeight = LINE_HEIGHT;
+        if (lt.containerId !== eid) lp.containerId = eid;
+        const lm = mmOf(lt);
+        if (!lm || lm.label !== childUid || lm.map !== root) lp.customData = withMM(lt.customData, { label: childUid, map: root });
+      }
+    }
+    if (!e) {
+      addEdges.push(buildEdge({ map: root, parentUid, childUid, ...g, via, unboundStart: !!boneStart, boundElements: edgeBound, id: eid, mm: wantEdgeMM, arrow, dashed }));
+    } else {
+      const ep = patchOf(eid);
+      if (e.isDeleted) ep.isDeleted = false;
+      if (!close(e.x, g.x)) ep.x = g.x;
+      if (!close(e.y, g.y)) ep.y = g.y;
+      if (!close(e.width, Math.abs(dx))) ep.width = Math.abs(dx);
+      if (!close(e.height, Math.abs(dy))) ep.height = Math.abs(dy);
+      const pts = Array.isArray(e.points) ? e.points : [];
+      const ok = pts.length === 2 && close(pts[0][0], 0) && close(pts[0][1], 0) && close(pts[1][0], dx) && close(pts[1][1], dy);
+      if (!ok) ep.points = g.points;
+      if (boneStart) {
+        if (e.startBinding) ep.startBinding = null;
+      } else if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
+      if (!e.endBinding || e.endBinding.elementId !== nid) ep.endBinding = { elementId: nid, focus: 0, gap: EDGE_GAP };
+      const curFlow = (mmOf(e) || {}).flow;
+      if (arrow) {
+        if (curFlow === void 0 || !same(curFlow, wantEdgeMM.flow)) {
+          if (e.endArrowhead !== "arrow") ep.endArrowhead = "arrow";
+          if (dashed && e.strokeStyle !== "dashed") ep.strokeStyle = "dashed";
+        }
+      } else if (curFlow !== void 0 && e.endArrowhead === "arrow") ep.endArrowhead = null;
+      if (!same(mmOf(e) || null, wantEdgeMM)) ep.customData = withMM(e.customData, wantEdgeMM);
+      const eb = mergeBound(e.boundElements, pre, edgeBound);
+      if (!same(eb, e.boundElements || [])) ep.boundElements = eb;
+    }
+  };
   for (const v of nodes) {
     const uid = v.node.uid;
     const i = info.get(uid);
     const rect = finalRect.get(uid);
     const nid = nodeId(root, uid);
     const isRoot = v.depth === 0;
-    const branch = isRoot ? void 0 : v.branch;
+    const branch = isRoot || flow ? void 0 : v.branch;
+    const st = flow ? flow.struct.byUid.get(uid) : null;
+    const frameWant = st && st.lane !== "" ? laneId(root, st.lane) : void 0;
     const txtEl = textByContainer.get(nid);
     const tid = txtEl ? txtEl.id : textId(root, uid);
     desiredIds.add(nid);
     desiredIds.add(tid);
+    if (frameWant !== void 0) {
+      desiredFrame.set(nid, frameWant);
+      desiredFrame.set(tid, frameWant);
+    }
     const ownBound = [{ id: tid, type: "text" }];
-    if (!isRoot) ownBound.push({ id: edgeId(root, uid), type: "arrow" });
-    for (const c of kidEdges.get(uid) || []) ownBound.push({ id: edgeId(root, c), type: "arrow" });
-    const tr = textRect(rect, i.size.textWidth, i.size.textHeight);
+    if (flow) for (const id of flow.arrows.get(uid) || []) ownBound.push({ id, type: "arrow" });
+    else {
+      if (!isRoot) ownBound.push({ id: edgeId(root, uid), type: "arrow" });
+      for (const c of kidEdges.get(uid) || []) ownBound.push({ id: edgeId(root, c), type: "arrow" });
+    }
+    const tr = textRect(rect, i.size.textWidth, i.size.textHeight, i.shape);
     const want = {
       x: tr.x,
       y: tr.y,
@@ -8500,14 +9070,18 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     };
     const curMM = i.mm || {};
     const wantMM = isRoot ? { ...curMM, uid, map: root, root: true, layout: curMM.layout || dir, bounds } : { ...curMM, uid, map: root, ...branch !== void 0 ? { branch } : {} };
+    if (flow && !isRoot) delete wantMM.branch;
     if (i.tag) wantMM.tag = i.tag;
     else delete wantMM.tag;
     if (i.done) wantMM.done = true;
     else delete wantMM.done;
     if (i.dash) wantMM.dash = true;
     else delete wantMM.dash;
+    if (i.shape !== "rectangle") wantMM.shape = i.shape;
+    else delete wantMM.shape;
     if (isRoot) {
       if (family === "cause") wantMM.scheme = "cause";
+      else if (family === "flow") wantMM.scheme = "flow";
       else delete wantMM.scheme;
     }
     const fill = i.tag || schemeFill(v, family);
@@ -8525,9 +9099,11 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
           mm: wantMM,
           boundElements: ownBound,
           opacity: i.done ? 50 : void 0,
-          strokeStyle: i.dash ? "dashed" : void 0
+          strokeStyle: i.dash ? "dashed" : void 0,
+          type: i.shape,
+          frameId: frameWant
         }),
-        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0 })
+        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0, frameId: frameWant })
       );
     } else {
       const el = i.el;
@@ -8535,7 +9111,12 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
       if (el.isDeleted) p.isDeleted = false;
       for (const k of ["x", "y", "width", "height"]) if (!close(el[k], rect[k])) p[k] = rect[k];
       if (Math.abs(el.angle || 0) > 1e-6) p.angle = 0;
-      if (!isRoot && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = fill;
+      if ((curMM.shape || "rectangle") !== i.shape && el.type !== i.shape) {
+        p.type = i.shape;
+        p.roundness = roundnessFor(i.shape);
+      }
+      if (frameWant !== void 0 && el.frameId !== frameWant) p.frameId = frameWant;
+      if (!isRoot && !flow && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = fill;
       else if (oldScheme !== family || curMM.tag !== i.tag) {
         const oldExpected = curMM.tag || schemeFill(v, oldScheme);
         if (el.backgroundColor === oldExpected && oldExpected !== fill) p.backgroundColor = fill;
@@ -8548,7 +9129,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
       const mb = mergeBound(el.boundElements, pre, ownBound);
       if (!same(mb, el.boundElements || [])) p.boundElements = mb;
       if (!txtEl) {
-        addBodies.push(buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0 }));
+        addBodies.push(buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0, frameId: frameWant }));
       } else {
         const tp = patchOf(txtEl.id);
         if (txtEl.isDeleted) tp.isDeleted = false;
@@ -8560,81 +9141,102 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
         if (txtEl.fontFamily !== FONT_FAMILY) tp.fontFamily = FONT_FAMILY;
         if (Math.abs((txtEl.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) tp.lineHeight = LINE_HEIGHT;
         if (txtEl.containerId !== nid) tp.containerId = nid;
+        if (frameWant !== void 0 && txtEl.frameId !== frameWant) tp.frameId = frameWant;
         if (i.done && curMM.done !== true) tp.opacity = 50;
         else if (!i.done && curMM.done === true && txtEl.opacity === 50) tp.opacity = 100;
       }
     }
-    if (!isRoot) {
+    if (!isRoot && !flow) {
+      const parentUid = v.parent.uid;
+      const boneStart = fishbone2 && v.depth === 1 && spine ? { x: slotX[uid], y: spine.y } : null;
+      const g = edgeGeometry(finalRect.get(parentUid), rect, dir, boneStart);
       const eid = edgeId(root, uid);
       desiredIds.add(eid);
-      const parentUid = v.parent.uid;
-      const pid = nodeId(root, parentUid);
-      const boneStart = fishbone && v.depth === 1 && spine ? { x: slotX[uid], y: spine.y } : null;
-      const g = edgeGeometry(finalRect.get(parentUid), rect, dir, boneStart);
-      const e = byId.get(eid);
-      const [, [dx, dy]] = g.points;
-      const wantEdgeMM = edgeMM(root, parentUid, uid, v.node.via);
-      const lid = labelId(root, uid);
-      let label = null;
-      const ltext = labels.get(uid);
-      if (ltext) {
-        const foreign = e && (Array.isArray(e.boundElements) ? e.boundElements : []).some((b) => {
-          if (!b || b.type !== "text" || b.id === lid) return false;
-          const t = byId.get(b.id);
-          return t && !t.isDeleted && t.type === "text";
-        });
-        if (!foreign) {
-          const ls = labelSize(uid, ltext, arrowLabelWrapWidth(Math.abs(dx), LABEL_FONT2));
-          const lr = arrowLabelRect({ x: g.x, y: g.y, points: g.points }, ls.textWidth, ls.textHeight);
-          label = { x: lr.x, y: lr.y, width: ls.textWidth, height: ls.textHeight, text: ls.text, originalText: ltext };
+      doEdge({ eid, parentUid, childUid: uid, g, wantEdgeMM: edgeMM(root, parentUid, uid, v.node.via), via: v.node.via, boneStart, labelUid: uid });
+    }
+  }
+  const addChips = [];
+  if (flow) {
+    for (const fe of flow.edges) {
+      const a = flow.struct.byUid.get(fe.from);
+      const b = flow.struct.byUid.get(fe.to);
+      const ar = { ...finalRect.get(fe.from), type: info.get(fe.from).shape };
+      const br = { ...finalRect.get(fe.to), type: info.get(fe.to).shape };
+      const g = flowRoute(ar, br, fe.primary && a.lane === b.lane && b.rank === a.rank + 1, EDGE_GAP);
+      const wantEdgeMM = fe.primary ? { edge: [fe.from, fe.to], map: root, flow: fe.kind } : { flow: { from: fe.from, to: fe.to, kind: fe.kind, ...fe.via ? { via: fe.via } : {} }, map: root };
+      desiredIds.add(fe.id);
+      doEdge({ eid: fe.id, parentUid: fe.from, childUid: fe.to, g, wantEdgeMM, arrow: true, dashed: fe.kind === "loop", labelUid: fe.primary ? fe.to : null });
+    }
+    for (const [uid, list] of flow.chips) {
+      const st = flow.struct.byUid.get(uid);
+      const frameWant = st.lane !== "" ? laneId(root, st.lane) : void 0;
+      list.forEach((c) => {
+        const n = c.kind === "hazard" ? 1 : 0;
+        const cid = chipId(root, uid, n);
+        const ctid = chipTextId(root, uid, n);
+        desiredIds.add(cid);
+        desiredIds.add(ctid);
+        if (frameWant !== void 0) {
+          desiredFrame.set(cid, frameWant);
+          desiredFrame.set(ctid, frameWant);
         }
-      }
-      const edgeBound = label ? [{ id: lid, type: "text" }] : [];
-      if (label) {
-        desiredIds.add(lid);
-        const lt = byId.get(lid);
-        if (!lt) addLabels.push(buildLabel({ map: root, childUid: uid, ...label }));
-        else {
-          const lp = patchOf(lid);
-          if (lt.isDeleted) lp.isDeleted = false;
-          for (const k of ["x", "y", "width", "height"]) if (!close(lt[k], label[k])) lp[k] = label[k];
-          if (Math.abs(lt.angle || 0) > 1e-6) lp.angle = 0;
-          if (lt.text !== label.text) lp.text = label.text;
-          if (lt.originalText !== label.originalText) lp.originalText = label.originalText;
-          if (lt.fontSize !== LABEL_FONT2) lp.fontSize = LABEL_FONT2;
-          if (lt.fontFamily !== FONT_FAMILY) lp.fontFamily = FONT_FAMILY;
-          if (lt.textAlign !== "center") lp.textAlign = "center";
-          if (lt.verticalAlign !== "middle") lp.verticalAlign = "middle";
-          if (Math.abs((lt.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) lp.lineHeight = LINE_HEIGHT;
-          if (lt.containerId !== eid) lp.containerId = eid;
-          const lm = mmOf(lt);
-          if (!lm || lm.label !== uid || lm.map !== root) lp.customData = withMM(lt.customData, { label: uid, map: root });
+        const tr = textRect({ x: c.x, y: c.y, width: c.width, height: c.height }, c.textWidth, c.textHeight);
+        const tw = { x: tr.x, y: tr.y, width: c.textWidth, height: c.textHeight, text: c.wrapped, originalText: c.text };
+        const ce = byId.get(cid);
+        const te = textByContainer.get(cid);
+        if (!ce) {
+          addBodies.push(buildChip({ map: root, uid, n, kind: c.kind, x: c.x, y: c.y, width: c.width, height: c.height, frameId: frameWant }));
+          if (!te) addBodies.push(buildChipText({ map: root, uid, n, ...tw, frameId: frameWant }));
+        } else {
+          const p = patchOf(cid);
+          if (ce.isDeleted) p.isDeleted = false;
+          for (const [k, val] of [["x", c.x], ["y", c.y], ["width", c.width], ["height", c.height]]) if (!close(ce[k], val)) p[k] = val;
+          if (Math.abs(ce.angle || 0) > 1e-6) p.angle = 0;
+          if (frameWant !== void 0 && ce.frameId !== frameWant) p.frameId = frameWant;
+          const cm = mmOf(ce);
+          const wantCM = { chip: uid, kind: c.kind, map: root };
+          if (!same(cm || null, wantCM)) p.customData = withMM(ce.customData, wantCM);
+          const mb = mergeBound(ce.boundElements, pre, [{ id: ctid, type: "text" }]);
+          if (!same(mb, ce.boundElements || [])) p.boundElements = mb;
         }
-      }
+        if (ce && !te) addBodies.push(buildChipText({ map: root, uid, n, ...tw, frameId: frameWant }));
+        else if (te) {
+          const tp = patchOf(te.id);
+          if (te.isDeleted) tp.isDeleted = false;
+          for (const k of ["x", "y", "width", "height"]) if (!close(te[k], tw[k])) tp[k] = tw[k];
+          if (Math.abs(te.angle || 0) > 1e-6) tp.angle = 0;
+          if (te.text !== tw.text) tp.text = tw.text;
+          if (te.originalText !== tw.originalText) tp.originalText = tw.originalText;
+          if (te.fontSize !== FLOW_CHIP_FONT) tp.fontSize = FLOW_CHIP_FONT;
+          if (te.fontFamily !== FONT_FAMILY) tp.fontFamily = FONT_FAMILY;
+          if (Math.abs((te.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) tp.lineHeight = LINE_HEIGHT;
+          if (te.containerId !== cid) tp.containerId = cid;
+          if (frameWant !== void 0 && te.frameId !== frameWant) tp.frameId = frameWant;
+        }
+      });
+    }
+  }
+  const addLanes = [];
+  if (flow) {
+    for (const f of flow.frames) {
+      const id = laneId(root, f.name);
+      desiredIds.add(id);
+      const e = byId.get(id);
       if (!e) {
-        addEdges.push(buildEdge({ map: root, parentUid, childUid: uid, ...g, via: v.node.via, unboundStart: !!boneStart, boundElements: edgeBound }));
-      } else {
-        const ep = patchOf(eid);
-        if (e.isDeleted) ep.isDeleted = false;
-        if (!close(e.x, g.x)) ep.x = g.x;
-        if (!close(e.y, g.y)) ep.y = g.y;
-        if (!close(e.width, Math.abs(dx))) ep.width = Math.abs(dx);
-        if (!close(e.height, Math.abs(dy))) ep.height = Math.abs(dy);
-        const pts = Array.isArray(e.points) ? e.points : [];
-        const ok = pts.length === 2 && close(pts[0][0], 0) && close(pts[0][1], 0) && close(pts[1][0], dx) && close(pts[1][1], dy);
-        if (!ok) ep.points = g.points;
-        if (boneStart) {
-          if (e.startBinding) ep.startBinding = null;
-        } else if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
-        if (!e.endBinding || e.endBinding.elementId !== nid) ep.endBinding = { elementId: nid, focus: 0, gap: EDGE_GAP };
-        if (!same(mmOf(e) || null, wantEdgeMM)) ep.customData = withMM(e.customData, wantEdgeMM);
-        const eb = mergeBound(e.boundElements, pre, edgeBound);
-        if (!same(eb, e.boundElements || [])) ep.boundElements = eb;
+        addLanes.push(buildLane({ map: root, ...f }));
+        continue;
       }
+      const p = patchOf(id);
+      if (e.isDeleted) p.isDeleted = false;
+      for (const k of ["x", "y", "width", "height"]) if (!close(e[k], f[k])) p[k] = f[k];
+      if (Math.abs(e.angle || 0) > 1e-6) p.angle = 0;
+      if (e.name !== f.name) p.name = f.name;
+      const m = mmOf(e);
+      if (!m || m.lane !== f.name || m.map !== root) p.customData = withMM(e.customData, { lane: f.name, map: root });
     }
   }
   const addSpine = [];
-  if (fishbone && spine) {
+  if (fishbone2 && spine) {
     const sid = spineId(root);
     desiredIds.add(sid);
     const len = spine.x2 - spine.x1;
@@ -8691,7 +9293,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     const m = mmOf(e);
     if (!m || m.boundary !== uid || m.map !== root) p.customData = withMM(e.customData, { boundary: uid, map: root });
   }
-  ops.add = [...addSpine, ...addEdges, ...addBodies, ...addLabels, ...addBoundaries];
+  ops.add = [...addSpine, ...addEdges, ...addBodies, ...addLabels, ...addBoundaries, ...addLanes];
   const removed = /* @__PURE__ */ new Set();
   for (const el of elements || []) {
     if (!el || el.isDeleted || typeof el.id !== "string" || !el.id.startsWith(pre) || desiredIds.has(el.id)) continue;
@@ -8701,6 +9303,13 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     if (el && !el.isDeleted && el.type === "text" && removed.has(el.containerId)) removed.add(el.id);
   }
   ops.remove = [...removed];
+  for (const el of elements || []) {
+    if (!el || typeof el.id !== "string" || !el.id.startsWith(pre) || removed.has(el.id)) continue;
+    if (el.isDeleted && patches.get(el.id)?.isDeleted !== false) continue;
+    if (typeof el.frameId !== "string" || !el.frameId.startsWith(lpre)) continue;
+    const want = desiredFrame.get(el.id) ?? null;
+    if (el.frameId !== want) patchOf(el.id).frameId = want;
+  }
   for (const [id, patch] of patches) {
     if (removed.has(id) || Object.keys(patch).length === 0) continue;
     ops.update.push({ id, patch });
@@ -8742,6 +9351,11 @@ var MARKUP_HINT = "Edit this node in the outline (it has links or formatting)";
 var WRITE_FAILED = "Could not update the outline";
 var CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
 var LABEL_HINT = "Edit the attribute block in the outline";
+var FLOW_LABEL_HINT = "Edit the Yes:/No: prefix in the outline";
+var FLOW_LAYOUT_HINT = "Flow layout: change it from the map menu";
+var FLOW_STEPS_HINT = "Flow steps follow the outline";
+var FLOW_ATTR_HINT = "Not used in flow layout";
+var LANE_ID_RE = /^pmm-.+-lane-/;
 var SELF_MOVE = "Cannot move a branch into itself";
 var CHANGE_BACK = "choose again to change back";
 var ATTR_HINT = "Attribute blocks show as labelled edges (Plexus menu to turn off)";
@@ -8751,31 +9365,32 @@ var ARROWS = { ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowU
 var LETTERS = /* @__PURE__ */ new Set(["KeyF", "KeyL", "KeyP", "KeyB", "KeyX", "KeyC", "KeyV"]);
 var defaultRaf = (fn) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16);
 var defaultGuardedWrite = (app, { next, captureUpdate } = {}) => {
-  const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
-  app.updateScene({ elements: typeof next === "function" ? next(current4) : next, ...captureUpdate ? { captureUpdate } : {} });
+  const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
+  app.updateScene({ elements: typeof next === "function" ? next(current6) : next, ...captureUpdate ? { captureUpdate } : {} });
   return true;
 };
 var defaultCaf = (id) => typeof globalThis.cancelAnimationFrame === "function" ? globalThis.cancelAnimationFrame(id) : clearTimeout(id);
 function findNode(tree, uid) {
   if (!tree) return null;
-  const stack = [{ node: tree, parent: null }];
-  while (stack.length) {
-    const { node, parent } = stack.pop();
+  const stack2 = [{ node: tree, parent: null }];
+  while (stack2.length) {
+    const { node, parent } = stack2.pop();
     if (node.uid === uid) return { node, parent };
-    for (const c of node.children) stack.push({ node: c, parent: node });
+    for (const c of node.children) stack2.push({ node: c, parent: node });
   }
   return null;
 }
 function rawWalk(raw, fn) {
-  const stack = raw ? [raw] : [];
-  while (stack.length) {
-    const n = stack.pop();
+  const stack2 = raw ? [raw] : [];
+  while (stack2.length) {
+    const n = stack2.pop();
     fn(n);
-    for (const c of n[":block/children"] || []) stack.push(c);
+    for (const c of n[":block/children"] || []) stack2.push(c);
   }
 }
-function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite, getTagColors = () => /* @__PURE__ */ new Map() }) {
+function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite, getTagColors = () => /* @__PURE__ */ new Map(), createLaneRegions = async () => [] }) {
   const sessions = /* @__PURE__ */ new Map();
+  const laneFlights = /* @__PURE__ */ new Map();
   let disposed = false;
   const warn7 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
   const toast = (message, opts) => {
@@ -8804,6 +9419,30 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       return /* @__PURE__ */ new Map();
     }
   };
+  function requestLaneRegions(drawingUid, frames) {
+    if (disposed || !drawingUid || !frames.length) return;
+    const flight = laneFlights.get(drawingUid);
+    if (flight) {
+      for (const f of frames) flight.queued.set(f.id, f);
+      return;
+    }
+    const state = { queued: /* @__PURE__ */ new Map() };
+    laneFlights.set(drawingUid, state);
+    (async () => {
+      let batch = frames;
+      while (batch.length && !disposed) {
+        try {
+          await createLaneRegions(drawingUid, batch);
+        } catch (error) {
+          warn7("lane regions", error);
+        }
+        batch = [...state.queued.values()];
+        state.queued.clear();
+      }
+    })().finally(() => {
+      laneFlights.delete(drawingUid);
+    });
+  }
   function mount({ app, containerEl, outerEl, zIndex, drawingUid = null } = {}) {
     if (disposed || !app || !containerEl) return () => {
     };
@@ -8844,6 +9483,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let drag = null;
     let dragCancelled = false;
     let labelToasted = false;
+    let flowLabelToasted = false;
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard2 = () => alive && !disposed && native.activeEditor(doc)?.app === app;
     const state = () => app.state || {};
@@ -8865,11 +9505,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (mutate) next = mutate(next);
       let changed = next !== els();
       const staged = [];
+      const laneIds = /* @__PURE__ */ new Set();
       for (const root of roots) {
         const tree = trees.get(root);
         if (!tree) continue;
         const ops = reconcile({ elements: next, tree, sizes: sizer, textOf, rootPos: rootPos.get(root), ...mapOpts(root) });
         if (!isEmptyOps(ops)) {
+          for (const a of ops.add) if (isLaneFrame(a)) laneIds.add(a.id);
+          for (const u of ops.update) if (u.patch?.isDeleted === false && typeof u.id === "string" && LANE_ID_RE.test(u.id)) laneIds.add(u.id);
           next = applyOps(next, ops);
           changed = true;
         }
@@ -8881,8 +9524,19 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (!written) return false;
       for (const root of roots) forceMarks.delete(root);
       takeSnapshot();
+      if (laneIds.size) askLaneRegions(next.filter((e) => laneIds.has(e.id)));
       afterApply(roots);
       return true;
+    }
+    const isLaneFrame = (el) => !!el && el.type === "frame" && typeof el.id === "string" && LANE_ID_RE.test(el.id);
+    const isFlow = (root) => mmOf(rootElement(root))?.layout === FLOW_LAYOUT;
+    function askLaneRegions(frames) {
+      const list = [];
+      for (const el of frames) {
+        if (!isLaneFrame(el) || el.isDeleted || typeof el.name !== "string" || el.name === "") continue;
+        list.push({ id: el.id, name: el.name });
+      }
+      requestLaneRegions(drawingUid, list);
     }
     function mapOpts(root) {
       const defaults = rootDefaults.get(root);
@@ -8915,9 +9569,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       return !!el && !el.isDeleted;
     }
     function buildTree(root, raw) {
-      const prune = new Set(trees.keys());
-      prune.delete(root);
-      return treeFromPull(raw, { prune, maxVisible: NODE_CAP });
+      const prune2 = new Set(trees.keys());
+      prune2.delete(root);
+      return treeFromPull(raw, { prune: prune2, maxVisible: NODE_CAP });
     }
     function detach(root, { force = false } = {}) {
       const ids = new Set(projectionIds(els(), root));
@@ -9008,6 +9662,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           refreshRoot(root);
         }
         takeSnapshot();
+        askLaneRegions(els().filter((e) => isLaneFrame(e) && !e.isDeleted && [...roots].some((r) => e.id.startsWith(`pmm-${r}-lane-`))));
       };
       poll();
     }
@@ -9059,11 +9714,17 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       dragCancelled = false;
       if (cancelled || !pds || activeTool?.type !== "selection" || !pds.drag?.hasOccurred) return;
       if (pds.resize?.isResizing || state().viewModeEnabled || pds.hit?.hasBeenDuplicated) return;
-      if (event && (event.metaKey || event.ctrlKey)) return;
+      const modified = !!(event && (event.metaKey || event.ctrlKey));
       const sel = selectedNode();
       if (!sel || sel.isRoot) return;
+      const flow = isFlow(sel.root);
+      if (modified && !flow) return;
       const hitId = pds.hit?.element?.id;
       if (hitId !== nodeId(sel.root, sel.uid) && hitId !== textId(sel.root, sel.uid)) return;
+      if (modified) {
+        pendingDrop = { root: sel.root, uid: sel.uid, snap: true };
+        return;
+      }
       const point = pointOf(event, pds);
       const seen = drag && drag.active && drag.root === sel.root && drag.uid === sel.uid && drag.plan && drag.tree;
       if (point) pendingDrop = { root: sel.root, uid: sel.uid, point, ...seen ? { plan: drag.plan, tree: drag.tree } : {} };
@@ -9086,12 +9747,21 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       pendingDrop = null;
       if (!d || !trees.get(d.root) || !findNode(trees.get(d.root), d.uid)) return;
       const snapBack = () => commit(null, [d.root]);
+      if (d.snap) {
+        snapBack();
+        return;
+      }
+      const flow = isFlow(d.root);
       if (otherMapAt(d.root, d.point)) {
         snapBack();
         return;
       }
       const ctx = d.plan && d.tree ? { plan: d.plan, tree: d.tree } : planOf(d.root);
       const res = resolveDrop({ plan: ctx.plan, tree: ctx.tree, dragged: d.uid, point: d.point, layout: ctx.plan.dir });
+      if (flow && res.type !== "reparent" && res.type !== "refuse") {
+        snapBack();
+        return;
+      }
       if (res.type === "pin") return;
       if (res.type === "refuse") {
         if (res.reason === "own-subtree") toast(SELF_MOVE);
@@ -9312,20 +9982,32 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         toast(LABEL_HINT);
         return;
       }
+      if (mm2 && (mm2.flow === "branch" || mm2.flow && typeof mm2.flow === "object") && container?.type === "arrow") {
+        if (!flowLabelToasted) {
+          flowLabelToasted = true;
+          toast(FLOW_LABEL_HINT);
+        }
+        return;
+      }
       if (!mm2 || !mm2.uid) return;
       const tree = trees.get(mm2.map);
       const found = tree ? findNode(tree, mm2.uid) : null;
       if (!found) return;
       const node = found.node;
-      if (hasMarkup(taskParts(node.string).rest)) {
+      const flow = isFlow(mm2.map);
+      const branch = flow && isBranch(tree, mm2.uid);
+      if (hasMarkup(flow ? flowParts(node.string, { branch }).body : taskParts(node.string).rest)) {
         toast(MARKUP_HINT);
         return;
       }
       const text = typeof txt.originalText === "string" ? txt.originalText : txt.text;
       if (text === "" || text === "·") return;
-      const next = editableText(node, text, { star: starFor(mm2.map, mm2.uid) });
+      const next = flow ? flowEditable(findNode(drawnTree(tree, { layout: FLOW_LAYOUT }), mm2.uid)?.node ?? node, text, { branch }) : editableText(node, text, { star: starFor(mm2.map, mm2.uid) });
       if (next === null || next === void 0 || next === node.string) return;
       writeString(mm2.map, mm2.uid, next, node.string);
+    }
+    function isBranch(tree, uid) {
+      return !!tree && !!flowStructure(tree).byUid.get(uid)?.branchHead;
     }
     function starFor(root, uid) {
       return uid === root && CAUSE_LAYOUTS.includes(mmOf(rootElement(root))?.layout);
@@ -9349,7 +10031,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const pinPatch = /* @__PURE__ */ new Map();
       for (const root of trees.keys()) {
         const tree = trees.get(root);
-        if (!tree) continue;
+        if (!tree || isFlow(root)) continue;
         const plan = planMap({ elements: live3, tree, sizes: sizer, textOf, ...mapOpts(root) });
         const rootEl = plan.info.get(root)?.el;
         const was = lastRoot.get(root);
@@ -9432,14 +10114,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const txt = els().find((e) => e.id === textId(input.rootUid, input.uid));
       s.fontSize = `${(txt && Number.isFinite(txt.fontSize) ? txt.fontSize : 16) * zoom}px`;
     }
-    function openInput({ root, uid, base: base2, placeholder = null, prefix = "" }) {
+    function openInput({ root, uid, base: base2, placeholder = null, prefix = "", suffix = "" }) {
       closeInput({ write: true });
       const el = doc.createElement("input");
       el.type = "text";
       el.className = "plexus-portal plexus-mm-input";
-      el.value = base2.slice(prefix.length);
+      el.value = base2.slice(prefix.length, base2.length - suffix.length);
       el.style.zIndex = String((zIndex ?? zIndexFor(outerEl)) + 2);
-      const handle = { el, rootUid: root, uid, base: base2, prefix, placeholder, composing: false, listeners: [], done: false };
+      const handle = { el, rootUid: root, uid, base: base2, prefix, suffix, placeholder, composing: false, listeners: [], done: false };
       const on = (type, fn) => {
         el.addEventListener(type, fn);
         handle.listeners.push([type, fn]);
@@ -9482,12 +10164,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (write) finishInput(handle, value);
     }
     function finishInput(handle, value) {
-      const { rootUid, uid, base: base2, placeholder, prefix } = handle;
+      const { rootUid, uid, base: base2, placeholder, prefix, suffix } = handle;
       if (value === "") {
         if (placeholder) discard(rootUid, uid, placeholder);
         return;
       }
-      const next = prefix + value;
+      const next = prefix + value + suffix;
       if (next === base2) return;
       writeString(rootUid, uid, next, base2);
     }
@@ -9610,6 +10292,21 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function editSelected(sel) {
       const node = findNode(trees.get(sel.root), sel.uid)?.node;
       if (!node) return;
+      if (isFlow(sel.root)) {
+        const parts2 = flowParts(node.string, { branch: isBranch(trees.get(sel.root), sel.uid) });
+        if (hasMarkup(parts2.body)) {
+          toast(MARKUP_HINT);
+          return;
+        }
+        const suffix = parts2.suffix || "";
+        const prefix = node.string.slice(0, node.string.length - parts2.body.length - suffix.length);
+        if (prefix + parts2.body + suffix !== node.string) {
+          toast(MARKUP_HINT);
+          return;
+        }
+        openInput({ root: sel.root, uid: sel.uid, base: node.string, prefix, suffix });
+        return;
+      }
       const parts = taskParts(node.string);
       if (hasMarkup(parts.rest)) {
         toast(MARKUP_HINT);
@@ -9628,7 +10325,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function drawnNodes(root) {
       const tree = trees.get(root);
       if (!tree) return [];
-      return visibleNodes(visualTree(tree, { attrEdges: mmOf(rootElement(root))?.attrEdges === true }));
+      const mm2 = mmOf(rootElement(root));
+      return visibleNodes(drawnTree(tree, { layout: mm2?.layout || "right", attrEdges: mm2?.attrEdges === true }));
     }
     function reorderSelected(sel, dir) {
       if (sel.isRoot) return null;
@@ -9644,8 +10342,27 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       return null;
     }
     function selectParent(sel) {
-      const v = drawnNodes(sel.root).find((x) => x.node.uid === sel.uid);
-      if (v && v.parent) select(sel.root, v.parent.uid);
+      const list = drawnNodes(sel.root);
+      const v = list.find((x) => x.node.uid === sel.uid);
+      if (!v || !v.parent) return;
+      if (!isFlow(sel.root)) {
+        select(sel.root, v.parent.uid);
+        return;
+      }
+      const pred = flowStructure(trees.get(sel.root)).byUid.get(sel.uid)?.pred;
+      if (pred) {
+        select(sel.root, pred);
+        return;
+      }
+      const kids2 = /* @__PURE__ */ new Map();
+      for (const x of list) if (x.parent) kids2.set(x.parent.uid, [...kids2.get(x.parent.uid) || [], x.node]);
+      const tail = (node) => {
+        const k = kids2.get(node.uid);
+        return k && k.length ? tail(k[k.length - 1]) : node;
+      };
+      const sibs = kids2.get(v.parent.uid) || [];
+      const i = sibs.findIndex((n) => n.uid === sel.uid);
+      select(sel.root, i > 0 ? tail(sibs[i - 1]).uid : v.parent.uid);
     }
     function placeholderDeletable(sel) {
       if (sel.isRoot) return false;
@@ -9707,6 +10424,10 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const rootEl = rootElement(sel.root);
       if (!rootEl) return null;
       const cur = mmOf(rootEl)?.layout || "right";
+      if (cur === FLOW_LAYOUT) {
+        toast(FLOW_LAYOUT_HINT);
+        return null;
+      }
       const next = LAYOUTS[(LAYOUTS.indexOf(cur) + 1) % LAYOUTS.length];
       commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: next }) : e), [sel.root]);
       toast(`Layout: ${next}`);
@@ -9722,7 +10443,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function setLayout(layout) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS].includes(layout)) return false;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout)) return false;
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout }) : e), [sel.root]);
       if (done2) toast(`Layout: ${layout} (${CHANGE_BACK})`);
       return done2;
@@ -9731,12 +10452,20 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
       if (!rootEl) return false;
+      if (mmOf(rootEl)?.layout === FLOW_LAYOUT) {
+        toast(FLOW_ATTR_HINT);
+        return false;
+      }
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { attrEdges: on ? true : void 0 }) : e), [sel.root]);
       if (done2) toast(`Attribute blocks as edges: ${on ? "on" : "off"} (${CHANGE_BACK})`);
       return done2;
     }
     function togglePin(sel) {
       if (sel.isRoot) return null;
+      if (isFlow(sel.root)) {
+        toast(FLOW_STEPS_HINT);
+        return null;
+      }
       const pinned = mmOf(sel.el)?.pinned === true;
       commit((list) => list.map((e) => e.id === sel.el.id ? patchMarker(e, { pinned: pinned ? void 0 : true }) : e), [sel.root]);
       return null;
@@ -10112,15 +10841,15 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       if (!pullRaw("[:block/uid]", parentUid)) return { ok: false, reason: "missing-target" };
       if (neighbour === uid) return { ok: false, reason: "self" };
       if (await insideBranch(uid, parentUid)) return { ok: false, reason: "inside-source" };
-      const current4 = childUids(pullRaw(CHILDREN, parentUid));
-      if (neighbour != null && !current4.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
+      const current6 = childUids(pullRaw(CHILDREN, parentUid));
+      if (neighbour != null && !current6.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
       await unfold(parentUid);
-      const same3 = current4.includes(uid);
-      const rest = current4.filter((u) => u !== uid);
+      const same3 = current6.includes(uid);
+      const rest = current6.filter((u) => u !== uid);
       const at = neighbour == null ? rest.length : rest.indexOf(neighbour) + (afterUid != null && beforeUid == null ? 1 : 0);
       if (same3) {
         const blocks = [...rest.slice(0, at), uid, ...rest.slice(at)];
-        if (blocks.every((u, i) => u === current4[i])) return { ok: true, written: false };
+        if (blocks.every((u, i) => u === current6[i])) return { ok: true, written: false };
         if (typeof api.data.block.reorderBlocks === "function") {
           await api.data.block.reorderBlocks({ location: { "parent-uid": parentUid }, blocks });
           return { ok: true, written: true };
@@ -10682,10 +11411,10 @@ function createSnapshotScheduler({
   }
   return { snapshotNow, dispose };
 }
-function planRestore({ current: current4 = [], snapshot = [], files, now = () => Date.now() } = {}) {
+function planRestore({ current: current6 = [], snapshot = [], files, now = () => Date.now() } = {}) {
   const stamp = now();
   const byId = /* @__PURE__ */ new Map();
-  for (const el of current4) if (el) byId.set(el.id, el);
+  for (const el of current6) if (el) byId.set(el.id, el);
   const owned = (el) => typeof el?.id === "string" && el.id.startsWith("pmm-");
   const bump3 = (el, from, extra) => ({
     ...el,
@@ -10705,7 +11434,7 @@ function planRestore({ current: current4 = [], snapshot = [], files, now = () =>
   }
   const restored = next.length;
   let deleted = 0;
-  for (const el of current4) {
+  for (const el of current6) {
     if (!el || kept.has(el.id)) continue;
     if (owned(el) || el.isDeleted) {
       next.push(el);
@@ -11593,6 +12322,1786 @@ function createOutlineActions({
   };
 }
 
+// src/model/frames.js
+var FRAME_GAP = 40;
+var FRAME_PRESETS2 = Object.freeze({
+  "A4": Object.freeze({ width: 794, height: 1123 }),
+  "Letter": Object.freeze({ width: 816, height: 1056 }),
+  "16:9": Object.freeze({ width: 854, height: 480 }),
+  "4:3": Object.freeze({ width: 800, height: 600 }),
+  "1:1": Object.freeze({ width: 800, height: 800 }),
+  "Mobile": Object.freeze({ width: 390, height: 844 })
+});
+var DEFAULT_PRESET2 = "16:9";
+var LAYOUTS2 = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
+var rnd3 = () => Math.floor(Math.random() * 2 ** 31);
+var isFrameLike = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
+var orderOf2 = (el) => {
+  const o = el?.customData?.plexus?.order;
+  return typeof o === "number" && Number.isFinite(o) ? o : null;
+};
+var frameId = () => `plexus-frame-${Math.random().toString(36).slice(2, 12)}`;
+var presetSize = (preset) => FRAME_PRESETS2[preset] ?? null;
+function presetFrame({ preset = DEFAULT_PRESET2, x = 0, y = 0, order = null, name = null, id = frameId() } = {}) {
+  const size = presetSize(preset);
+  if (!size) return null;
+  return {
+    ...baseElement(id, "frame", x, y, size.width, size.height),
+    name,
+    customData: { plexus: { order } }
+  };
+}
+function nextSlideSlot(elements, gap = FRAME_GAP) {
+  let best = null;
+  for (const f of liveElements(elements).filter(isFrameLike)) {
+    const right = (Number(f.x) || 0) + (Number(f.width) || 0);
+    if (!best || right > best.right) best = { right, y: Number(f.y) || 0 };
+  }
+  return best ? { x: best.right + gap, y: best.y } : null;
+}
+function layoutFrames({ kind = "grid", preset = DEFAULT_PRESET2, centre = { x: 0, y: 0 }, gap = FRAME_GAP } = {}) {
+  const size = presetSize(preset);
+  const shape = LAYOUTS2[kind];
+  if (!size || !shape) return [];
+  const { cols, rows } = shape;
+  const totalW = cols * size.width + (cols - 1) * gap;
+  const totalH = rows * size.height + (rows - 1) * gap;
+  const x0 = centre.x - totalW / 2;
+  const y0 = centre.y - totalH / 2;
+  const out = [];
+  for (let i = 0; i < cols * rows; i++) {
+    out.push({ x: x0 + i % cols * (size.width + gap), y: y0 + Math.floor(i / cols) * (size.height + gap), width: size.width, height: size.height });
+  }
+  return out;
+}
+function bumped(el, patch) {
+  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd3(), updated: Date.now() };
+}
+function planOrders(elements, count) {
+  const frames = orderFrames(elements);
+  const rewrite2 = /* @__PURE__ */ new Map();
+  let next;
+  if (frames.some((f) => orderOf2(f) === null)) {
+    frames.forEach((f, i) => rewrite2.set(f.id, i + 1));
+    next = frames.length + 1;
+  } else {
+    next = frames.reduce((m, f) => Math.max(m, orderOf2(f)), 0) + 1;
+  }
+  return { rewrite: rewrite2, orders: Array.from({ length: count }, (_, i) => next + i) };
+}
+function withOrder(el, order) {
+  return bumped(el, { customData: mergePlexusData(el.customData, { order }) });
+}
+function applyOrderRewrite(elements, rewrite2) {
+  if (!rewrite2.size) return elements;
+  return elements.map((el) => el && rewrite2.has(el.id) && orderOf2(el) !== rewrite2.get(el.id) ? withOrder(el, rewrite2.get(el.id)) : el);
+}
+function reformatRect(frame, preset) {
+  const size = presetSize(preset);
+  if (!size) return null;
+  const cx = (Number(frame.x) || 0) + (Number(frame.width) || 0) / 2;
+  const cy = (Number(frame.y) || 0) + (Number(frame.height) || 0) / 2;
+  return { x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height };
+}
+var intersects = (b, r) => b[0] < r.x + r.width && b[2] > r.x && b[1] < r.y + r.height && b[3] > r.y;
+function childrenOutside(elements, frame, rect) {
+  return liveElements(elements).filter((el) => el.frameId === frame.id && !intersects(elementBounds(el), rect));
+}
+function selectedFrameOf(elements, ids) {
+  const live3 = new Map(liveElements(elements).map((el) => [el.id, el]));
+  const picked = (ids || []).map((id) => live3.get(id)).filter(Boolean);
+  if (!picked.length) return null;
+  const frames = picked.filter(isFrameLike);
+  if (frames.length === 1 && picked.length === 1) return frames[0].id;
+  if (frames.length === 1 && picked.every((el) => el === frames[0] || el.frameId === frames[0].id)) return frames[0].id;
+  if (frames.length) return null;
+  const owners = new Set(picked.map((el) => el.frameId ?? null));
+  if (owners.size !== 1) return null;
+  const owner = [...owners][0];
+  return owner && live3.get(owner) && isFrameLike(live3.get(owner)) ? owner : null;
+}
+function frameAt(frames, point) {
+  let best = null;
+  for (const f of frames) {
+    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
+    if (point.x < x || point.x > x + w || point.y < y || point.y > y + h) continue;
+    if (!best || w * h < best.area) best = { f, area: w * h };
+  }
+  return best?.f ?? null;
+}
+function nearestFrame(frames, point) {
+  let best = null;
+  for (const f of frames) {
+    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
+    const dx = Math.max(x - point.x, 0, point.x - (x + w));
+    const dy = Math.max(y - point.y, 0, point.y - (y + h));
+    const d = Math.hypot(dx, dy);
+    const area = w * h;
+    if (!best || d < best.d || d === best.d && area < best.area) best = { f, d, area };
+  }
+  return best?.f ?? null;
+}
+
+// src/model/templates.js
+var rnd4 = () => Math.floor(Math.random() * 2 ** 31);
+var rid2 = () => `${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 13)}`.padEnd(21, "0").slice(0, 21);
+var isFrameLike2 = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
+var SLIDE = FRAME_PRESETS2["16:9"];
+var ZONE = "#adb5bd";
+function stack(b, ids, cx, y, gap) {
+  const out = [];
+  let cur = y;
+  for (const id of ids) {
+    const { width, height } = b.size(id);
+    const x = cx - width / 2;
+    b.place(id, x, cur);
+    out.push({ id, x, y: cur, width, height });
+    cur += height + gap;
+  }
+  return out;
+}
+function centreOn(b, id, cx, cy) {
+  const { width, height } = b.size(id);
+  b.place(id, cx - width / 2, cy - height / 2);
+}
+function haccpFlow(b, { origin }) {
+  const cx = origin.x + 220;
+  const mk = (text, o) => b.box(text, { minWidth: 180, ...o });
+  const chain = ["Receive ingredients", "Store", "Weigh", "Blend"].map((t) => mk(t));
+  const decision = mk("Metal detected?", { type: "diamond", minWidth: 200 });
+  const rest = ["Fill & seal", "Code and label", "Ship"].map((t) => mk(t));
+  const hold = mk("Hold & investigate", { backgroundColor: "#ffe3e3" });
+  const col = stack(b, [...chain, decision, ...rest], cx, origin.y, 50);
+  const d = col[chain.length];
+  const h = b.size(hold);
+  b.place(hold, d.x + d.width + 90, d.y + (d.height - h.height) / 2);
+  const chip = b.box("CCP 1", { fontSize: 12, backgroundColor: "#fff3bf", strokeColor: "#e67700", x: d.x + d.width - 34, y: d.y - 8 });
+  for (let i = 0; i < col.length - 1; i++) {
+    b.arrow(col[i].id, col[i + 1].id, col[i].id === decision ? { label: "No" } : {});
+  }
+  b.arrow(decision, hold, { label: "Yes" });
+  return chip;
+}
+function fiveWhy(b, { origin }) {
+  const cx = origin.x + 150;
+  const ids = [b.box("Problem", { minWidth: 220, backgroundColor: "#ffe3e3" })];
+  for (let i = 1; i <= 5; i++) ids.push(b.box(`Why ${i}?`, { minWidth: 220 }));
+  ids.push(b.box("Root cause", { minWidth: 220, backgroundColor: "#d3f9d8" }));
+  stack(b, ids, cx, origin.y, 44);
+  for (let i = 0; i < ids.length - 1; i++) b.arrow(ids[i], ids[i + 1]);
+}
+function fishbone(b, { origin }) {
+  const spineY = origin.y;
+  const length = 720;
+  b.line(origin.x, spineY, [[0, 0], [length, 0]], { strokeWidth: 3 });
+  const head = b.box("Effect", { minWidth: 120, backgroundColor: "#ffe3e3" });
+  const hs = b.size(head);
+  b.place(head, origin.x + length + 12, spineY - hs.height / 2);
+  const top = ["Method", "Machine", "Materials"];
+  const bottom = ["People", "Measurement", "Environment"];
+  const at = (label, i, above) => {
+    const id = b.box(label, { minWidth: 130 });
+    const s = b.size(id);
+    const cx = origin.x + 120 + i * 220;
+    const y = above ? spineY - 230 - s.height : spineY + 230;
+    b.place(id, cx - s.width / 2, y);
+    const from = above ? y + s.height : y;
+    b.line(cx, from, [[0, 0], [70, spineY - from]]);
+  };
+  top.forEach((t, i) => at(t, i, true));
+  bottom.forEach((t, i) => at(t, i, false));
+}
+function apolloCauseMap(b, { origin }) {
+  const cx = (n) => origin.x + n * 320;
+  const cy = (n) => origin.y + n;
+  const problem = b.box("Problem", { minWidth: 180, backgroundColor: "#ffe3e3" });
+  centreOn(b, problem, cx(0), cy(0));
+  const causes = [["Cause 1", -110], ["Cause 2", 110]].map(([t, y]) => {
+    const id = b.box(t, { minWidth: 160 });
+    centreOn(b, id, cx(1), cy(y));
+    b.arrow(id, problem);
+    return id;
+  });
+  [["Cause 1a", -170, 0], ["Cause 1b", -50, 0], ["Cause 2a", 110, 1]].forEach(([t, y, parent]) => {
+    const id = b.box(t, { minWidth: 160 });
+    centreOn(b, id, cx(2), cy(y));
+    b.arrow(id, causes[parent]);
+  });
+}
+function sipoc(b, { origin }) {
+  const names = ["Suppliers", "Inputs", "Process", "Outputs", "Customers"];
+  const width = 170;
+  const gap = 60;
+  const headers = names.map((name, i) => {
+    const id = b.box(name, { width, height: 48, x: origin.x + i * (width + gap), y: origin.y, backgroundColor: "#e7f5ff" });
+    return id;
+  });
+  names.forEach((_, i) => b.rect(origin.x + i * (width + gap), origin.y + 48 + 24, width, 320, { strokeColor: ZONE, strokeStyle: "dashed" }));
+  for (let i = 0; i < headers.length - 1; i++) b.arrow(headers[i], headers[i + 1]);
+}
+function swimlane(b, { origin }) {
+  const laneH = 140;
+  const laneW = 1e3;
+  const lanes = ["Lane 1", "Lane 2", "Lane 3"];
+  lanes.forEach((_, i) => b.rect(origin.x, origin.y + i * laneH, laneW, laneH, { strokeColor: ZONE }));
+  lanes.forEach((name, i) => b.text(origin.x + 12, origin.y + i * laneH + 8, name, { fontSize: 16 }));
+  const step = (text, col, lane, type) => {
+    const id = b.box(text, { type, minWidth: 100 });
+    centreOn(b, id, origin.x + 150 + col * 185, origin.y + lane * laneH + laneH / 2 + 10);
+    return id;
+  };
+  const ids = [
+    step("Start", 0, 0, "ellipse"),
+    step("Step 1", 1, 0),
+    step("Step 2", 2, 1),
+    step("Step 3", 3, 2),
+    step("End", 4, 2, "ellipse")
+  ];
+  for (let i = 0; i < ids.length - 1; i++) b.arrow(ids[i], ids[i + 1]);
+}
+function swabSiteMap(b, { origin }) {
+  const { x: ox, y: oy } = origin;
+  const zones = [
+    ["Zone 4: outside production", 0, 0, 840, 640],
+    ["Zone 3: remote from product contact", 70, 70, 700, 500],
+    ["Zone 2: adjacent to product contact", 140, 140, 560, 360],
+    ["Zone 1: product contact", 210, 210, 420, 220]
+  ];
+  for (const [, x, y, w, h] of zones) b.rect(ox + x, oy + y, w, h, { strokeColor: "#868e96" });
+  for (const [name, x, y] of zones) b.text(ox + x + 12, oy + y + 10, name, { fontSize: 16 });
+  const sites = [["S1", 320, 330], ["S2", 520, 330], ["S3", 250, 465], ["S4", 600, 465], ["S5", 420, 535], ["S6", 420, 605]];
+  for (const [label, x, y] of sites) {
+    const id = b.box(label, { type: "ellipse", fontSize: 16, backgroundColor: "#fff3bf" });
+    centreOn(b, id, ox + x, oy + y);
+  }
+  b.text(ox + 880, oy, "Legend\nS1, S2: Zone 1\nS3, S4: Zone 2\nS5: Zone 3\nS6: Zone 4", { fontSize: 16 });
+}
+function slide16x9(b, { origin }) {
+  const { x, y } = origin;
+  const title = b.text(x + 40, y + 40, "Title", { fontSize: 36 });
+  const body = b.text(x + 40, y + 140, "Click to add text", { fontSize: 24 });
+  b.frame(x, y, SLIDE.width, SLIDE.height, { name: "Slide", children: [title, body] });
+}
+var STARTERS = Object.freeze([
+  { id: "haccp-flow", name: "HACCP flow", build: haccpFlow },
+  { id: "five-why", name: "5-Why", build: fiveWhy },
+  { id: "fishbone", name: "Fishbone", build: fishbone },
+  { id: "apollo", name: "Apollo cause map", build: apolloCauseMap },
+  { id: "sipoc", name: "SIPOC", build: sipoc },
+  { id: "swimlane", name: "Swimlane", build: swimlane },
+  { id: "swab-site-map", name: "Swab-site map", build: swabSiteMap },
+  { id: "slide-16x9", name: "16:9 slide", build: slide16x9 }
+].map((s) => Object.freeze(s)));
+function buildStarter(starter, { measure: measure2 = null, origin = { x: 0, y: 0 } } = {}) {
+  let n = 0;
+  const builder = createBuilder({ measure: measure2, newId: () => `tpl-${starter.id}-${++n}` });
+  starter.build(builder, { origin });
+  return builder.elements();
+}
+function cleanData(customData) {
+  if (!customData || typeof customData !== "object") return void 0;
+  const out = structuredClone(customData);
+  if (out.plexus && typeof out.plexus === "object") {
+    delete out.plexus.mm;
+    delete out.plexus.addKey;
+    delete out.plexus.order;
+    if (!Object.keys(out.plexus).length) delete out.plexus;
+  }
+  return Object.keys(out).length ? out : void 0;
+}
+function remapForInsert(elements, { centre = null, newId = rid2, now = Date.now() } = {}) {
+  const src = liveElements(elements);
+  const ids = /* @__PURE__ */ new Map();
+  for (const el of src) ids.set(el.id, String(newId()));
+  const groups = /* @__PURE__ */ new Map();
+  const mapGroup = (g) => {
+    if (!groups.has(g)) groups.set(g, `g${rid2()}`);
+    return groups.get(g);
+  };
+  const out = src.map((el) => {
+    const c = structuredClone(el);
+    c.id = ids.get(el.id);
+    c.groupIds = (el.groupIds || []).map(mapGroup);
+    c.frameId = el.frameId && ids.has(el.frameId) ? ids.get(el.frameId) : null;
+    c.containerId = el.containerId && ids.has(el.containerId) ? ids.get(el.containerId) : null;
+    if (!("containerId" in el)) delete c.containerId;
+    if (Array.isArray(el.boundElements)) {
+      const kept = el.boundElements.filter((e) => e && ids.has(e.id)).map((e) => ({ ...e, id: ids.get(e.id) }));
+      c.boundElements = kept.length ? kept : null;
+    }
+    for (const key of ["startBinding", "endBinding"]) {
+      const bind = el[key];
+      if (bind && typeof bind === "object") c[key] = ids.has(bind.elementId) ? { ...bind, elementId: ids.get(bind.elementId) } : null;
+    }
+    const data = cleanData(el.customData);
+    if (data) c.customData = data;
+    else delete c.customData;
+    c.index = null;
+    c.seed = rnd4();
+    c.version = 1;
+    c.versionNonce = rnd4();
+    c.updated = now;
+    c.isDeleted = false;
+    return c;
+  });
+  if (centre) {
+    const bounds = commonBounds(out);
+    if (bounds) {
+      const dx = centre.x - (bounds[0] + bounds[2]) / 2;
+      const dy = centre.y - (bounds[1] + bounds[3]) / 2;
+      for (const el of out) {
+        el.x += dx;
+        el.y += dy;
+      }
+    }
+  }
+  return out;
+}
+function withTemplateFrames(current6, added) {
+  const frames = added.filter(isFrameLike2);
+  if (!frames.length) return [...current6, ...added];
+  const { rewrite: rewrite2, orders } = planOrders(current6, frames.length);
+  let k = 0;
+  const ordered = added.map((el) => isFrameLike2(el) ? withOrder(el, orders[k++]) : el);
+  return [...applyOrderRewrite(current6, rewrite2), ...ordered];
+}
+var isImage = (el) => el.type === "image";
+function selectionToTemplate(elements, selectedIds) {
+  const live3 = liveElements(elements);
+  const byId = new Map(live3.map((el) => [el.id, el]));
+  const set = /* @__PURE__ */ new Set();
+  for (const id of selectedIds || []) if (byId.has(id)) set.add(id);
+  for (const id of [...set]) {
+    const el = byId.get(id);
+    if (isFrameLike2(el)) {
+      for (const child of live3) if (child.frameId === id && child.type !== "text") set.add(child.id);
+    }
+  }
+  for (const el of live3) {
+    if ((el.type === "arrow" || el.type === "line") && !set.has(el.id)) {
+      const a = el.startBinding?.elementId;
+      const z = el.endBinding?.elementId;
+      if (a && z && set.has(a) && set.has(z)) set.add(el.id);
+    }
+  }
+  let skippedImages = 0;
+  for (const id of [...set]) {
+    const el = byId.get(id);
+    if (isImage(el) && !el.customData?.firebaseUrl) {
+      set.delete(id);
+      skippedImages += 1;
+    }
+  }
+  for (const el of live3) {
+    if (el.type !== "text") continue;
+    if (el.containerId && set.has(el.containerId)) set.add(el.id);
+    else if (set.has(el.id) && el.containerId && !set.has(el.containerId)) set.delete(el.id);
+  }
+  for (const el of live3) {
+    if (el.type === "text" && !el.containerId && el.frameId && set.has(el.frameId)) set.add(el.id);
+  }
+  const out = [];
+  for (const el of live3) {
+    if (!set.has(el.id)) continue;
+    const c = structuredClone(el);
+    if (c.customData?.plexus && typeof c.customData.plexus === "object") {
+      delete c.customData.plexus.mm;
+      if (!Object.keys(c.customData.plexus).length) delete c.customData.plexus;
+      if (!Object.keys(c.customData).length) delete c.customData;
+    }
+    if (c.frameId && !set.has(c.frameId)) c.frameId = null;
+    if (Array.isArray(c.boundElements)) {
+      const kept = c.boundElements.filter((e) => e && set.has(e.id));
+      c.boundElements = kept.length ? kept : null;
+    }
+    for (const key of ["startBinding", "endBinding"]) {
+      if (c[key] && !set.has(c[key].elementId)) c[key] = null;
+    }
+    out.push(c);
+  }
+  return { elements: out, skippedImages };
+}
+function pickCurrentItem(appState) {
+  const out = {};
+  if (!appState || typeof appState !== "object") return out;
+  for (const [k, v] of Object.entries(appState)) if (k.startsWith("currentItem") && v !== void 0) out[k] = v;
+  return out;
+}
+
+// src/view/name-prompt.js
+var ISOLATED3 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
+var current3 = null;
+function openNamePrompt({ doc, zIndex = 1e3, title = "Name", initial = "", maxLength = 60, submitLabel = "Save", onSubmit = () => {
+}, onClose = () => {
+} } = {}) {
+  if (current3) current3.close();
+  const handle = { done: false, root: null, listeners: [], busy: false };
+  const mk = (tag, className, text) => {
+    const n = doc.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = String(text);
+    return n;
+  };
+  const on = (node, type, fn) => {
+    node.addEventListener(type, fn);
+    handle.listeners.push([node, type, fn]);
+  };
+  const root = mk("div", "plexus-portal plexus-name-prompt");
+  root.style.zIndex = String(zIndex);
+  root.setAttribute?.("role", "dialog");
+  handle.root = root;
+  const input = mk("input", "plexus-name-input");
+  input.type = "text";
+  input.value = String(initial ?? "");
+  input.maxLength = maxLength;
+  const error = mk("div", "plexus-name-error", "");
+  const save = mk("button", "plexus-toolbar-button", submitLabel);
+  save.type = "button";
+  const cancel = mk("button", "plexus-toolbar-button", "Cancel");
+  cancel.type = "button";
+  const actions = mk("div", "plexus-name-actions");
+  actions.append(save, cancel);
+  root.append(mk("div", "plexus-name-title", title), input, error, actions);
+  const close2 = () => {
+    if (handle.done) return;
+    handle.done = true;
+    for (const [node, type, fn] of handle.listeners.splice(0)) node.removeEventListener?.(type, fn);
+    try {
+      root.remove?.();
+    } catch (e) {
+      console.warn("[plexus] name prompt remove failed", e);
+    }
+    if (current3 === handle) current3 = null;
+    try {
+      onClose();
+    } catch (e) {
+      console.warn("[plexus] name prompt onClose failed", e);
+    }
+  };
+  handle.close = close2;
+  const submit = async () => {
+    if (handle.done || handle.busy) return;
+    handle.busy = true;
+    error.textContent = "";
+    try {
+      await onSubmit(String(input.value ?? ""));
+      handle.busy = false;
+      close2();
+    } catch (e) {
+      handle.busy = false;
+      if (!handle.done) error.textContent = String(e?.message || e);
+    }
+  };
+  const keydown = (e) => {
+    e.stopPropagation?.();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      if (e.target && e.target !== input) return;
+      e.preventDefault?.();
+      submit();
+    } else if (e.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  };
+  on(input, "keydown", keydown);
+  for (const type of ISOLATED3) on(input, type, (e) => e.stopPropagation?.());
+  on(root, "keydown", keydown);
+  for (const type of ISOLATED3) on(root, type, (e) => e.stopPropagation?.());
+  on(save, "click", (e) => {
+    e.stopPropagation?.();
+    submit();
+  });
+  on(cancel, "click", (e) => {
+    e.stopPropagation?.();
+    close2();
+  });
+  try {
+    doc.body.append(root);
+    input.focus?.();
+    input.select?.();
+  } catch (e) {
+    console.warn("[plexus] name prompt failed", e);
+    close2();
+    return null;
+  }
+  current3 = handle;
+  return { el: root, close: close2, isOpen: () => !handle.done };
+}
+
+// src/view/template-picker.js
+var ISOLATED4 = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
+var MAX_RENDERS = 6;
+var THUMB_WIDTH = 160;
+var current4 = null;
+function openTemplatePicker({
+  doc,
+  zIndex = 1e3,
+  starters = [],
+  userTemplates = [],
+  thumbnail = null,
+  onPick = () => {
+  },
+  onClose = () => {
+  },
+  urls = globalThis.URL,
+  defer = (fn) => {
+    let t = null;
+    const r = (globalThis.requestAnimationFrame ?? ((f) => setTimeout(f, 16)))(() => {
+      t = setTimeout(fn, 0);
+    });
+    return { cancel() {
+      globalThis.cancelAnimationFrame?.(r);
+      if (t != null) clearTimeout(t);
+    } };
+  },
+  maxRenders = MAX_RENDERS
+} = {}) {
+  if (current4) current4.close();
+  const handle = { done: false, root: null, listeners: [], objectUrls: [], timer: null };
+  const mk = (tag, className, text) => {
+    const n = doc.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = String(text);
+    return n;
+  };
+  const on = (node, type, fn) => {
+    node.addEventListener(type, fn);
+    handle.listeners.push([node, type, fn]);
+  };
+  const root = mk("div", "plexus-portal plexus-template-picker");
+  root.style.zIndex = String(zIndex);
+  root.setAttribute?.("role", "dialog");
+  handle.root = root;
+  root.append(mk("div", "plexus-template-title", "Insert template"));
+  const close2 = () => {
+    if (handle.done) return;
+    handle.done = true;
+    if (handle.timer != null) {
+      try {
+        if (typeof handle.timer.cancel === "function") handle.timer.cancel();
+        else clearTimeout(handle.timer);
+      } catch {
+      }
+      handle.timer = null;
+    }
+    for (const [node, type, fn] of handle.listeners.splice(0)) node.removeEventListener?.(type, fn);
+    for (const url of handle.objectUrls.splice(0)) {
+      try {
+        urls?.revokeObjectURL?.(url);
+      } catch (error) {
+        console.warn("[plexus] template picker revoke failed", error);
+      }
+    }
+    try {
+      root.remove?.();
+    } catch (error) {
+      console.warn("[plexus] template picker remove failed", error);
+    }
+    if (current4 === handle) current4 = null;
+    try {
+      onClose();
+    } catch (error) {
+      console.warn("[plexus] template picker onClose failed", error);
+    }
+  };
+  handle.close = close2;
+  const pick3 = (item) => {
+    if (handle.done) return;
+    close2();
+    try {
+      const out = onPick(item);
+      if (out && typeof out.catch === "function") out.catch((error) => console.warn("[plexus] template pick failed", error));
+    } catch (error) {
+      console.warn("[plexus] template pick failed", error);
+    }
+  };
+  const tile = (name, item, withThumb) => {
+    const button = mk("button", "plexus-template-tile");
+    button.type = "button";
+    const thumb = withThumb ? mk("span", "plexus-template-thumb") : null;
+    if (thumb) button.append(thumb);
+    button.append(mk("span", "plexus-template-name", name));
+    on(button, "click", (e) => {
+      e.stopPropagation?.();
+      pick3(item);
+    });
+    return { button, thumb, item, withThumb };
+  };
+  const tiles = [];
+  const section = (title, list) => {
+    root.append(mk("div", "plexus-template-heading", title));
+    const grid = mk("div", "plexus-template-grid");
+    for (const t of list) {
+      grid.append(t.button);
+      tiles.push(t);
+    }
+    root.append(grid);
+  };
+  if (starters.length) section("Starters", starters.map((s) => tile(s.name, { kind: "starter", id: s.id, name: s.name }, false)));
+  const users = userTemplates.map((t) => tile(t.name, { kind: "user", uid: t.uid, drawingUid: t.drawingUid, name: t.name }, true));
+  if (users.length) section("My templates", users);
+  else root.append(mk("div", "plexus-template-empty", "Save a selection as a template to see it here."));
+  const cancel = mk("button", "plexus-toolbar-button plexus-template-cancel", "Cancel");
+  cancel.type = "button";
+  const actions = mk("div", "plexus-template-actions");
+  actions.append(cancel);
+  root.append(actions);
+  on(cancel, "click", (e) => {
+    e.stopPropagation?.();
+    close2();
+  });
+  for (const type of ISOLATED4) on(root, type, (e) => e.stopPropagation?.());
+  on(root, "keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  });
+  const setThumb = (t, blob) => {
+    if (handle.done || !blob || !urls?.createObjectURL) return;
+    try {
+      const url = urls.createObjectURL(blob);
+      handle.objectUrls.push(url);
+      const img = mk("img", "plexus-template-img");
+      img.src = url;
+      img.alt = "";
+      t.thumb.append(img);
+    } catch (error) {
+      console.warn("[plexus] template thumbnail failed", error);
+    }
+  };
+  const fetchThumb = async (t, render) => {
+    try {
+      return await thumbnail(t.item.drawingUid, { maxWidth: THUMB_WIDTH, render });
+    } catch (error) {
+      console.warn("[plexus] template thumbnail failed", error);
+      return null;
+    }
+  };
+  const loadThumbs = async () => {
+    handle.timer = null;
+    if (handle.done || typeof thumbnail !== "function") return;
+    const misses = [];
+    for (const t of tiles) {
+      if (!t.withThumb) continue;
+      if (handle.done) return;
+      const blob = await fetchThumb(t, false);
+      if (handle.done) return;
+      if (blob) setThumb(t, blob);
+      else misses.push(t);
+    }
+    for (const t of misses.slice(0, maxRenders)) {
+      if (handle.done) return;
+      const blob = await fetchThumb(t, true);
+      if (handle.done) return;
+      if (blob) setThumb(t, blob);
+    }
+  };
+  try {
+    doc.body.append(root);
+    tiles[0]?.button.focus?.();
+  } catch (error) {
+    console.warn("[plexus] template picker failed", error);
+    close2();
+    return null;
+  }
+  current4 = handle;
+  if (users.length) handle.timer = defer(() => {
+    loadThumbs().catch((error) => console.warn("[plexus] template thumbnails failed", error));
+  });
+  return { el: root, close: close2, isOpen: () => !handle.done };
+}
+
+// src/actions-templates.js
+var TEMPLATES_PAGE = "Plexus/Templates";
+var TEMPLATE_CAP = 50;
+var NAME_MAX = 60;
+var DRAWING_RE3 = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
+var CLOSE_WAIT_MS = 3e3;
+var VERIFY_POLL_MS = 40;
+var VERIFY_TIMEOUT_MS = 8e3;
+var LOADING_MS = 5e3;
+var liveCount2 = (els) => Array.isArray(els) ? els.reduce((n, e) => n + (e && !e.isDeleted ? 1 : 0), 0) : 0;
+var cleanName = (text) => String(text ?? "").replace(/\[\[|\]\]|#/g, "").replace(/\s+/g, " ").trim().slice(0, NAME_MAX).trim();
+var blobToDataURL = (blob) => new Promise((resolve, reject) => {
+  const reader = new globalThis.FileReader();
+  reader.onload = () => resolve(String(reader.result));
+  reader.onerror = () => reject(new Error("[plexus] could not read the image"));
+  reader.readAsDataURL(blob);
+});
+var plural3 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+var Stop = class extends Error {
+};
+function createTemplateActions({
+  doc,
+  host,
+  native,
+  api = globalThis.roamAlphaAPI,
+  toaster,
+  guardedWrite,
+  beforeBulk = () => {
+  },
+  measure: measure2 = null,
+  openDrawing,
+  newDrawing,
+  thumbnail = null,
+  openPicker = openTemplatePicker,
+  openPrompt = openNamePrompt,
+  withLockFn = withLock,
+  now = () => Date.now(),
+  sleep: sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  zIndexFor = null,
+  toDataURL = blobToDataURL,
+  closeEditor: closeEditorOverride = null
+} = {}) {
+  let disposed = false;
+  let saving = false;
+  let picker = null;
+  let prompt = null;
+  const toast = (message, opts) => {
+    try {
+      toaster?.show?.(message, opts);
+    } catch {
+    }
+  };
+  const fail2 = (message) => toast(message, { kind: "error" });
+  const stopped = () => disposed;
+  const zIndex = (editor) => {
+    try {
+      if (typeof zIndexFor === "function") return zIndexFor(editor);
+      if (!editor) return 1e3;
+      const z = parseInt(doc.defaultView?.getComputedStyle?.(editor.outer)?.zIndex, 10);
+      return Number.isFinite(z) ? z + 2 : 1e3;
+    } catch {
+      return 1e3;
+    }
+  };
+  const refocus = (editor) => {
+    try {
+      if (editor && native.activeEditor(doc)?.app === editor.app) editor.el?.focus?.({ preventScroll: true });
+    } catch {
+    }
+  };
+  function viewCentre(app) {
+    const st = app.state || {};
+    return viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+  }
+  const sceneLive = (app) => liveCount2(app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []);
+  function templateRows() {
+    let pageUid = null;
+    try {
+      pageUid = host.pageUidByTitle?.(TEMPLATES_PAGE) ?? null;
+    } catch {
+      pageUid = null;
+    }
+    if (!pageUid) return [];
+    const page = host.pullBlock(pageUid);
+    return (page?.children || []).map((c) => ({ uid: c.uid, name: plainText(c.string) }));
+  }
+  function userTemplates() {
+    const out = [];
+    for (const row of templateRows()) {
+      if (out.length >= TEMPLATE_CAP) break;
+      let drawingUid = null;
+      try {
+        drawingUid = host.pullBlock(row.uid)?.children.find((k) => DRAWING_RE3.test(k.string))?.uid ?? null;
+      } catch {
+        drawingUid = null;
+      }
+      if (!drawingUid) continue;
+      let count = 0;
+      try {
+        count = liveCount2(host.drawing(drawingUid)?.elements);
+      } catch {
+        count = 0;
+      }
+      if (count > 0) out.push({ uid: row.uid, drawingUid, name: row.name });
+    }
+    return out;
+  }
+  async function ensureImageFiles(app, els) {
+    const files = app.files ?? {};
+    const add = [];
+    const seen = /* @__PURE__ */ new Set();
+    let missing = 0;
+    for (const el of els) {
+      if (el.type !== "image" || !el.fileId || files[el.fileId] || seen.has(el.fileId)) continue;
+      seen.add(el.fileId);
+      const url = el.customData?.firebaseUrl;
+      if (!url) {
+        missing += 1;
+        continue;
+      }
+      try {
+        const blob = await api.file.get({ url });
+        if (!blob) throw new Error("no file");
+        add.push({ id: el.fileId, mimeType: blob.type || "image/png", dataURL: await toDataURL(blob), created: now() });
+      } catch (error) {
+        console.warn("[plexus] template image fetch failed", error);
+        missing += 1;
+      }
+    }
+    if (add.length) {
+      try {
+        app.addFiles?.(add);
+      } catch (error) {
+        console.warn("[plexus] template addFiles failed", error);
+        missing += add.length;
+      }
+    }
+    return missing;
+  }
+  async function insertInto(app, drawingUid, source, { bulk = true, label = "Template" } = {}) {
+    const elements = remapForInsert(source, { centre: viewCentre(app), now: now() });
+    if (!elements.length) {
+      toast("That template is empty");
+      return null;
+    }
+    const missing = await ensureImageFiles(app, elements);
+    if (disposed || native.activeEditor(doc)?.app !== app) {
+      if (!disposed) toast("Drawing closed");
+      return null;
+    }
+    if (missing) fail2(`${plural3(missing, "image")} missing`);
+    if (bulk) {
+      try {
+        beforeBulk(app, drawingUid, `before ${label}`);
+      } catch (error) {
+        console.warn("[plexus] beforeBulk failed", error);
+      }
+    }
+    const selectedElementIds2 = {};
+    for (const el of elements) if (!el.containerId) selectedElementIds2[el.id] = true;
+    const ok = guardedWrite(app, {
+      drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current6) => withTemplateFrames(current6, elements),
+      appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
+    });
+    if (!ok) return null;
+    return { ids: elements.map((e) => e.id), bounds: commonBounds(elements), count: elements.length };
+  }
+  function sourceOf(item) {
+    if (item.kind === "starter") {
+      const starter = STARTERS.find((s) => s.id === item.id);
+      if (!starter) {
+        fail2("That starter is gone");
+        return null;
+      }
+      return { elements: buildStarter(starter, { measure: measure2 }), appState: null };
+    }
+    const drawing = host.drawing(item.drawingUid);
+    const elements = liveElements(drawing?.elements);
+    if (!elements.length) {
+      fail2("That template could not be read");
+      return null;
+    }
+    return { elements, appState: drawing.appState ?? null };
+  }
+  const closeDialogs = () => {
+    try {
+      picker?.close?.();
+    } catch {
+    }
+    try {
+      prompt?.close?.();
+    } catch {
+    }
+    picker = null;
+    prompt = null;
+  };
+  function showPicker(editor, onPick) {
+    try {
+      picker?.close?.();
+    } catch {
+    }
+    let handle = null;
+    handle = openPicker({
+      doc,
+      zIndex: zIndex(editor),
+      starters: STARTERS.map((s) => ({ id: s.id, name: s.name })),
+      userTemplates: userTemplates(),
+      thumbnail,
+      onPick,
+      onClose: () => {
+        if (picker === handle) picker = null;
+        refocus(editor);
+      }
+    });
+    picker = handle || null;
+    return picker;
+  }
+  function insertTemplate() {
+    if (disposed) return null;
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      fail2("Open a drawing first");
+      return null;
+    }
+    return showPicker(editor, async (item) => {
+      if (disposed) return;
+      try {
+        const source = sourceOf(item);
+        if (!source) return;
+        if (native.activeEditor(doc)?.app !== editor.app) {
+          fail2("Drawing closed");
+          return;
+        }
+        await insertInto(editor.app, editor.drawingUid, source.elements);
+      } catch (error) {
+        console.warn("[plexus] insert template failed", error);
+        fail2("Could not insert the template");
+      } finally {
+        refocus(editor);
+      }
+    });
+  }
+  function newFromTemplate(ctx = {}) {
+    if (disposed) return null;
+    if (native.activeEditor(doc)) {
+      fail2("Use Insert template… in an open drawing");
+      return null;
+    }
+    const focused = ctx?.focusedUid ?? null;
+    return showPicker(null, async (item) => {
+      if (disposed) return;
+      try {
+        const source = sourceOf(item);
+        if (!source) return;
+        const made = await newDrawing(focused ? { where: "below", uid: focused, fresh: true } : { where: "today", fresh: true });
+        if (!made || disposed) return;
+        const editor = made.opened ? native.activeEditor(doc) : null;
+        if (!editor || editor.drawingUid !== made.uid) {
+          toast("Drawing created; insert the template from its menu");
+          return;
+        }
+        if (!await native.waitNotLoading(editor.app, LOADING_MS, { doc }) || disposed) {
+          toast("Drawing created; insert the template from its menu");
+          return;
+        }
+        const wrote = await insertInto(editor.app, made.uid, source.elements, { bulk: false });
+        if (!wrote || disposed) return;
+        const style = pickCurrentItem(source.appState);
+        if (Object.keys(style).length) {
+          try {
+            editor.app.updateScene({ appState: style });
+          } catch (error) {
+            console.warn("[plexus] template style failed", error);
+          }
+        }
+        if (wrote.bounds) {
+          try {
+            native.zoomTo(editor.app, wrote.bounds);
+          } catch (error) {
+            console.warn("[plexus] template zoom failed", error);
+          }
+        }
+      } catch (error) {
+        console.warn("[plexus] new drawing from template failed", error);
+        fail2("Could not create the drawing from the template");
+      }
+    });
+  }
+  async function closeEditor() {
+    if (closeEditorOverride) return closeEditorOverride();
+    const editor = native.activeEditor(doc);
+    if (!editor) return true;
+    try {
+      editor.outer?.querySelector?.(".bp3-icon-minimize")?.click?.();
+    } catch (error) {
+      console.warn("[plexus] minimize failed", error);
+    }
+    const end = now() + CLOSE_WAIT_MS;
+    while (!disposed && native.activeEditor(doc)) {
+      if (now() >= end) return false;
+      await sleep2(50);
+    }
+    return !native.activeEditor(doc);
+  }
+  function removeSidebarWindow(uid) {
+    try {
+      api?.ui?.rightSidebar?.removeWindow?.({ window: { type: "block", "block-uid": uid } });
+    } catch (error) {
+      console.warn("[plexus] sidebar remove failed", error);
+    }
+  }
+  async function saveFlow(name, cap, originalUid) {
+    let blockUid = null;
+    let tUid = null;
+    let closed = false;
+    let sidebar = false;
+    let message = null;
+    let outcome = "failed";
+    try {
+      toast("Saving template…", { ms: 15e3 });
+      const pageUid = await host.ensurePage(TEMPLATES_PAGE);
+      if (stopped()) return;
+      blockUid = await host.createBlock({ parentUid: pageUid, order: "last", string: name });
+      if (stopped()) return;
+      tUid = (await host.createDrawing({ parentUid: blockUid, order: "last" })).uid;
+      if (stopped()) return;
+      closed = await closeEditor();
+      if (stopped()) return;
+      if (!closed) throw new Stop("Could not close the drawing");
+      sidebar = true;
+      const opened = await openDrawing(tUid, { sidebar: true, placeholder: true });
+      if (stopped()) return;
+      if (!opened) throw new Stop("Could not open the template drawing");
+      await native.waitNotLoading(opened.app, LOADING_MS, { doc });
+      if (stopped()) return;
+      const here = native.activeEditor(doc);
+      if (!here || here.drawingUid !== tUid) throw new Stop("The template drawing did not open");
+      const wrote = await insertInto(here.app, tUid, cap.elements, { bulk: false, label: "Template" });
+      if (stopped()) return;
+      if (!wrote) throw new Stop("Could not write the template");
+      const want = sceneLive(here.app) || wrote.count;
+      const end = now() + VERIFY_TIMEOUT_MS;
+      for (; ; ) {
+        if (native.activeEditor(doc)?.drawingUid !== tUid) {
+          outcome = "closed";
+          break;
+        }
+        if (liveCount2(host.drawing(tUid)?.elements) === want) {
+          outcome = "ok";
+          break;
+        }
+        if (now() >= end) {
+          outcome = "timeout";
+          break;
+        }
+        await sleep2(VERIFY_POLL_MS);
+        if (stopped()) return;
+      }
+    } catch (error) {
+      if (!(error instanceof Stop)) console.warn("[plexus] save template failed", error);
+      message = error instanceof Stop ? error.message : "Could not save the template";
+    }
+    if (stopped()) return;
+    if (tUid) {
+      try {
+        if (native.activeEditor(doc)?.drawingUid === tUid) await closeEditor();
+      } catch (error) {
+        console.warn("[plexus] close template failed", error);
+      }
+      if (sidebar) removeSidebarWindow(tUid);
+      if (stopped()) return;
+    }
+    let persisted = 0;
+    try {
+      persisted = tUid ? liveCount2(host.drawing(tUid)?.elements) : 0;
+    } catch {
+      persisted = 0;
+    }
+    let summary;
+    if (outcome === "ok") summary = null;
+    else if (persisted === 0) {
+      if (blockUid) {
+        try {
+          await host.deleteBlock(blockUid);
+        } catch (error) {
+          console.warn("[plexus] template cleanup failed", error);
+        }
+      }
+      summary = message || (outcome === "closed" ? "Template not saved: the drawing was closed" : "Template not saved");
+    } else summary = "Template may be incomplete";
+    if (stopped()) return;
+    let reopened = true;
+    if (closed) {
+      const editor = await openDrawing(originalUid, { placeholder: false });
+      reopened = !!editor;
+      if (stopped()) return;
+    }
+    if (summary) fail2(reopened ? summary : `${summary}. Reopen the drawing from the outline`);
+    else toast(reopened ? `Template saved: ${name}` : "Template saved; reopen the drawing from the outline");
+  }
+  function saveSelectionAsTemplate() {
+    if (disposed) return null;
+    if (saving) {
+      toast("A template is being saved");
+      return null;
+    }
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      fail2("Open a drawing first");
+      return null;
+    }
+    const ids = native.selectedElementIds(editor.app);
+    if (!ids.length) {
+      fail2("Select something to save as a template");
+      return null;
+    }
+    const cap = selectionToTemplate(editor.app.getSceneElementsIncludingDeleted?.() ?? [], ids);
+    if (cap.skippedImages) toast(`${plural3(cap.skippedImages, "image")} without an upload ${cap.skippedImages === 1 ? "was" : "were"} skipped`);
+    if (!cap.elements.length) {
+      fail2("Nothing to save");
+      return null;
+    }
+    const originalUid = editor.drawingUid;
+    let chosen = null;
+    try {
+      prompt?.close?.();
+    } catch {
+    }
+    let handle = null;
+    handle = openPrompt({
+      doc,
+      zIndex: zIndex(editor),
+      title: "Save selection as template",
+      maxLength: NAME_MAX,
+      onSubmit: (value) => {
+        const name = cleanName(value);
+        if (!name) throw new Error("Enter a name");
+        const lower = name.toLowerCase();
+        if (templateRows().some((r) => cleanName(r.name).toLowerCase() === lower)) throw new Error("A template with that name exists");
+        chosen = name;
+      },
+      onClose: () => {
+        if (prompt === handle) prompt = null;
+        const name = chosen;
+        chosen = null;
+        if (!name && !disposed) refocus(editor);
+        if (!name || disposed) return;
+        saving = true;
+        (async () => {
+          try {
+            const graph = host.graphName();
+            const lock = await withLockFn(lockName(graph, "plexus-templates"), () => saveFlow(name, cap, originalUid));
+            if (!lock.acquired && !disposed) fail2("A template is being saved elsewhere");
+          } catch (error) {
+            console.warn("[plexus] save template failed", error);
+            if (!disposed) fail2("Could not save the template");
+          } finally {
+            saving = false;
+          }
+        })();
+      }
+    });
+    prompt = handle || null;
+    return prompt;
+  }
+  return {
+    insertTemplate,
+    newFromTemplate,
+    saveSelectionAsTemplate,
+    closeDialogs,
+    dispose() {
+      disposed = true;
+      closeDialogs();
+    }
+  };
+}
+
+// src/model/arrange.js
+var ARRANGE_GAP = 40;
+var BOX_PAD = 24;
+var IMAGE_CELL = 240;
+var FRAME_PAD = 24;
+var ARROW_GAP = 4;
+var UNTANGLE_MAX = 200;
+var UNTANGLE_ITERATIONS = 200;
+var MAP_MESSAGE = "Map nodes follow the outline";
+var TEXT_PAD = 5;
+var GOLDEN = 2.399963229728653;
+var RESIZABLE = /* @__PURE__ */ new Set(["rectangle", "diamond", "ellipse", "image", "embeddable", "iframe"]);
+var isFrameLike3 = (el) => el.type === "frame" || el.type === "magicframe";
+var isMap = (el) => typeof el.id === "string" && el.id.startsWith("pmm-");
+var isLinear = (el) => el.type === "arrow" || el.type === "line";
+var isBoundLinear = (el) => isLinear(el) && !!(el.startBinding || el.endBinding);
+var num3 = (v) => Number(v) || 0;
+var rectOf = (el) => ({ x: num3(el.x), y: num3(el.y), width: num3(el.width), height: num3(el.height) });
+var half = (v) => Math.round(v * 2) / 2;
+var intersects2 = (b, r) => b[0] < r.x + r.width && b[2] > r.x && b[1] < r.y + r.height && b[3] > r.y;
+function getContainerCoords(container) {
+  let offsetX = TEXT_PAD;
+  let offsetY = TEXT_PAD;
+  if (container.type === "ellipse") {
+    offsetX += container.width / 2 * (1 - Math.SQRT2 / 2);
+    offsetY += container.height / 2 * (1 - Math.SQRT2 / 2);
+  }
+  if (container.type === "diamond") {
+    offsetX += container.width / 4;
+    offsetY += container.height / 4;
+  }
+  return { x: container.x + offsetX, y: container.y + offsetY };
+}
+var innerWidth = (c) => {
+  if (c.type === "ellipse") return Math.round(c.width / 2 * Math.SQRT2) - TEXT_PAD * 2;
+  if (c.type === "diamond") return Math.round(c.width / 2) - TEXT_PAD * 2;
+  return c.width - TEXT_PAD * 2;
+};
+var innerHeight = (c) => {
+  if (c.type === "ellipse") return Math.round(c.height / 2 * Math.SQRT2) - TEXT_PAD * 2;
+  if (c.type === "diamond") return Math.round(c.height / 2) - TEXT_PAD * 2;
+  return c.height - TEXT_PAD * 2;
+};
+function computeBoundTextPosition(container, text) {
+  const coords = getContainerCoords(container);
+  const maxW = innerWidth(container);
+  const maxH = innerHeight(container);
+  let y;
+  if (text.verticalAlign === "top") y = coords.y;
+  else if (text.verticalAlign === "bottom") y = coords.y + (maxH - text.height);
+  else y = coords.y + (maxH / 2 - text.height / 2);
+  let x;
+  if (text.textAlign === "left") x = coords.x;
+  else if (text.textAlign === "right") x = coords.x + (maxW - text.width);
+  else x = coords.x + (maxW / 2 - text.width / 2);
+  return { x, y };
+}
+function exitDistance2(el, dx, dy) {
+  const hw = num3(el.width) / 2;
+  const hh = num3(el.height) / 2;
+  if (el.type === "ellipse") return 1 / Math.sqrt((dx / (hw || 1e-9)) ** 2 + (dy / (hh || 1e-9)) ** 2);
+  if (el.type === "diamond") return 1 / (Math.abs(dx) / (hw || 1e-9) + Math.abs(dy) / (hh || 1e-9));
+  const tx = dx ? hw / Math.abs(dx) : Infinity;
+  const ty = dy ? hh / Math.abs(dy) : Infinity;
+  return Math.min(tx, ty);
+}
+var centreOf = (el) => [num3(el.x) + num3(el.width) / 2, num3(el.y) + num3(el.height) / 2];
+function pointsPatch(abs) {
+  const [x, y] = abs[0];
+  const points = abs.map(([px, py]) => [px - x, py - y]);
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return { x, y, points, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+}
+function routeArrow(arrow, startEl, endEl) {
+  const [sx, sy] = centreOf(startEl);
+  const [ex, ey] = centreOf(endEl);
+  const dist = Math.hypot(ex - sx, ey - sy);
+  if (dist < 1e-6) return null;
+  const ux = (ex - sx) / dist;
+  const uy = (ey - sy) / dist;
+  const gs = num3(arrow.startBinding?.gap ?? ARROW_GAP);
+  const ge = num3(arrow.endBinding?.gap ?? ARROW_GAP);
+  const a = exitDistance2(startEl, ux, uy) + gs;
+  const b = exitDistance2(endEl, -ux, -uy) + ge;
+  if (a + b >= dist) return null;
+  const patch = pointsPatch([[sx + ux * a, sy + uy * a], [ex - ux * b, ey - uy * b]]);
+  patch.angle = 0;
+  if (arrow.startBinding) patch.startBinding = { ...arrow.startBinding, focus: 0 };
+  if (arrow.endBinding) patch.endBinding = { ...arrow.endBinding, focus: 0 };
+  return patch;
+}
+function boundTextsOf(live3) {
+  const map = /* @__PURE__ */ new Map();
+  for (const el of live3) {
+    if (el.type === "text" && el.containerId) {
+      if (!map.has(el.containerId)) map.set(el.containerId, []);
+      map.get(el.containerId).push(el);
+    }
+  }
+  return map;
+}
+function arrangeUnits(elements, selectionIds) {
+  const live3 = liveElements(elements);
+  const byId = new Map(live3.map((el) => [el.id, el]));
+  const order = new Map(live3.map((el, i) => [el.id, i]));
+  return unitsOf(live3, byId, order, boundTextsOf(live3), (selectionIds || []).map((id) => byId.get(id)).filter(Boolean), true);
+}
+function unitsOf(live3, byId, order, texts, picked, withFrames) {
+  let mapSkipped = 0;
+  const followsArrow = (el) => el.type === "text" && el.containerId && byId.get(el.containerId) && isBoundLinear(byId.get(el.containerId));
+  const movable = (el) => !isBoundLinear(el) && !followsArrow(el);
+  const expand = (roots) => {
+    const ids = new Set(roots.map((r) => r.id));
+    const out = roots.filter(movable);
+    for (const r of roots) {
+      for (const t of texts.get(r.id) || []) {
+        if (!ids.has(t.id) && movable(t)) {
+          ids.add(t.id);
+          out.push(t);
+        }
+      }
+    }
+    return out;
+  };
+  const eligible = [];
+  for (const el of picked) {
+    if (isMap(el)) {
+      mapSkipped++;
+      continue;
+    }
+    if (el.locked || el.containerId || isBoundLinear(el)) continue;
+    eligible.push(el);
+  }
+  const claimed = /* @__PURE__ */ new Set();
+  const units = [];
+  const finish = (key, kind, root, members, extra = {}) => {
+    if (members.some(isMap)) {
+      mapSkipped++;
+      for (const m of members) claimed.add(m.id);
+      return;
+    }
+    for (const m of members) claimed.add(m.id);
+    units.push({ key, kind, root, members, ids: new Set(members.map((m) => m.id)), bounds: commonBounds(members), children: [], ...extra });
+  };
+  if (withFrames) {
+    for (const el of eligible) {
+      if (!isFrameLike3(el) || claimed.has(el.id)) continue;
+      const kids2 = live3.filter((k) => k.frameId === el.id && !k.containerId);
+      const members = expand([el, ...kids2]);
+      const kidIds = new Set(kids2.filter(movable).map((k) => k.id));
+      if (members.some(isMap)) {
+        mapSkipped++;
+        for (const m of members) claimed.add(m.id);
+        continue;
+      }
+      for (const m of members) claimed.add(m.id);
+      units.push({ key: el.id, kind: "frame", root: el, members, ids: new Set(members.map((m) => m.id)), bounds: commonBounds(members), children: [...kidIds] });
+    }
+  }
+  for (const el of eligible) {
+    if (claimed.has(el.id) || isFrameLike3(el)) continue;
+    const g = el.groupIds?.length ? el.groupIds[el.groupIds.length - 1] : null;
+    if (g) {
+      const roots = live3.filter((m) => m.groupIds?.includes(g) && !m.containerId && !isFrameLike3(m));
+      finish(`g:${g}`, "group", el, expand(roots));
+    } else {
+      finish(el.id, "single", el, expand([el]));
+    }
+  }
+  const first = (u) => Math.min(...u.members.map((m) => order.get(m.id) ?? 0));
+  units.sort((a, b) => first(a) - first(b));
+  return { units: units.filter((u) => u.bounds), mapSkipped, byId, live: live3, order, texts };
+}
+function readingOrder3(units) {
+  const hs = units.map((u) => u.bounds[3] - u.bounds[1]).sort((a, b) => a - b);
+  const tol = (hs[Math.floor(hs.length / 2)] || 0) / 2;
+  const byTop = [...units].sort((a, b) => a.bounds[1] - b.bounds[1] || a.bounds[0] - b.bounds[0]);
+  const rows = [];
+  for (const u of byTop) {
+    const row = rows[rows.length - 1];
+    if (row && u.bounds[1] - row.top <= tol) row.items.push(u);
+    else rows.push({ top: u.bounds[1], items: [u] });
+  }
+  return rows.flatMap((r) => r.items.sort((a, b) => a.bounds[0] - b.bounds[0]));
+}
+var selBounds = (units) => commonBounds(units.flatMap((u) => u.members));
+function gridPlan(sorted, cols, left, top, sizeOf = (u) => [u.bounds[2] - u.bounds[0], u.bounds[3] - u.bounds[1]]) {
+  const rows = Math.ceil(sorted.length / cols);
+  const colW = new Array(cols).fill(0);
+  const rowH = new Array(rows).fill(0);
+  sorted.forEach((u, i) => {
+    const [w, h] = sizeOf(u);
+    colW[i % cols] = Math.max(colW[i % cols], w);
+    rowH[Math.floor(i / cols)] = Math.max(rowH[Math.floor(i / cols)], h);
+  });
+  const colX = [];
+  let x = left;
+  for (let c = 0; c < cols; c++) {
+    colX.push(x);
+    x += colW[c] + ARRANGE_GAP;
+  }
+  const rowY = [];
+  let y = top;
+  for (let r = 0; r < rows; r++) {
+    rowY.push(y);
+    y += rowH[r] + ARRANGE_GAP;
+  }
+  return { cell: (i) => [colX[i % cols], rowY[Math.floor(i / cols)]], width: x - ARRANGE_GAP - left, height: y - ARRANGE_GAP - top };
+}
+var gridCols = (n) => Math.ceil(Math.sqrt(n));
+var twoPlus = (units) => units.length >= 2;
+var isImageUnit = (u) => u.kind === "single" && u.root.type === "image";
+var frameUnits = (units) => units.filter((u) => u.kind === "frame");
+var ARRANGE_OPS = Object.freeze([
+  { op: "row", label: "Arrange as row", hint: "Select at least two elements", enabled: (units) => twoPlus(units) },
+  { op: "column", label: "Arrange as column", hint: "Select at least two elements", enabled: (units) => twoPlus(units) },
+  { op: "grid", label: "Arrange as grid", hint: "Select at least two elements", enabled: (units) => twoPlus(units) },
+  { op: "equal", label: "Equal size", hint: "Select at least two elements", enabled: (units) => twoPlus(units) },
+  { op: "box", label: "Box around", hint: "Select something to put in a frame", enabled: (units) => units.length >= 1 && !frameUnits(units).length },
+  { op: "images", label: "Grid of images", hint: "Select at least two images", enabled: (units) => units.filter(isImageUnit).length >= 2 },
+  { op: "frame", label: "Lay out frame children", hint: "Select one frame that has children", enabled: (units) => frameUnits(units).length === 1 && frameUnits(units)[0].children.length >= 1 },
+  { op: "swap", label: "Swap two", hint: "Select exactly two elements", enabled: (units) => units.length === 2 },
+  { op: "untangle", label: "Untangle", hint: "Select at least two elements", enabled: (units) => twoPlus(units) }
+]);
+function moveUnit(moves, unit, dx, dy) {
+  if (!dx && !dy) return;
+  for (const m of unit.members) {
+    const r = moves.get(m.id) ?? rectOf(m);
+    moves.set(m.id, { x: r.x + dx, y: r.y + dy, width: r.width, height: r.height });
+  }
+}
+function untangleDeltas(units, arrows) {
+  const n = units.length;
+  const cx = new Float64Array(n);
+  const cy = new Float64Array(n);
+  let diag = 0;
+  units.forEach((u, i) => {
+    cx[i] = (u.bounds[0] + u.bounds[2]) / 2;
+    cy[i] = (u.bounds[1] + u.bounds[3]) / 2;
+    diag += Math.hypot(u.bounds[2] - u.bounds[0], u.bounds[3] - u.bounds[1]);
+  });
+  const sb = selBounds(units);
+  const bw = Math.max(sb[2] - sb[0], 1);
+  const bh = Math.max(sb[3] - sb[1], 1);
+  const k = Math.max(diag / n + ARRANGE_GAP, Math.sqrt(bw * bh / n));
+  const owner = /* @__PURE__ */ new Map();
+  units.forEach((u, i) => {
+    for (const id of u.ids) owner.set(id, i);
+  });
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const a of arrows) {
+    const i = owner.get(a.startBinding?.elementId);
+    const j = owner.get(a.endBinding?.elementId);
+    if (i === void 0 || j === void 0 || i === j) continue;
+    const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push([i, j]);
+  }
+  const x = Float64Array.from(cx);
+  const y = Float64Array.from(cy);
+  for (let i = 1; i < n; i++) {
+    for (let j = 0; j < i; j++) {
+      if (Math.abs(x[i] - x[j]) < 0.5 && Math.abs(y[i] - y[j]) < 0.5) {
+        x[i] += Math.cos(i * GOLDEN) * k * 0.25;
+        y[i] += Math.sin(i * GOLDEN) * k * 0.25;
+        break;
+      }
+    }
+  }
+  const dx = new Float64Array(n);
+  const dy = new Float64Array(n);
+  const t0 = Math.max(bw, bh, k * 2) / 10;
+  const k2 = k * k;
+  for (let it = 0; it < UNTANGLE_ITERATIONS; it++) {
+    const t = t0 * (1 - it / UNTANGLE_ITERATIONS);
+    dx.fill(0);
+    dy.fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let ex = x[i] - x[j];
+        let ey = y[i] - y[j];
+        let d2 = ex * ex + ey * ey;
+        if (d2 < 1e-6) {
+          const a = (i * n + j) * GOLDEN;
+          ex = Math.cos(a);
+          ey = Math.sin(a);
+          d2 = 1;
+        }
+        const f = k2 / d2;
+        dx[i] += ex * f;
+        dy[i] += ey * f;
+        dx[j] -= ex * f;
+        dy[j] -= ey * f;
+      }
+    }
+    for (const [i, j] of edges) {
+      const ex = x[i] - x[j];
+      const ey = y[i] - y[j];
+      const f = Math.sqrt(ex * ex + ey * ey) / k;
+      dx[i] -= ex * f;
+      dy[i] -= ey * f;
+      dx[j] += ex * f;
+      dy[j] += ey * f;
+    }
+    for (let i = 0; i < n; i++) {
+      const len = Math.hypot(dx[i], dy[i]);
+      if (len > 0) {
+        const s = Math.min(len, t) / len;
+        x[i] += dx[i] * s;
+        y[i] += dy[i] * s;
+      }
+    }
+  }
+  let mx = 0, my = 0, ox = 0, oy = 0;
+  for (let i = 0; i < n; i++) {
+    mx += x[i];
+    my += y[i];
+    ox += cx[i];
+    oy += cy[i];
+  }
+  const shiftX = (ox - mx) / n;
+  const shiftY = (oy - my) / n;
+  return units.map((_, i) => [half(x[i] + shiftX - cx[i]), half(y[i] + shiftY - cy[i])]);
+}
+function textPatch(container, text) {
+  const pos = computeBoundTextPosition(container, text);
+  if (!container.angle) return { x: pos.x, y: pos.y };
+  const [ccx, ccy] = centreOf(container);
+  const tx = pos.x + text.width / 2 - ccx;
+  const ty = pos.y + text.height / 2 - ccy;
+  const cos = Math.cos(container.angle);
+  const sin = Math.sin(container.angle);
+  return { x: ccx + tx * cos - ty * sin - text.width / 2, y: ccy + tx * sin + ty * cos - text.height / 2 };
+}
+function arrange(elements, selectionIds, op, opts = {}) {
+  const found = arrangeUnits(elements, selectionIds);
+  const { units, mapSkipped, byId, live: live3, texts } = found;
+  const fail2 = (message) => ({ next: null, message, bent: 0, mapSkipped });
+  const def = ARRANGE_OPS.find((o) => o.op === op);
+  if (!def) return fail2("Unknown arrange operation");
+  if (!units.length) return fail2(mapSkipped ? MAP_MESSAGE : "Select something to arrange");
+  if (op === "box" && frameUnits(units).length) return fail2("A frame cannot hold a frame");
+  if (!def.enabled(units, elements)) return fail2(def.hint);
+  const moves = /* @__PURE__ */ new Map();
+  const extra = /* @__PURE__ */ new Map();
+  let moved = units;
+  let insertFrame = null;
+  let membership = true;
+  if (op === "row" || op === "column") {
+    const b = selBounds(units);
+    const row = op === "row";
+    const sorted = [...units].sort((p, q) => row ? p.bounds[0] - q.bounds[0] || p.bounds[1] - q.bounds[1] : p.bounds[1] - q.bounds[1] || p.bounds[0] - q.bounds[0]);
+    let cursor = row ? b[0] : b[1];
+    for (const u of sorted) {
+      const w = u.bounds[2] - u.bounds[0];
+      const h = u.bounds[3] - u.bounds[1];
+      moveUnit(moves, u, row ? cursor - u.bounds[0] : b[0] - u.bounds[0], row ? b[1] - u.bounds[1] : cursor - u.bounds[1]);
+      cursor += (row ? w : h) + ARRANGE_GAP;
+    }
+  } else if (op === "grid") {
+    const b = selBounds(units);
+    const sorted = readingOrder3(units);
+    const plan = gridPlan(sorted, gridCols(sorted.length), b[0], b[1]);
+    sorted.forEach((u, i) => {
+      const [x, y] = plan.cell(i);
+      moveUnit(moves, u, x - u.bounds[0], y - u.bounds[1]);
+    });
+  } else if (op === "equal") {
+    const els = units.filter((u) => u.kind === "single" && RESIZABLE.has(u.root.type)).map((u) => u.root);
+    if (els.length < 2) return fail2("Equal size needs shapes or images");
+    moved = units.filter((u) => u.kind === "single" && RESIZABLE.has(u.root.type));
+    const W = Math.max(...els.map((e) => num3(e.width)));
+    const H = Math.max(...els.map((e) => num3(e.height)));
+    for (const el of els) {
+      const [ccx, ccy] = centreOf(el);
+      let w = W;
+      let h = H;
+      if (el.type === "image") {
+        const s = Math.min(W / (num3(el.width) || 1), H / (num3(el.height) || 1));
+        w = num3(el.width) * s;
+        h = num3(el.height) * s;
+      }
+      moves.set(el.id, { x: ccx - w / 2, y: ccy - h / 2, width: w, height: h });
+      if (el.type === "image") continue;
+      const next2 = { ...el, x: ccx - w / 2, y: ccy - h / 2, width: w, height: h };
+      for (const t of texts.get(el.id) || []) extra.set(t.id, textPatch(next2, t));
+    }
+  } else if (op === "images") {
+    const imgs = units.filter(isImageUnit);
+    moved = imgs;
+    const b = commonBounds(imgs.flatMap((u) => u.members));
+    const sorted = readingOrder3(imgs);
+    const size = (u) => [IMAGE_CELL, num3(u.root.height) * IMAGE_CELL / (num3(u.root.width) || 1)];
+    const plan = gridPlan(sorted, gridCols(sorted.length), b[0], b[1], size);
+    sorted.forEach((u, i) => {
+      const [x, y] = plan.cell(i);
+      const [w, h] = size(u);
+      moves.set(u.root.id, { x, y, width: w, height: h });
+    });
+  } else if (op === "frame") {
+    const fu = frameUnits(units)[0];
+    const frame = fu.root;
+    const inner2 = unitsOf(live3, byId, found.order, texts, live3.filter((k) => k.frameId === frame.id), false);
+    if (!inner2.units.length) return fail2(def.hint);
+    moved = inner2.units;
+    const sorted = readingOrder3(inner2.units);
+    const left = num3(frame.x) + FRAME_PAD;
+    const top = num3(frame.y) + FRAME_PAD;
+    const plan = gridPlan(sorted, gridCols(sorted.length), left, top);
+    sorted.forEach((u, i) => {
+      const [x, y] = plan.cell(i);
+      moveUnit(moves, u, x - u.bounds[0], y - u.bounds[1]);
+    });
+    const w = Math.max(num3(frame.width), plan.width + FRAME_PAD * 2);
+    const h = Math.max(num3(frame.height), plan.height + FRAME_PAD * 2);
+    if (w !== num3(frame.width) || h !== num3(frame.height)) moves.set(frame.id, { x: num3(frame.x), y: num3(frame.y), width: w, height: h });
+    membership = false;
+  } else if (op === "swap") {
+    const [a, b] = units;
+    const ca = [(a.bounds[0] + a.bounds[2]) / 2, (a.bounds[1] + a.bounds[3]) / 2];
+    const cb = [(b.bounds[0] + b.bounds[2]) / 2, (b.bounds[1] + b.bounds[3]) / 2];
+    moveUnit(moves, a, cb[0] - ca[0], cb[1] - ca[1]);
+    moveUnit(moves, b, ca[0] - cb[0], ca[1] - cb[1]);
+  } else if (op === "untangle") {
+    if (units.length > UNTANGLE_MAX) return fail2("Untangle works on up to 200 elements");
+    const arrows = live3.filter((el) => el.type === "arrow" && el.startBinding && el.endBinding);
+    const deltas = untangleDeltas(units, arrows);
+    units.forEach((u, i) => moveUnit(moves, u, deltas[i][0], deltas[i][1]));
+  } else if (op === "box") {
+    membership = false;
+    const kids2 = units.flatMap((u) => u.members);
+    const kidIds = new Set(kids2.map((m) => m.id));
+    const arrows = live3.filter((el) => isBoundLinear(el) && kidIds.has(el.startBinding?.elementId) && kidIds.has(el.endBinding?.elementId));
+    const ownIds = new Set(kidIds);
+    for (const a of arrows) {
+      ownIds.add(a.id);
+      for (const t of texts.get(a.id) || []) ownIds.add(t.id);
+    }
+    const b = selBounds(units);
+    const id = opts.newId ? opts.newId() : frameId();
+    const { rewrite: rewrite2, orders } = planOrders(elements, 1);
+    insertFrame = {
+      ids: ownIds,
+      el: {
+        ...baseElement(id, "frame", b[0] - BOX_PAD, b[1] - BOX_PAD, b[2] - b[0] + BOX_PAD * 2, b[3] - b[1] + BOX_PAD * 2),
+        name: "Group",
+        customData: { plexus: { order: orders[0] } }
+      },
+      rewrite: rewrite2
+    };
+    for (const id2 of ownIds) extra.set(id2, { frameId: id });
+  }
+  const patches = /* @__PURE__ */ new Map();
+  const put = (id, patch) => patches.set(id, { ...patches.get(id) || {}, ...patch });
+  const curRect = (el) => moves.get(el.id) ?? rectOf(el);
+  for (const [id, r] of moves) {
+    const el = byId.get(id);
+    const o = rectOf(el);
+    if (r.x !== o.x || r.y !== o.y || r.width !== o.width || r.height !== o.height) put(id, r);
+  }
+  if (membership) {
+    for (const u of moved) {
+      if (u.kind === "frame") continue;
+      const ub = commonBounds(u.members.map((m) => ({ ...m, ...moves.get(m.id) || {} })));
+      if (!ub) continue;
+      const bump3 = u.members.some((m) => patches.has(m.id));
+      if (!bump3) continue;
+      for (const m of u.members) {
+        const f = m.frameId ? byId.get(m.frameId) : null;
+        if (f && !intersects2(ub, curRect(f))) put(m.id, { frameId: null });
+      }
+    }
+  }
+  for (const [id, p] of extra) put(id, p);
+  let bent = 0;
+  const changed = (el) => {
+    const r = moves.get(el.id);
+    if (!r) return false;
+    const o = rectOf(el);
+    return r.x !== o.x || r.y !== o.y || r.width !== o.width || r.height !== o.height;
+  };
+  const shiftOf = (el) => {
+    const r = moves.get(el.id);
+    if (!r) return { dx: 0, dy: 0, same: true };
+    const o = rectOf(el);
+    return { dx: r.x + r.width / 2 - o.x - o.width / 2, dy: r.y + r.height / 2 - o.y - o.height / 2, same: r.width === o.width && r.height === o.height };
+  };
+  const nowEl = (el) => ({ ...el, ...moves.get(el.id) || {} });
+  for (const a of live3) {
+    if (!isBoundLinear(a)) continue;
+    const s = a.startBinding ? byId.get(a.startBinding.elementId) : null;
+    const e = a.endBinding ? byId.get(a.endBinding.elementId) : null;
+    if (!(s && changed(s)) && !(e && changed(e))) continue;
+    const ss = s ? shiftOf(s) : null;
+    const es = e ? shiftOf(e) : null;
+    const abs = (a.points || [[0, 0], [num3(a.width), num3(a.height)]]).map(([px, py]) => [num3(a.x) + px, num3(a.y) + py]);
+    let patch = null;
+    let whole = null;
+    if (s && e && ss.same && es.same && Math.abs(ss.dx - es.dx) < 1e-9 && Math.abs(ss.dy - es.dy) < 1e-9) {
+      whole = { dx: ss.dx, dy: ss.dy };
+      patch = { x: num3(a.x) + ss.dx, y: num3(a.y) + ss.dy };
+    } else {
+      const simple = !a.elbowed && abs.length === 2 && !num3(a.angle) && !(s && num3(s.angle)) && !(e && num3(e.angle));
+      if (simple && s && e) patch = routeArrow(a, nowEl(s), nowEl(e));
+      if (!patch) {
+        if (!simple) bent++;
+        const pts = abs.map((p) => [...p]);
+        if (s && ss) {
+          pts[0][0] += ss.dx;
+          pts[0][1] += ss.dy;
+        }
+        if (e && es) {
+          pts[pts.length - 1][0] += es.dx;
+          pts[pts.length - 1][1] += es.dy;
+        }
+        patch = pointsPatch(pts);
+      }
+    }
+    put(a.id, patch);
+    for (const t of texts.get(a.id) || []) {
+      if (whole) put(t.id, { x: num3(t.x) + whole.dx, y: num3(t.y) + whole.dy });
+      else put(t.id, arrowLabelRect({ x: patch.x, y: patch.y, points: patch.points }, num3(t.width), num3(t.height)));
+    }
+  }
+  if (!patches.size && !insertFrame) return fail2("Already arranged");
+  const lastIdx = insertFrame ? Math.max(...elements.map((el, i) => el && insertFrame.ids.has(el.id) ? i : -1)) : -1;
+  const next = [];
+  elements.forEach((el, i) => {
+    next.push(el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el);
+    if (i === lastIdx) next.push(insertFrame.el);
+  });
+  const out = insertFrame ? applyOrderRewrite(next, insertFrame.rewrite) : next;
+  return { next: out, message: null, bent, mapSkipped };
+}
+
+// src/actions-arrange.js
+function createArrangeActions({ doc, native, toaster, guardedWrite, beforeBulk } = {}) {
+  const toast = (message, opts) => {
+    try {
+      toaster?.show?.(message, opts);
+    } catch {
+    }
+  };
+  function context() {
+    const editor = native?.activeEditor?.(doc);
+    if (!editor?.app) return null;
+    const elements = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
+    return { editor, elements, ids: native.selectedElementIds(editor.app) };
+  }
+  function canRun(op) {
+    try {
+      const def = ARRANGE_OPS.find((o) => o.op === op);
+      const ctx = def && context();
+      if (!ctx) return false;
+      return !!def.enabled(arrangeUnits(ctx.elements, ctx.ids).units, ctx.elements);
+    } catch (error) {
+      console.warn("[plexus] arrange canRun failed", error);
+      return false;
+    }
+  }
+  function run(op) {
+    try {
+      const ctx = context();
+      if (!ctx) return false;
+      const result = arrange(ctx.elements, ctx.ids, op);
+      if (!result.next) {
+        if (result.message) toast(result.message);
+        return false;
+      }
+      const { app, drawingUid } = ctx.editor;
+      try {
+        beforeBulk?.(app, drawingUid, "before Arrange");
+      } catch (error) {
+        console.warn("[plexus] beforeBulk failed", error);
+      }
+      const ok = guardedWrite(app, { drawingUid, label: "Arrange", captureUpdate: "IMMEDIATELY", next: result.next });
+      if (!ok) return false;
+      if (result.bent) toast(`${result.bent} bent or elbow arrows kept their shape`);
+      if (result.mapSkipped) toast(MAP_MESSAGE);
+      return true;
+    } catch (error) {
+      console.warn("[plexus] arrange failed", error);
+      toast("Could not arrange the selection", { kind: "error" });
+      return false;
+    }
+  }
+  return { canRun, run };
+}
+
+// src/lane-regions.js
+function createLaneRegionMaker({ host, emit }) {
+  return async function createLaneRegions(drawingUid, frames) {
+    const named = /* @__PURE__ */ new Set();
+    for (const { region } of host.regionsOf(drawingUid) || []) {
+      if (region?.supported && (region.kind === "frame" || region.kind === "cframe")) named.add(region.frameId);
+    }
+    const todo = (frames || []).filter((f) => f?.id && !named.has(f.id));
+    if (!todo.length) return [];
+    const strings = todo.map((f) => serializeRegion({ kind: "cframe", drawingUid, frameId: f.id, caption: String(f.name ?? "").trim() }));
+    const uids = await host.createRegions(drawingUid, strings);
+    for (const uid of uids) emit({ uid, kind: "region" });
+    return uids;
+  };
+}
+
 // src/host/camera.js
 var camera_exports = {};
 __export(camera_exports, {
@@ -11704,7 +14213,7 @@ async function animateTo(app, bbox, { maxZoom = 1, animate = true, doc = globalT
   }
 }
 function createViewHistory({ cap = 50, onChange } = {}) {
-  const stack = [];
+  const stack2 = [];
   const changed = () => {
     try {
       onChange?.();
@@ -11715,28 +14224,28 @@ function createViewHistory({ cap = 50, onChange } = {}) {
   return {
     push(app) {
       const v = viewOf(app?.state);
-      const top = stack[stack.length - 1];
+      const top = stack2[stack2.length - 1];
       if (top && Math.abs(top.scrollX - v.scrollX) < 0.5 && Math.abs(top.scrollY - v.scrollY) < 0.5 && Math.abs(top.zoom - v.zoom) < 1e-3) return;
-      stack.push(v);
-      if (stack.length > cap) stack.shift();
+      stack2.push(v);
+      if (stack2.length > cap) stack2.shift();
       changed();
     },
     async back(app, { animate = false, doc } = {}) {
-      const v = stack.pop();
+      const v = stack2.pop();
       if (!v) return false;
       changed();
       await animateView(app, v, { animate, doc });
       return true;
     },
-    size: () => stack.length,
+    size: () => stack2.length,
     discard() {
-      if (!stack.length) return;
-      stack.pop();
+      if (!stack2.length) return;
+      stack2.pop();
       changed();
     },
     clear() {
-      if (!stack.length) return;
-      stack.length = 0;
+      if (!stack2.length) return;
+      stack2.length = 0;
       changed();
     }
   };
@@ -12193,12 +14702,12 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
     else setTimeout(resolve, 16);
   });
   const settled = async (uid) => {
-    const current4 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
-    if (typeof current4 !== "function") return true;
+    const current6 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
+    if (typeof current6 !== "function") return true;
     for (let i = 0; i < SETTLE_TRIES; i++) {
       let open5 = null;
       try {
-        open5 = await current4.call(api.ui.mainWindow);
+        open5 = await current6.call(api.ui.mainWindow);
       } catch {
         open5 = null;
       }
@@ -12299,7 +14808,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
 }, onClose = () => {
 }, dark = false } = {}) {
   const statuses = /* @__PURE__ */ new Map();
-  let current4 = Array.isArray(rows) ? rows : [];
+  let current6 = Array.isArray(rows) ? rows : [];
   let closed = false;
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
@@ -12374,9 +14883,9 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     return node;
   };
   const render = () => {
-    const shown = current4.slice(0, MAX_ROWS);
-    summary.textContent = current4.length ? `${current4.length} problem${current4.length === 1 ? "" : "s"}` : "No problems found";
-    if (current4.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
+    const shown = current6.slice(0, MAX_ROWS);
+    summary.textContent = current6.length ? `${current6.length} problem${current6.length === 1 ? "" : "s"}` : "No problems found";
+    if (current6.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
     const nodes = [];
     const pages = /* @__PURE__ */ new Map();
     for (const row of shown) {
@@ -12394,7 +14903,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
         for (const row of group) nodes.push(rowNode(row));
       }
     }
-    if (current4.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current4.length - MAX_ROWS} more`));
+    if (current6.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current6.length - MAX_ROWS} more`));
     if (typeof list.replaceChildren === "function") list.replaceChildren(...nodes);
     else {
       list.textContent = "";
@@ -12404,7 +14913,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
   const actions = el("div", "plexus-legacy-actions");
   actions.append(
     button("Copy report", () => {
-      const json = JSON.stringify(current4, null, 2);
+      const json = JSON.stringify(current6, null, 2);
       const clipboard = doc.defaultView?.navigator?.clipboard;
       return withClipboard(() => clipboard.writeText(json));
     }),
@@ -12421,7 +14930,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     close: close2,
     update(next) {
       if (closed) return;
-      current4 = Array.isArray(next) ? next : [];
+      current6 = Array.isArray(next) ? next : [];
       render();
     }
   };
@@ -12596,25 +15105,25 @@ function finishMap(items, opener) {
 function readEdn(text, start = 0) {
   if (typeof text !== "string") throw fail("EDN input must be a string", 0);
   const n = text.length;
-  const stack = [];
+  const stack2 = [];
   let pos = start;
   const push = (frame) => {
-    if (stack.length >= MAX_DEPTH) throw fail("Nesting too deep", frame.opener);
-    stack.push(frame);
+    if (stack2.length >= MAX_DEPTH) throw fail("Nesting too deep", frame.opener);
+    stack2.push(frame);
   };
   const deliver = (value) => {
     for (; ; ) {
-      const top = stack[stack.length - 1];
+      const top = stack2[stack2.length - 1];
       if (!top) {
         result = value;
         return true;
       }
       if (top.kind === "discard") {
-        stack.pop();
+        stack2.pop();
         return false;
       }
       if (top.kind === "tag") {
-        stack.pop();
+        stack2.pop();
         continue;
       }
       top.items.push(value);
@@ -12625,15 +15134,15 @@ function readEdn(text, start = 0) {
   for (; ; ) {
     pos = skipWs(text, pos);
     if (pos >= n) {
-      const top = stack[stack.length - 1];
+      const top = stack2[stack2.length - 1];
       if (!top) throw fail("Unexpected end of input", pos);
       throw fail(top.kind === "discard" ? "Discard without a form" : top.kind === "tag" ? "Tag without a form" : top.kind === "map" ? "Unterminated map" : top.kind === "set" ? "Unterminated set" : "Unterminated collection", top.opener);
     }
     const ch = text[pos];
     if (ch === ")" || ch === "]" || ch === "}") {
-      const top = stack[stack.length - 1];
+      const top = stack2[stack2.length - 1];
       if (!top || top.close !== ch) throw fail(`Unexpected "${ch}"`, pos);
-      stack.pop();
+      stack2.pop();
       pos++;
       const value = top.kind === "map" ? finishMap(top.items, top.opener) : top.items;
       if (deliver(value)) return { value: result, end: pos };
@@ -12858,126 +15367,6 @@ function legacySummary(queryRows) {
   };
 }
 
-// src/model/frames.js
-var FRAME_GAP = 40;
-var FRAME_PRESETS2 = Object.freeze({
-  "A4": Object.freeze({ width: 794, height: 1123 }),
-  "Letter": Object.freeze({ width: 816, height: 1056 }),
-  "16:9": Object.freeze({ width: 854, height: 480 }),
-  "4:3": Object.freeze({ width: 800, height: 600 }),
-  "1:1": Object.freeze({ width: 800, height: 800 }),
-  "Mobile": Object.freeze({ width: 390, height: 844 })
-});
-var DEFAULT_PRESET2 = "16:9";
-var LAYOUTS2 = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
-var rnd3 = () => Math.floor(Math.random() * 2 ** 31);
-var isFrameLike = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
-var orderOf2 = (el) => {
-  const o = el?.customData?.plexus?.order;
-  return typeof o === "number" && Number.isFinite(o) ? o : null;
-};
-var frameId = () => `plexus-frame-${Math.random().toString(36).slice(2, 12)}`;
-var presetSize = (preset) => FRAME_PRESETS2[preset] ?? null;
-function presetFrame({ preset = DEFAULT_PRESET2, x = 0, y = 0, order = null, name = null, id = frameId() } = {}) {
-  const size = presetSize(preset);
-  if (!size) return null;
-  return {
-    ...baseElement(id, "frame", x, y, size.width, size.height),
-    name,
-    customData: { plexus: { order } }
-  };
-}
-function nextSlideSlot(elements, gap = FRAME_GAP) {
-  let best = null;
-  for (const f of liveElements(elements).filter(isFrameLike)) {
-    const right = (Number(f.x) || 0) + (Number(f.width) || 0);
-    if (!best || right > best.right) best = { right, y: Number(f.y) || 0 };
-  }
-  return best ? { x: best.right + gap, y: best.y } : null;
-}
-function layoutFrames({ kind = "grid", preset = DEFAULT_PRESET2, centre = { x: 0, y: 0 }, gap = FRAME_GAP } = {}) {
-  const size = presetSize(preset);
-  const shape = LAYOUTS2[kind];
-  if (!size || !shape) return [];
-  const { cols, rows } = shape;
-  const totalW = cols * size.width + (cols - 1) * gap;
-  const totalH = rows * size.height + (rows - 1) * gap;
-  const x0 = centre.x - totalW / 2;
-  const y0 = centre.y - totalH / 2;
-  const out = [];
-  for (let i = 0; i < cols * rows; i++) {
-    out.push({ x: x0 + i % cols * (size.width + gap), y: y0 + Math.floor(i / cols) * (size.height + gap), width: size.width, height: size.height });
-  }
-  return out;
-}
-function bumped(el, patch) {
-  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd3(), updated: Date.now() };
-}
-function planOrders(elements, count) {
-  const frames = orderFrames(elements);
-  const rewrite2 = /* @__PURE__ */ new Map();
-  let next;
-  if (frames.some((f) => orderOf2(f) === null)) {
-    frames.forEach((f, i) => rewrite2.set(f.id, i + 1));
-    next = frames.length + 1;
-  } else {
-    next = frames.reduce((m, f) => Math.max(m, orderOf2(f)), 0) + 1;
-  }
-  return { rewrite: rewrite2, orders: Array.from({ length: count }, (_, i) => next + i) };
-}
-function withOrder(el, order) {
-  return bumped(el, { customData: mergePlexusData(el.customData, { order }) });
-}
-function applyOrderRewrite(elements, rewrite2) {
-  if (!rewrite2.size) return elements;
-  return elements.map((el) => el && rewrite2.has(el.id) && orderOf2(el) !== rewrite2.get(el.id) ? withOrder(el, rewrite2.get(el.id)) : el);
-}
-function reformatRect(frame, preset) {
-  const size = presetSize(preset);
-  if (!size) return null;
-  const cx = (Number(frame.x) || 0) + (Number(frame.width) || 0) / 2;
-  const cy = (Number(frame.y) || 0) + (Number(frame.height) || 0) / 2;
-  return { x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height };
-}
-var intersects = (b, r) => b[0] < r.x + r.width && b[2] > r.x && b[1] < r.y + r.height && b[3] > r.y;
-function childrenOutside(elements, frame, rect) {
-  return liveElements(elements).filter((el) => el.frameId === frame.id && !intersects(elementBounds(el), rect));
-}
-function selectedFrameOf(elements, ids) {
-  const live3 = new Map(liveElements(elements).map((el) => [el.id, el]));
-  const picked = (ids || []).map((id) => live3.get(id)).filter(Boolean);
-  if (!picked.length) return null;
-  const frames = picked.filter(isFrameLike);
-  if (frames.length === 1 && picked.length === 1) return frames[0].id;
-  if (frames.length === 1 && picked.every((el) => el === frames[0] || el.frameId === frames[0].id)) return frames[0].id;
-  if (frames.length) return null;
-  const owners = new Set(picked.map((el) => el.frameId ?? null));
-  if (owners.size !== 1) return null;
-  const owner = [...owners][0];
-  return owner && live3.get(owner) && isFrameLike(live3.get(owner)) ? owner : null;
-}
-function frameAt(frames, point) {
-  let best = null;
-  for (const f of frames) {
-    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
-    if (point.x < x || point.x > x + w || point.y < y || point.y > y + h) continue;
-    if (!best || w * h < best.area) best = { f, area: w * h };
-  }
-  return best?.f ?? null;
-}
-function nearestFrame(frames, point) {
-  let best = null;
-  for (const f of frames) {
-    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
-    const dx = Math.max(x - point.x, 0, point.x - (x + w));
-    const dy = Math.max(y - point.y, 0, point.y - (y + h));
-    const d = Math.hypot(dx, dy);
-    const area = w * h;
-    if (!best || d < best.d || d === best.d && area < best.area) best = { f, d, area };
-  }
-  return best?.f ?? null;
-}
-
 // src/model/caption.js
 var MAX_CAPTION = 200;
 var UID_RE2 = /^[A-Za-z0-9_-]+$/;
@@ -13013,12 +15402,12 @@ function boxOf(el) {
 function visualOrder(parts) {
   if (parts.length < 2) return parts;
   const heights = parts.map((p) => p.box.h).sort((a, b) => a - b);
-  const half = heights[Math.floor(heights.length / 2)] / 2;
+  const half2 = heights[Math.floor(heights.length / 2)] / 2;
   const sorted = [...parts].sort((a, b) => a.box.yc - b.box.yc || a.seq - b.seq);
   const rows = [];
   for (const part of sorted) {
     const row = rows[rows.length - 1];
-    if (row && part.box.yc - row[0].box.yc <= half) row.push(part);
+    if (row && part.box.yc - row[0].box.yc <= half2) row.push(part);
     else rows.push([part]);
   }
   return rows.flatMap((row) => row.sort((a, b) => a.box.x - b.box.x || a.seq - b.seq));
@@ -14096,7 +16485,7 @@ function createActions({
   const newDone = /* @__PURE__ */ new Map();
   const cards = /* @__PURE__ */ new Map();
   let pending = null;
-  const rnd4 = () => Math.floor(Math.random() * 2 ** 31);
+  const rnd5 = () => Math.floor(Math.random() * 2 ** 31);
   const refText = (ref) => ref && typeof ref === "object" ? ref.ref : ref;
   const isValidDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
   const todayTitle2 = () => api.util.dateToPageTitle(/* @__PURE__ */ new Date());
@@ -14111,14 +16500,14 @@ function createActions({
       drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current4) => [...current4, ...elements],
+      next: (current6) => [...current6, ...elements],
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
   }
   function cleanTitle(text) {
     return String(text ?? "").replace(/\[\[|\]\]|#/g, "").replace(/\s+/g, " ").trim();
   }
-  async function newDrawingRun({ where, uid, open: open5, order: wantOrder }) {
+  async function newDrawingRun({ where, uid, open: open5, order: wantOrder, fresh: fresh2 = false }) {
     if (native.activeEditor(doc)) {
       toaster.show("Close the open drawing first", { kind: "error" });
       return null;
@@ -14171,7 +16560,7 @@ function createActions({
       const title = api.util.dateToPageTitle(now);
       create = async () => {
         const pageUid = await host.ensurePage(title);
-        const existing = host.firstDrawingChild(pageUid);
+        const existing = fresh2 ? null : host.firstDrawingChild(pageUid);
         if (existing) return { uid: existing, reused: true };
         return host.createDrawing({ parentUid: pageUid, order: "last" });
       };
@@ -14206,7 +16595,7 @@ function createActions({
     const memoKey = `${where}|${key}`;
     const recent = newDone.get(memoKey);
     let result;
-    if (recent && Date.now() - recent.at < NEW_REUSE_MS) {
+    if (!fresh2 && recent && Date.now() - recent.at < NEW_REUSE_MS) {
       result = { uid: recent.uid, reused: true };
     } else {
       try {
@@ -14221,7 +16610,7 @@ function createActions({
         toaster.show("Could not create the drawing", { kind: "error" });
         return null;
       }
-      newDone.set(memoKey, { uid: result.uid, at: Date.now() });
+      if (!fresh2) newDone.set(memoKey, { uid: result.uid, at: Date.now() });
       if (!result.reused) {
         try {
           emit({ uid: result.uid, kind: "drawing" });
@@ -14230,6 +16619,7 @@ function createActions({
         }
       }
     }
+    let opened = false;
     if (open5 && !disposed) {
       const rendered = () => {
         for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
@@ -14239,9 +16629,10 @@ function createActions({
       };
       await waitFor(rendered, 1500, 50, aborted);
       const editor = disposed ? null : await openDrawingOnce(result.uid, { reuseIcon: true, placeholder: true, quiet: true });
-      if (!editor && !disposed) toaster.show("Drawing created; open it from the outline");
+      opened = !!editor;
+      if (!editor && !disposed && !fresh2) toaster.show("Drawing created; open it from the outline");
     }
-    return result.uid;
+    return fresh2 ? { uid: result.uid, reused: !!result.reused, opened } : result.uid;
   }
   async function embedFromPickRun({ ref, scenePoint, app } = {}) {
     const editor = native.activeEditor(doc);
@@ -14344,9 +16735,9 @@ function createActions({
       groupIds: [],
       frameId: null,
       roundness: null,
-      seed: rnd4(),
+      seed: rnd5(),
       version: 1,
-      versionNonce: rnd4(),
+      versionNonce: rnd5(),
       isDeleted: false,
       boundElements: null,
       updated: Date.now(),
@@ -14553,14 +16944,14 @@ function createActions({
       const editor = native.activeEditor(doc);
       if (editor && editor.app === card.app) {
         try {
-          const current4 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
+          const current6 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
           const ids = /* @__PURE__ */ new Set([card.anchorId]);
-          for (const el of current4) if (el?.containerId === card.anchorId) ids.add(el.id);
+          for (const el of current6) if (el?.containerId === card.anchorId) ids.add(el.id);
           guard2.guardedWrite(editor.app, {
             drawingUid: card.drawingUid,
             label: "Discard note",
             captureUpdate: "NEVER",
-            next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd4(), updated: Date.now() } : el)
+            next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd5(), updated: Date.now() } : el)
           });
         } catch (error) {
           console.warn("[plexus] card anchor removal failed", error);
@@ -14599,9 +16990,10 @@ function createActions({
       if (activePromptIsDrawing) activePrompt?.cancel?.();
     },
     // New drawing where the user is. where: "here" | "below" | "page" | "today". uid: the target block (else the focused block).
-    newDrawing({ where = "here", uid, open: open5 = true, order } = {}) {
+    // fresh: skip the reuse memo and the today-page reuse, and return { uid, reused, opened } (P13 templates).
+    newDrawing({ where = "here", uid, open: open5 = true, order, fresh: fresh2 = false } = {}) {
       const target = typeof uid === "string" && uid ? uid : safe2(() => api.ui?.getFocusedBlock?.()?.["block-uid"]);
-      return once("new-drawing", () => newDrawingRun({ where, uid: target, open: open5, order }));
+      return once("new-drawing", () => newDrawingRun({ where, uid: target, open: open5, order, fresh: fresh2 }));
     },
     embedFromPick: (opts) => embedFromPickRun(opts),
     createPageAndEmbed: (title, scenePoint, opts) => createPageAndEmbedRun(title, scenePoint, opts),
@@ -14998,7 +17390,7 @@ function createActions({
       return !!(editor && selectedAnchor(editor.app));
     },
     editEmbed: () => once("edit-embed", editEmbedOnce),
-    openDrawing: (uid, { sidebar = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true })),
+    openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
     // One cframe region per frame that has none, in slide order (cap 50 per run).
@@ -15439,7 +17831,7 @@ function createActions({
         drawingUid,
         label: "Remove link",
         captureUpdate: "IMMEDIATELY",
-        next: (current4) => current4.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
+        next: (current6) => current6.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
       });
     } catch (error) {
       console.warn("[plexus] remove link failed", error);
@@ -16249,7 +18641,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Embed labels",
       captureUpdate: "NEVER",
-      next: (current4) => current4.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
+      next: (current6) => current6.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
     });
     return ok ? patches.size : 0;
   }
@@ -16263,9 +18655,9 @@ function createActions({
         void flush();
       }, ms);
     };
-    const current4 = () => !disposed && gen === labelGen;
+    const current6 = () => !disposed && gen === labelGen;
     const flush = async () => {
-      if (!current4()) return;
+      if (!current6()) return;
       const editor = native.activeEditor(doc);
       if (editor?.app !== app || !isId(editor.drawingUid)) return;
       if (editorBusy(app)) {
@@ -16276,7 +18668,7 @@ function createActions({
         await native.waitNotLoading?.(app, 5e3, { doc });
         await frame();
         await frame();
-        if (!current4() || native.activeEditor(doc)?.app !== app) return;
+        if (!current6() || native.activeEditor(doc)?.app !== app) return;
         labelReady.add(app);
         if (editorBusy(app)) {
           arm(LABEL_RETRY_MS);
@@ -16327,10 +18719,10 @@ function createActions({
       drawingUid: editor.drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current4) => {
-        const plan = planOrders(current4, rects.length);
+      next: (current6) => {
+        const plan = planOrders(current6, rects.length);
         created = rects.map((r, i) => ({ ...presetFrame({ id: ids[i], preset, x: r.x, y: r.y, order: plan.orders[i] }), width: r.width, height: r.height }));
-        return [...applyOrderRewrite(current4, plan.rewrite), ...created];
+        return [...applyOrderRewrite(current6, plan.rewrite), ...created];
       },
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
@@ -16391,7 +18783,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Reformat frame",
       captureUpdate: "IMMEDIATELY",
-      next: (current4) => current4.map((el) => {
+      next: (current6) => current6.map((el) => {
         if (!el) return el;
         if (el.id === id) return bumped(el, rect);
         if (released.has(el.id)) return bumped(el, { frameId: null });
@@ -16439,12 +18831,12 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current4) => {
-          const frameEl = current4.find((el) => el?.id === newFrameId);
-          const rest = current4.filter((el) => el?.id !== newFrameId);
+        next: (current6) => {
+          const frameEl = current6.find((el) => el?.id === newFrameId);
+          const rest = current6.filter((el) => el?.id !== newFrameId);
           const plan = planOrders(rest, 1);
           const named = { ...withOrder(frameEl, plan.orders[0]), name: `Slide ${plan.orders[0]}` };
-          return applyOrderRewrite(current4, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
+          return applyOrderRewrite(current6, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
         },
         appState: { selectedElementIds: { [newFrameId]: true }, selectedGroupIds: {} }
       });
@@ -16460,11 +18852,11 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current4) => {
-          const plan = planOrders(current4, 1);
+        next: (current6) => {
+          const plan = planOrders(current6, 1);
           const order = plan.orders[0];
           const frameEl = { ...presetFrame({ id: fallbackId, preset: DEFAULT_PRESET2, x: box[0] - pad2, y: box[1] - pad2, order }), width: box[2] - box[0] + 2 * pad2, height: box[3] - box[1] + 2 * pad2, name: `Slide ${order}` };
-          const adopted = applyOrderRewrite(current4, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
+          const adopted = applyOrderRewrite(current6, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
           return [...adopted, frameEl];
         },
         appState: { selectedElementIds: { [fallbackId]: true }, selectedGroupIds: {} }
@@ -18035,7 +20427,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
   };
 }
 function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
-  let current4 = null;
+  let current6 = null;
   let currentEl = null;
   let offBlur = null;
   let pending = null;
@@ -18046,8 +20438,8 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
     }
     offBlur?.();
     offBlur = null;
-    current4?.();
-    current4 = null;
+    current6?.();
+    current6 = null;
     currentEl = null;
   };
   const onFocusIn = (e) => {
@@ -18057,7 +20449,7 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
       if (!t.closest?.(".excalidraw-outer-container") && !t.classList?.contains("plexus-portal")) return;
       release();
       currentEl = t;
-      current4 = suggest.attach(t);
+      current6 = suggest.attach(t);
       const onOut = () => {
         if (pending != null) clearT(pending);
         pending = setT(() => {
@@ -18447,6 +20839,79 @@ function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } = {}) {
     n.setAttribute?.("data-plexus-item", "1");
     return n;
   };
+  const entry = (item) => {
+    const button = make("button", "context-menu-item");
+    button.type = "button";
+    button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", item.kbd ?? ""));
+    if (item.hint) button.setAttribute?.("title", item.hint);
+    if (item.enabled === false) {
+      button.disabled = true;
+      return button;
+    }
+    button.addEventListener("click", (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      try {
+        app?.setState?.({ contextMenu: null });
+      } catch (error) {
+        console.warn("[plexus] close menu failed", error);
+      }
+      guard(item.label, () => item.run())();
+    });
+    return button;
+  };
+  const submenu = (item, kids2) => {
+    const li = make("li", "plexus-submenu");
+    li.setAttribute?.("data-testid", `plexus-${item.id}`);
+    const button = make("button", "context-menu-item");
+    button.type = "button";
+    button.setAttribute?.("aria-haspopup", "true");
+    button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", ""));
+    const flyout = make("ul", "plexus-flyout");
+    for (const kid of kids2) {
+      const kli = make("li");
+      kli.setAttribute?.("data-testid", `plexus-${kid.id}`);
+      kli.append(entry(kid));
+      flyout.append(kli);
+    }
+    const place = () => {
+      try {
+        flyout.style.position = "fixed";
+        flyout.style.right = "auto";
+        flyout.style.zIndex = "100002";
+        const anchor = button.getBoundingClientRect?.();
+        if (!anchor || !flyout.getBoundingClientRect) return;
+        const rect = flyout.getBoundingClientRect();
+        const width = win?.innerWidth ?? 0;
+        const height = win?.innerHeight ?? 0;
+        const fw = rect.width || 200;
+        const fh = rect.height || 0;
+        let left = anchor.right;
+        let top = anchor.top;
+        if (width && left + fw > width - 8) left = Math.max(8, anchor.left - fw);
+        if (height && top + fh > height - 8) top = Math.max(8, height - 8 - fh);
+        flyout.style.left = `${left}px`;
+        flyout.style.top = `${top}px`;
+      } catch (error) {
+        console.warn("[plexus] flyout clamp failed", error);
+      }
+    };
+    const setOpen = (open5) => {
+      if (open5) {
+        li.setAttribute("data-open", "1");
+        place();
+      } else li.removeAttribute?.("data-open");
+    };
+    li.addEventListener("mouseenter", () => setOpen(true));
+    li.addEventListener("mouseleave", () => setOpen(false));
+    button.addEventListener("click", (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      setOpen(true);
+    });
+    li.append(button, flyout);
+    return li;
+  };
   const inject = (ul) => {
     removeOurs(ul);
     let items = [];
@@ -18458,22 +20923,14 @@ function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } = {}) {
     if (!items.length) return;
     ul.append(make("hr", "context-menu-item-separator"));
     for (const item of items) {
+      if (Array.isArray(item.children)) {
+        const kids2 = item.children.filter(Boolean);
+        if (kids2.some((k) => k.enabled)) ul.append(submenu(item, kids2));
+        continue;
+      }
       const li = make("li");
       li.setAttribute?.("data-testid", `plexus-${item.id}`);
-      const button = make("button", "context-menu-item");
-      button.type = "button";
-      button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", item.kbd ?? ""));
-      button.addEventListener("click", (e) => {
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        try {
-          app?.setState?.({ contextMenu: null });
-        } catch (error) {
-          console.warn("[plexus] close menu failed", error);
-        }
-        guard(item.label, () => item.run())();
-      });
-      li.append(button);
+      li.append(entry(item));
       ul.append(li);
     }
     clamp2(ul);
@@ -18524,7 +20981,7 @@ function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } = {}) {
     for (const n of [...containerEl.querySelectorAll?.("[data-plexus-item]") ?? []]) n.remove?.();
   };
 }
-function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard: guard2, point, tools, mindmap, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
+function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard: guard2, point, tools, mindmap, arrange: arrange2, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
   const kbd = (id) => hotkeyFor(id, { mac });
   const can = (fn) => {
     try {
@@ -18566,6 +21023,10 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     }
   })();
   const layoutItem = (layout, name) => ({ id: `mm-layout-${layout}`, label: `Plexus: Mind map layout: ${name}${mm2?.layout === layout ? " (current)" : ""}`, enabled: !!mm2, run: call(`mm-layout-${layout}`, () => mindmap.setLayout(app, layout)) });
+  const arrangeItem = () => {
+    const children = ARRANGE_OPS.map((op) => ({ id: `arrange-${op.op}`, label: op.label, hint: op.hint, enabled: can(() => arrange2?.canRun(op.op)), run: call(`arrange-${op.op}`, () => arrange2.run(op.op)) }));
+    return { id: "arrange", label: "Plexus: Arrange ›", enabled: children.some((c) => c.enabled), children };
+  };
   const placing = (() => {
     try {
       return actions.pendingPlace?.() ?? null;
@@ -18598,7 +21059,9 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     layoutItem("right", "Right"),
     layoutItem("cause", "Cause"),
     layoutItem("fishbone", "Fishbone"),
+    layoutItem("flow", "Flow"),
     { id: "mm-attr-edges", label: `Plexus: Attribute blocks as edges${mm2 ? mm2.attrEdges ? ": on" : ": off" : ""}`, enabled: !!mm2, run: call("mm-attr-edges", () => mindmap.setAttrEdges(app, !mm2.attrEdges)) },
+    arrangeItem(),
     { id: "text-only", label: "Plexus: Select text only", enabled: can(() => {
       const els = selectedElements();
       return els.length >= 2 && els.some(freeText);
@@ -18610,12 +21073,12 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
 }
 
 // src/view/caption-prompt.js
-var ISOLATED3 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
+var ISOLATED5 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
 var BLUR_GRACE_MS = 200;
 var MIN_WIDTH = 200;
-var current3 = null;
+var current5 = null;
 function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "empty", zIndex = 100002, raf, now = () => Date.now() } = {}) {
-  if (current3) current3.commit();
+  if (current5) current5.commit();
   let resolveOuter;
   const promise = new Promise((resolve) => {
     resolveOuter = resolve;
@@ -18642,7 +21105,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
         console.warn("[plexus] caption prompt remove failed", error);
       }
     }
-    if (current3 === handle) current3 = null;
+    if (current5 === handle) current5 = null;
     resolveOuter(value);
   };
   handle.commit = () => finish(handle.el ? String(handle.el.value ?? "") : String(initial ?? ""));
@@ -18687,7 +21150,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
           finish(escape === "cancel" ? null : "");
         }
       });
-      for (const type of ISOLATED3) on(type, (e) => e.stopPropagation());
+      for (const type of ISOLATED5) on(type, (e) => e.stopPropagation());
       on("blur", (e) => {
         if (handle.done) return;
         if (e?.relatedTarget?.closest?.(".plexus-suggest")) return;
@@ -18714,7 +21177,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
       finish(null);
     }
   };
-  current3 = handle;
+  current5 = handle;
   handle.frame = schedule(open5);
   return promise;
 }
@@ -18790,7 +21253,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     if (f.type === "color") return laserColorOf(v);
     return v == null ? f.fallback : !!v;
   };
-  const current4 = (f, input) => {
+  const current6 = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
     if (f.type === "text") return drawingNameOf(input.value);
@@ -18850,7 +21313,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     for (const [f, input] of inputs) {
       if (only && only !== input) continue;
       try {
-        const value = current4(f, input);
+        const value = current6(f, input);
         if (value === stored(f)) continue;
         writes.push(Promise.resolve(set(f.id, value)).catch((error) => console.warn("[plexus] settings write failed", f.id, error)));
       } catch (error) {
@@ -18867,7 +21330,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     });
   };
   for (const [f, input] of inputs) if (f.type !== "text" && f.type !== "freetext") input.addEventListener("change", () => {
-    if (f.type === "number") input.value = current4(f, input);
+    if (f.type === "number") input.value = current6(f, input);
     commit(input);
   });
   let closed = false;
@@ -20378,7 +22841,7 @@ function createDock({
         e.stopPropagation?.();
       }
     }, true);
-    const refTarget = (e) => {
+    const refTarget2 = (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.button ?? 0) !== 0) return null;
       const ref = e.target?.closest?.(REF_SELECTOR);
       if (!ref || !within4(ref, el)) return null;
@@ -20399,10 +22862,10 @@ function createDock({
       return text ? { type: "page", title: text } : null;
     };
     on(el, "mousedown", safe2("ref mousedown", (e) => {
-      if (refTarget(e)) swallow3(e);
+      if (refTarget2(e)) swallow3(e);
     }), true);
     on(el, "click", safe2("ref click", (e) => {
-      const target = refTarget(e);
+      const target = refTarget2(e);
       if (!target) return;
       swallow3(e);
       onNavigate({ target, sidebar: !!e.shiftKey });
@@ -21625,29 +24088,29 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         later(() => toolbar.place(), DOCK_SETTLE_MS);
       };
       const openDock = () => {
-        const current4 = mounted;
-        if (!current4?.uid || !current4.outer || current4.dock?.isOpen()) return null;
+        const current6 = mounted;
+        if (!current6?.uid || !current6.outer || current6.dock?.isOpen()) return null;
         const dock = createDock({
           doc,
           api,
-          app: current4.app,
-          containerEl: current4.el,
-          outerEl: current4.outer,
-          drawingUid: current4.uid,
-          zIndex: current4.z,
+          app: current6.app,
+          containerEl: current6.el,
+          outerEl: current6.outer,
+          drawingUid: current6.uid,
+          zIndex: current6.z,
           width: getSettings().dockWidth,
           onWidth: (w) => {
             writeSetting(extensionAPI, SETTING_IDS.dockWidth, String(w));
             placeToolbar();
           },
           onClose: () => {
-            if (current4.dock === dock) current4.dock = null;
+            if (current6.dock === dock) current6.dock = null;
             dockOn = false;
             placeToolbar();
           },
           parentOf: (uid) => host.parentOf(uid),
           onNavigate: ({ target, sidebar } = {}) => {
-            if (!navigateToTarget({ api, containerEl: current4.el, target, sidebar: !!sidebar })) return;
+            if (!navigateToTarget({ api, containerEl: current6.el, target, sidebar: !!sidebar })) return;
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
             if (sidebar) toaster.show("Opened in sidebar");
@@ -21655,7 +24118,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
           toast: (message) => toaster.show(message, { kind: "error" })
         });
-        current4.dock = dock;
+        current6.dock = dock;
         dockOn = true;
         placeToolbar();
         return dock;
@@ -21669,9 +24132,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         return !!openDock();
       };
       const goBack = async () => {
-        const current4 = mounted;
-        if (!current4?.history) return false;
-        return current4.history.back(current4.app, { animate: motionOk(doc, getSettings().animation), doc });
+        const current6 = mounted;
+        if (!current6?.history) return false;
+        return current6.history.back(current6.app, { animate: motionOk(doc, getSettings().animation), doc });
       };
       let regionref = null;
       const zIndexFor = (el) => {
@@ -21687,7 +24150,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const presenter = createPresenter({ doc, api, host });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3 });
+      const createLaneRegions = createLaneRegionMaker({ host, emit: (detail) => emitter.emit(detail) });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3, createLaneRegions });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
@@ -21714,6 +24178,22 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         viewHistory: (app) => mounted?.app === app ? mounted.history : null
       });
       lifecycle.add(() => actions.dispose());
+      const templates = createTemplateActions({
+        doc,
+        host,
+        native: native_exports,
+        api,
+        toaster,
+        guardedWrite: guard2.guardedWrite,
+        beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label),
+        measure: scenes.measure,
+        openDrawing: (uid, opts) => actions.openDrawing(uid, opts),
+        newDrawing: (opts) => actions.newDrawing(opts),
+        thumbnail: (uid, opts) => actions.thumbnail(uid, opts),
+        zIndexFor: (editor) => editor ? zIndexFor(editor.el) + 2 : 1e3
+      });
+      lifecycle.add(() => templates.dispose());
+      const arrange2 = createArrangeActions({ doc, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label) });
       lifecycle.add(installCanvasPaste({
         win: doc.defaultView,
         doc,
@@ -21855,6 +24335,11 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         } catch (error) {
           console.warn("[plexus] outline preview close failed", error);
         }
+        try {
+          templates.closeDialogs();
+        } catch (error) {
+          console.warn("[plexus] template dialogs close failed", error);
+        }
       };
       lifecycle.add(closeDialogs);
       const openEditor = () => {
@@ -21954,6 +24439,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         chart: chartDialog,
         outline: (ctx) => withTarget(ctx, (uid) => outline.drawingToOutline(uid, { selection: !!activeEditor(doc) && selectedElementIds(activeEditor(doc).app).length > 0 })),
         copyMarkdown: (ctx) => withTarget(ctx, (uid) => outline.copyMarkdown(uid, { selection: !!activeEditor(doc) && selectedElementIds(activeEditor(doc).app).length > 0 })),
+        insertTemplate: () => templates.insertTemplate(),
+        newFromTemplate: (ctx) => templates.newFromTemplate(ctx),
+        saveTemplate: () => templates.saveSelectionAsTemplate(),
         setLayout: (layout) => {
           const editor = mmEditor();
           return editor ? mindmap.setLayout(editor.app, layout) : false;
@@ -22091,13 +24579,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       };
       let navigatedAt = -Infinity;
       const unmountEditor = ({ unloading = false } = {}) => {
-        const current4 = mounted;
+        const current6 = mounted;
         mounted = null;
         closeDialogs();
-        if (!current4) return Promise.resolve();
+        if (!current6) return Promise.resolve();
         if (Date.now() - navigatedAt <= 2e3) clearLinkTooltip(doc);
         const pending = [];
-        for (const dispose of current4.disposers) {
+        for (const dispose of current6.disposers) {
           try {
             const out = dispose();
             if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
@@ -22105,13 +24593,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             console.warn("[plexus] editor cleanup failed", error);
           }
         }
-        if (current4.app) scenes.release(current4.app);
+        if (current6.app) scenes.release(current6.app);
         actions.cancelDrawingTool();
-        if (current4.uid) {
-          emitter.emit({ uid: current4.uid, kind: "drawing" });
-          warmThumbnails(current4.uid);
+        if (current6.uid) {
+          emitter.emit({ uid: current6.uid, kind: "drawing" });
+          warmThumbnails(current6.uid);
           if (!unloading) {
-            Promise.resolve(actions.refreshAfterClose(current4.uid, current4.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+            Promise.resolve(actions.refreshAfterClose(current6.uid, current6.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
           }
         }
         return Promise.all(pending).then(() => void 0);
@@ -22297,6 +24785,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               point,
               tools,
               mindmap,
+              arrange: arrange2,
               openPicker: (p) => openPicker(p),
               noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
               toScene: (p) => sceneAt(app, p)
@@ -22419,6 +24908,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "mmLayoutRight", label: "Mind map layout: Right", run: () => tools ? tools.setLayout("right") : unavailable("mmLayout") },
       { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => tools ? tools.setLayout("cause") : unavailable("mmLayout") },
       { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => tools ? tools.setLayout("fishbone") : unavailable("mmLayout") },
+      { id: "mmLayoutFlow", label: "Mind map layout: Flow", run: () => tools ? tools.setLayout("flow") : unavailable("mmLayout") },
+      { id: "insertTemplate", label: "Insert template…", run: () => tools ? tools.insertTemplate() : unavailable("insertTemplate") },
+      { id: "newFromTemplate", label: "New drawing from template…", run: (ctx) => tools ? tools.newFromTemplate(ctx) : unavailable("newFromTemplate") },
+      { id: "saveTemplate", label: "Save selection as template…", run: () => tools ? tools.saveTemplate() : unavailable("saveTemplate") },
       { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges") },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
@@ -22468,12 +24961,16 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
   return async () => {
     if (activeLifecycle === lifecycle) activeLifecycle = null;
     await lifecycle.dispose();
+    await new Promise((r) => setTimeout(r, 0));
+    sweepExtensionDom(globalThis.document);
   };
 }
 async function onunload() {
   const lifecycle = activeLifecycle;
   activeLifecycle = null;
   if (lifecycle) await lifecycle.dispose();
+  await new Promise((r) => setTimeout(r, 0));
+  sweepExtensionDom(globalThis.document);
   console.info("[plexus] Unloaded");
 }
 var extension_default = { onload, onunload };

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildNode, buildText, buildEdge, buildBoundary, reconcile, applyOps, isEmptyOps, patchMarker, planMap,
   nodeId, textId, edgeId, boundaryId, labelId, spineId, mmOf, makeSizer, projectionIds, FONT_FAMILY, CAUSE_FILLS,
+  laneId, chipId, chipTextId, mergeId, loopId, lanePrefix, containerDimension, textRect,
 } from "../src/model/mmsync.js";
 import { BRANCH_COLORS, ROOT_COLOR, LEVEL_GAP, visualTree, visibleNodes } from "../src/model/mindmap.js";
 import { arrowLabelRect, arrowLabelWrapWidth } from "../src/model/arrowlabel.js";
@@ -665,4 +666,377 @@ test("planMap exposes the drawn tree and the raw tree stays untouched", () => {
   assert.equal(plan.vtree.children[0].children[0].via, "c");
   assert.deepEqual(visibleNodes(visualTree(tree, { attrEdges: true })).map((v) => v.node.uid), ["R", "a", "x"]);
   assert.ok(plan.positions.x);
+});
+
+// ---- P13 amendment 9(b): existing layouts stay byte-identical to b47ad09 ----
+
+const norm = (v) => JSON.parse(JSON.stringify(v, (k, x) => (k === "seed" || k === "versionNonce" || k === "updated" ? undefined : x)));
+function goldenRun(layout) {
+  const t1 = mk(["R", [["a", [["a1", [], true, "{{[[TODO]]}} do a1"], ["a2", [["a21"]], false]]], ["b", [["b1", [], true, "b1 #evidence"], ["b2"]]], ["c"]]]);
+  const t2 = mk(["R", [["a", [["a1", [], true, "changed a1 text that is quite a bit longer than before"], ["a2", [["a21"]], false]]], ["b", [["b1"]]], ["c", [["c1"]]]]]);
+  const first = reconcile({ elements: [], tree: t1, sizes, layout });
+  let els = applyOps([], first);
+  assert.ok(isEmptyOps(reconcile({ elements: els, tree: t1, sizes, layout })), `${layout} second pass`);
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { bounds: ["a"] }) : e));
+  els = applyOps(els, reconcile({ elements: els, tree: t1, sizes, layout }));
+  const second = reconcile({ elements: els, tree: t2, sizes, layout });
+  return norm({ first, second });
+}
+const GOLDEN = {
+  right: "fa6a8cdb4176d4f1", down: "3ddb250512ba0da4", left: "0fc0dc8602e2f1d1", up: "0ea46aa933776e13",
+  radial: "37156e41a0f5908a", cause: "77be11bbd4970d5c", fishbone: "6f841bbb8a948011",
+};
+for (const layout of Object.keys(GOLDEN)) {
+  test(`golden: ${layout} ops are byte-identical to b47ad09`, async () => {
+    const { createHash } = await import("node:crypto");
+    const h = createHash("sha256").update(JSON.stringify(goldenRun(layout))).digest("hex").slice(0, 16);
+    assert.equal(h, GOLDEN[layout]);
+  });
+}
+
+// ---- P13 flow layout ----
+
+const FLOW_STRINGS = () => mk(["R", [
+  ["recv", [["l1", [], true, "Lane:: Warehouse"]], true, "Receive"],
+  ["store", [], true, "Store"],
+  ["qa", [
+    ["y", [["y1", [["ref", [], true, "((q))"]], true, "Investigate"]], true, "Yes: Hold #lane/QA"],
+    ["no", [["d2", [["q", [], true, "Q"], ["s", [], true, "Stop #end"]], true, "Deeper?"]], true, "No: fill #lane/Line"],
+  ], true, "Metal detected? #CCP1 #hazard #lane/QA"],
+  ["fold", [["fk", [], true, "hidden"]], false, "Folded check?"],
+  ["selfy", [["sr", [], true, "((sr))"]], true, "Selfy"],
+  ["ship", [], true, "Ship #end"],
+], true, "Process"]);
+const flowBuild = (tree, elements = [], extra = {}) => applyOps(elements, run(elements, tree, { layout: "flow", ...extra }));
+const idsOf = (els) => live(els).map((e) => e.id);
+
+test("flow: builds oval root, diamond decisions, end oval, chips and locked lane frames; second pass is zero-op", () => {
+  const tree = FLOW_STRINGS();
+  const ops = run([], tree, { layout: "flow" });
+  const els = applyOps([], ops);
+  assert.ok(isEmptyOps(run(els, tree, { layout: "flow" })), "second pass");
+  assert.equal(get(els, nodeId("R", "R")).type, "ellipse");
+  assert.equal(get(els, nodeId("R", "R")).roundness, null);
+  assert.equal(get(els, nodeId("R", "qa")).type, "diamond");
+  assert.deepEqual(get(els, nodeId("R", "qa")).roundness, { type: 2 });
+  assert.equal(get(els, nodeId("R", "fold")).type, "diamond", "a folded decision stays a diamond");
+  assert.equal(get(els, nodeId("R", "ship")).type, "ellipse");
+  assert.equal(get(els, nodeId("R", "y")).type, "rectangle");
+  assert.deepEqual(get(els, nodeId("R", "y")).roundness, { type: 3 });
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).scheme, "flow");
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).layout, "flow");
+  assert.equal(mmOf(get(els, nodeId("R", "qa"))).shape, "diamond");
+  assert.equal(mmOf(get(els, nodeId("R", "y"))).shape, undefined);
+  assert.equal(mmOf(get(els, nodeId("R", "y"))).branch, undefined);
+  assert.equal(get(els, textId("R", "fold")).text.endsWith("(+1)"), true);
+  assert.equal(get(els, nodeId("R", "recv")).backgroundColor, BRANCH_COLORS[0]);
+  assert.equal(get(els, nodeId("R", "R")).backgroundColor, ROOT_COLOR);
+  // control blocks are never drawn; the unresolvable self ref is a plain node
+  for (const u of ["l1", "ref"]) assert.equal(get(els, nodeId("R", u)), undefined, u);
+  assert.ok(get(els, nodeId("R", "sr")));
+  assert.equal(get(els, textId("R", "sr")).text, "…");
+  // lanes
+  const frames = els.filter((e) => e.type === "frame");
+  assert.deepEqual(frames.map((f) => f.name), ["Warehouse", "QA", "Line"]);
+  for (const f of frames) {
+    assert.equal(f.locked, true);
+    assert.equal(f.id, laneId("R", f.name));
+    assert.deepEqual(mmOf(f), { lane: f.name, map: "R" });
+    assert.equal(f.height, frames[0].height);
+    const at = els.indexOf(f);
+    for (const e of els) if (e.frameId === f.id) assert.ok(els.indexOf(e) < at, `${e.id} comes before its frame`);
+  }
+  assert.equal(get(els, nodeId("R", "recv")).frameId, laneId("R", "Warehouse"));
+  assert.equal(get(els, textId("R", "recv")).frameId, laneId("R", "Warehouse"));
+  assert.equal(get(els, nodeId("R", "R")).frameId, null, "lane '' has no frame");
+  // chips: not grouped, ids -c-n, bound text, inside the lane
+  const c0 = get(els, chipId("R", "qa", 0));
+  const c1 = get(els, chipId("R", "qa", 1));
+  assert.deepEqual(mmOf(c0), { chip: "qa", kind: "ccp", map: "R" });
+  assert.deepEqual(mmOf(c1), { chip: "qa", kind: "hazard", map: "R" });
+  assert.equal(get(els, chipTextId("R", "qa", 0)).text, "CCP 1");
+  assert.equal(get(els, chipTextId("R", "qa", 1)).text, "Hazard");
+  for (const el of [c0, c1, get(els, nodeId("R", "qa")), get(els, textId("R", "qa"))]) assert.deepEqual(el.groupIds, []);
+  assert.equal(c0.frameId, laneId("R", "QA"));
+  assert.equal(get(els, chipTextId("R", "qa", 0)).frameId, laneId("R", "QA"));
+  // frame contains every member and chip
+  const qa = frames.find((f) => f.name === "QA");
+  for (const e of els.filter((x) => x.frameId === qa.id && x.type !== "text")) {
+    assert.ok(e.x >= qa.x && e.x + e.width <= qa.x + qa.width, `${e.id} x inside`);
+    assert.ok(e.y >= qa.y && e.y + e.height <= qa.y + qa.height, `${e.id} y inside`);
+  }
+});
+
+test("flow: diamond and ellipse containers use Excalidraw's own sizing, and bound text sits at computeBoundTextPosition", () => {
+  const els = flowBuild(FLOW_STRINGS());
+  for (const [uid, type] of [["qa", "diamond"], ["R", "ellipse"], ["ship", "ellipse"]]) {
+    const node = get(els, nodeId("R", uid));
+    const t = get(els, textId("R", uid));
+    assert.equal(node.width, containerDimension(t.width + 4, type), `${uid} width`);
+    assert.equal(node.height, containerDimension(t.height + 4, type), `${uid} height`);
+    // the wrap width Excalidraw would use is at least the text width
+    const maxW = type === "diamond" ? Math.round(node.width / 2) - 10 : Math.round((node.width / 2) * Math.SQRT2) - 10;
+    assert.ok(maxW >= t.width, `${uid} keeps its wrapping`);
+    const pos = textRect(node, t.width, t.height, type);
+    assert.ok(Math.abs(pos.x - t.x) <= 0.5 && Math.abs(pos.y - t.y) <= 0.5);
+    assert.ok(Math.abs(t.x + t.width / 2 - (node.x + node.width / 2)) <= 0.5, "centred");
+  }
+  assert.equal(containerDimension(100, "diamond"), 220);
+  assert.equal(containerDimension(100, "ellipse"), Math.round((110 / Math.SQRT2) * 2));
+  assert.equal(containerDimension(100, "rectangle"), 110);
+});
+
+test("flow: primary edges keep the edge key; merge and loop arrows have their own ids and no edge key; arrowheads and dashes", () => {
+  const els = flowBuild(FLOW_STRINGS());
+  const arrows = live(els).filter((e) => e.type === "arrow");
+  assert.ok(arrows.length >= 10);
+  for (const a of arrows) assert.equal(a.endArrowhead, "arrow", a.id);
+  const prim = get(els, edgeId("R", "recv"));
+  assert.deepEqual(mmOf(prim), { edge: ["R", "recv"], map: "R", flow: "seq" });
+  assert.equal(mmOf(get(els, edgeId("R", "y"))).flow, "branch");
+  assert.equal(get(els, labelId("R", "y")).text, "Yes");
+  assert.equal(get(els, labelId("R", "no")).text, "No");
+  const merge = get(els, mergeId("R", "q"));
+  assert.deepEqual(mmOf(merge), { flow: { from: "q", to: "fold", kind: "merge" }, map: "R" });
+  assert.equal(merge.strokeStyle, "solid");
+  const loop = get(els, loopId("R", "ref"));
+  assert.deepEqual(mmOf(loop), { flow: { from: "y1", to: "q", kind: "loop", via: "ref" }, map: "R" });
+  assert.equal(loop.strokeStyle, "dashed");
+  assert.equal(loop.startBinding.elementId, nodeId("R", "y1"));
+  assert.equal(loop.endBinding.elementId, nodeId("R", "q"));
+  assert.equal(mmOf(merge).edge, undefined);
+  assert.equal(get(els, edgeId("R", "fold")), undefined, "a merge target has no primary edge");
+  // boundElements list every arrow in and out, primary and secondary
+  const bound = (uid) => get(els, nodeId("R", uid)).boundElements.filter((b) => b.type === "arrow").map((b) => b.id);
+  assert.equal(bound("q").length, 3);
+  assert.ok(bound("q").includes(loopId("R", "ref")) && bound("q").includes(mergeId("R", "q")) && bound("q").includes(edgeId("R", "q")));
+  assert.ok(bound("y1").includes(loopId("R", "ref")));
+  assert.ok(bound("fold").includes(mergeId("R", "q")));
+  assert.ok(!idsOf(els).includes(mergeId("R", "s")), "#end has no merge");
+  assert.ok(!idsOf(els).includes(mergeId("R", "y1")), "a branch ending in a ref has no merge");
+});
+
+test("flow: a fold reconciles away members, and a second pass is still empty", () => {
+  const tree = FLOW_STRINGS();
+  let els = flowBuild(tree);
+  const folded = mk(["R", [["recv", [["l1", [], true, "Lane:: Warehouse"]], true, "Receive"], ["store", [], true, "Store"],
+    ["qa", [["y", [], true, "Yes: Hold #lane/QA"], ["no", [], true, "No: fill"]], false, "Metal detected? #CCP1"], ["ship", [], true, "Ship"]], true, "Process"]);
+  els = flowBuild(folded, els);
+  assert.equal(get(els, nodeId("R", "y")).isDeleted, true);
+  assert.equal(get(els, nodeId("R", "qa")).type, "diamond");
+  assert.ok(isEmptyOps(run(els, folded, { layout: "flow" })));
+  assert.equal(get(els, textId("R", "qa")).text.endsWith("(+2)"), true);
+});
+
+test("flow: planMap gives a position to every drawn step and never routes through layoutTree", () => {
+  const tree = FLOW_STRINGS();
+  const plan = planMap({ elements: [], tree, sizes, layout: "flow" });
+  assert.equal(plan.dir, "flow");
+  assert.equal(plan.family, "flow");
+  for (const v of plan.nodes) assert.ok(plan.positions[v.node.uid], v.node.uid);
+  assert.deepEqual(plan.positions.R, { x: 0, y: 0 });
+  assert.equal(plan.info.get("qa").shape, "diamond");
+  assert.equal(plan.info.get("qa").fs, 16);
+  assert.equal(plan.info.get("R").fs, 20);
+  assert.ok(plan.flow.frames.length === 3);
+  assert.equal(planMap({ elements: [], tree, sizes, layout: "right" }).flow, null);
+  // the root anchors at its element position
+  const els = flowBuild(tree, [], { rootPos: { x: 40, y: 50 } });
+  const moved = els.map((e) => (e.id === nodeId("R", "R") ? { ...e, x: 300, y: 200 } : e));
+  const plan2 = planMap({ elements: moved, tree, sizes, layout: "flow" });
+  assert.deepEqual(plan2.positions.R, { x: 300, y: 200 });
+});
+
+test("flow: decision text wraps at 160 and steps at 240", () => {
+  const seen = [];
+  const spy = (text, fs, uid, maxWidth) => { seen.push([uid, fs, maxWidth]); return sizes(text, fs, uid, maxWidth); };
+  planMap({ elements: [], tree: mk(["R", [["d", [["y"]], true, "Is it fine?"], ["s", [], true, "Step"]], true, "Root"]), sizes: spy, layout: "flow" });
+  assert.deepEqual(seen.find((x) => x[0] === "d"), ["d", 16, 160]);
+  assert.deepEqual(seen.find((x) => x[0] === "s"), ["s", 16, undefined]);
+  assert.deepEqual(seen.find((x) => x[0] === "R"), ["R", 20, undefined]);
+});
+
+test("flow: right -> flow -> right leaves no lane, chip, merge, loop, stale frameId or arrowhead", () => {
+  const tree = FLOW_STRINGS();
+  let els = build(tree, [], { layout: "right" });
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "flow" }) : e));
+  els = build(tree, els);
+  assert.ok(idsOf(els).includes(mergeId("R", "q")));
+  assert.equal(get(els, nodeId("R", "qa")).type, "diamond");
+  assert.ok(isEmptyOps(run(els, tree)));
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "right" }) : e));
+  els = build(tree, els);
+  assert.ok(isEmptyOps(run(els, tree)), "second pass after switching back");
+  const ids = idsOf(els);
+  for (const id of ids) assert.ok(!id.includes("-lane-") && !/-c-\d/.test(id) && !id.endsWith("-m") && !id.endsWith("-l"), id);
+  for (const e of live(els)) {
+    if (e.type === "frame") assert.fail("no frames");
+    assert.ok(!(typeof e.frameId === "string" && e.frameId.startsWith(lanePrefix("R"))), `${e.id} stale frameId`);
+    if (e.type === "arrow") assert.equal(e.endArrowhead, null, e.id);
+    if (e.type === "ellipse" || e.type === "diamond") assert.fail(`${e.id} kept its shape`);
+  }
+  assert.deepEqual(get(els, nodeId("R", "R")).roundness, { type: 3 });
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).scheme, undefined);
+  assert.equal(mmOf(get(els, nodeId("R", "qa"))).shape, undefined);
+  assert.ok(get(els, nodeId("R", "l1")), "the lane block is an ordinary node in right layout");
+  // the same tree in right layout from scratch has the same live element ids
+  const fresh = idsOf(build(tree, [], { layout: "right" }));
+  assert.deepEqual([...ids].sort(), [...fresh].sort());
+});
+
+test("flow: switching layouts repaints only fills Plexus set; a native recolour survives", () => {
+  const tree = FLOW_STRINGS();
+  let els = build(tree, [], { layout: "right" });
+  els = els.map((e) => (e.id === nodeId("R", "store") ? { ...e, backgroundColor: "#123456" } : e));
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "flow" }) : e));
+  els = build(tree, els);
+  assert.equal(get(els, nodeId("R", "store")).backgroundColor, "#123456");
+  assert.equal(get(els, nodeId("R", "recv")).backgroundColor, BRANCH_COLORS[0], "Plexus fill repainted to the flow colour");
+  assert.ok(isEmptyOps(run(els, tree)));
+});
+
+test("flow: shape and arrowhead changes are events; user edits after them stand", () => {
+  const tree = FLOW_STRINGS();
+  let els = flowBuild(tree);
+  // user turns the decision into a rectangle natively: no revert while the marker still says diamond
+  els = els.map((e) => (e.id === nodeId("R", "qa") ? { ...e, type: "rectangle" } : e));
+  assert.ok(isEmptyOps(run(els, tree)));
+  // user removes an arrowhead on a flow edge: left alone
+  els = els.map((e) => (e.id === edgeId("R", "recv") ? { ...e, endArrowhead: null } : e));
+  assert.ok(isEmptyOps(run(els, tree)));
+  // removing the question mark turns a diamond into a rectangle, in place under the same id
+  const t2 = mk(["R", [["a", [], true, "Ok?"]], true, "P"]);
+  let e2 = flowBuild(t2);
+  const idA = get(e2, nodeId("R", "a")).id;
+  const t3 = mk(["R", [["a", [], true, "Ok"]], true, "P"]);
+  const ops = run(e2, t3, { layout: "flow" });
+  const patch = ops.update.find((u) => u.id === idA).patch;
+  assert.equal(patch.type, "rectangle");
+  assert.deepEqual(patch.roundness, { type: 3 });
+  e2 = applyOps(e2, ops);
+  assert.equal(get(e2, idA).type, "rectangle");
+  assert.equal(get(e2, idA).id, idA);
+  assert.ok(isEmptyOps(run(e2, t3, { layout: "flow" })));
+});
+
+test("flow: stale lane frameIds are cleared, a removed lane leaves no live frame, lane '' keeps a user frame", () => {
+  const tree = FLOW_STRINGS();
+  let els = flowBuild(tree);
+  const noQA = mk(["R", [["recv", [["l1", [], true, "Lane:: Warehouse"]], true, "Receive"], ["store", [], true, "Store"], ["ship", [], true, "Ship"]], true, "Process"]);
+  els = els.map((e) => (e.id === nodeId("R", "ship") ? { ...e, frameId: "userframe" } : e));
+  const ops = run(els, noQA, { layout: "flow" });
+  els = applyOps(els, ops);
+  assert.equal(get(els, laneId("R", "QA")).isDeleted, true);
+  assert.equal(get(els, laneId("R", "Warehouse")).isDeleted, false);
+  assert.ok(isEmptyOps(run(els, noQA, { layout: "flow" })));
+  for (const e of live(els)) assert.ok(!(typeof e.frameId === "string" && e.frameId.startsWith(lanePrefix("R")) && e.frameId !== laneId("R", "Warehouse")), `${e.id}: ${e.frameId}`);
+  assert.equal(get(els, nodeId("R", "ship")).frameId, laneId("R", "Warehouse"), "ship inherits the Warehouse lane");
+  // a lane-'' step keeps whatever non-lane frame it has
+  const plain = mk(["R", [["a", [], true, "A"]], true, "P"]);
+  let pe = flowBuild(plain);
+  pe = pe.map((e) => (e.id === nodeId("R", "a") ? { ...e, frameId: "userframe" } : e));
+  assert.ok(isEmptyOps(run(pe, plain, { layout: "flow" })));
+  // a step that leaves a still-existing lane for lane '' drops that lane's frameId
+  const t1 = mk(["R", [["a", [], true, "A #lane/X"], ["b", [], true, "B #lane/Y"]], true, "P"]);
+  let le = flowBuild(t1);
+  assert.equal(get(le, nodeId("R", "b")).frameId, laneId("R", "Y"));
+  const t2 = mk(["R", [["a", [], true, "A #lane/X"], ["b", [], true, "B"]], true, "P"]);
+  le = applyOps(le, run(le, t2, { layout: "flow" }));
+  assert.equal(get(le, nodeId("R", "b")).frameId, laneId("R", "X"), "inherits from its predecessor");
+});
+
+test("flow: an element undeleted by the pass drops its stale lane frameId in the same pass", () => {
+  const spec = (open, tag) => mk(["R", [["p", [["a", [], true, tag ? "A #lane/C" : "A"]], open, "P"]], true, "Root"]);
+  let els = flowBuild(spec(true, true));
+  assert.equal(get(els, nodeId("R", "a")).frameId, laneId("R", "C"));
+  els = applyOps(els, run(els, spec(false, true), { layout: "flow" }));
+  assert.equal(get(els, nodeId("R", "a")).isDeleted, true);
+  els = applyOps(els, run(els, spec(false, false), { layout: "flow" }));
+  els = applyOps(els, run(els, spec(true, false), { layout: "flow" }));
+  assert.equal(get(els, nodeId("R", "a")).isDeleted, false);
+  assert.ok(isEmptyOps(run(els, spec(true, false), { layout: "flow" })), "second pass is zero-op");
+  assert.equal(get(els, nodeId("R", "a")).frameId, null);
+});
+
+test("flow: chip containers leave room for Excalidraw's bound-text padding", () => {
+  const els = flowBuild(FLOW_STRINGS());
+  for (const id of [chipId("R", "qa", 0), chipId("R", "qa", 1)]) {
+    const c = get(els, id);
+    const t = get(els, id.replace(/-c-(\d)$/, "-c-$1-t")) ?? els.find((e) => e.containerId === id);
+    assert.ok(c.height >= t.height + 10, `${id}: ${c.height} vs ${t.height}`);
+  }
+});
+
+test("flow: copies of lanes, chips, merge and loop arrows lose the marker and are never deleted", () => {
+  const els = flowBuild(FLOW_STRINGS());
+  const copies = [laneId("R", "QA"), chipId("R", "qa", 0), mergeId("R", "q"), loopId("R", "ref"), edgeId("R", "recv")].map((id, i) => ({ ...get(els, id), id: `copy${i}` }));
+  const ops = run([...els, ...copies], FLOW_STRINGS(), { layout: "flow" });
+  assert.equal(ops.remove.length, 0);
+  for (const c of copies) {
+    const u = ops.update.find((x) => x.id === c.id);
+    assert.ok(u, c.id);
+    assert.equal(u.patch.customData ?? null, null, `${c.id} lost its marker`);
+  }
+});
+
+test("flow: an existing lane frame is reconciled, undeleted, and keeps user styling and lock state", () => {
+  const tree = FLOW_STRINGS();
+  let els = flowBuild(tree);
+  const id = laneId("R", "QA");
+  els = els.map((e) => (e.id === id ? { ...e, strokeColor: "#ff0000", locked: false, isDeleted: true, x: e.x + 30, name: "old" } : e));
+  const ops = run(els, tree, { layout: "flow" });
+  const p = ops.update.find((u) => u.id === id).patch;
+  assert.equal(p.isDeleted, false);
+  assert.equal(p.name, "QA");
+  assert.ok("x" in p);
+  assert.ok(!("locked" in p) && !("strokeColor" in p));
+});
+
+test("flow: chip text edits are reverted and a deleted chip is undeleted", () => {
+  const tree = FLOW_STRINGS();
+  let els = flowBuild(tree);
+  els = els.map((e) => (e.id === chipTextId("R", "qa", 0) ? { ...e, text: "hacked", originalText: "hacked" } : e.id === chipId("R", "qa", 1) ? { ...e, isDeleted: true } : e));
+  els = applyOps(els, run(els, tree, { layout: "flow" }));
+  assert.equal(get(els, chipTextId("R", "qa", 0)).text, "CCP 1");
+  assert.equal(get(els, chipId("R", "qa", 1)).isDeleted, false);
+  assert.ok(isEmptyOps(run(els, tree, { layout: "flow" })));
+  // dropping the tag removes the chip and its text
+  const t2 = mk(["R", [["qa", [], true, "Metal detected?"]], true, "P"]);
+  const els2 = applyOps(els, run(els, t2, { layout: "flow" }));
+  assert.equal(get(els2, chipId("R", "qa", 0)).isDeleted, true);
+  assert.equal(get(els2, chipTextId("R", "qa", 0)).isDeleted, true);
+});
+
+test("flow: the branch label prefix is drawn on the arrow, not in the node; the block string is never needed by the sync", () => {
+  const els = flowBuild(mk(["R", [["d", [["y", [], true, "{{[[TODO]]}} Yes: go on"], ["n", [], true, "No: stop #end"]], true, "Ok?"]], true, "P"]));
+  assert.equal(get(els, textId("R", "y")).text, "☐ go on");
+  assert.equal(get(els, labelId("R", "y")).text, "Yes");
+  assert.equal(get(els, textId("R", "n")).text, "stop");
+  assert.equal(get(els, textId("R", "d")).text, "Ok?");
+  assert.equal(get(els, nodeId("R", "n")).type, "ellipse");
+  assert.equal(mmOf(get(els, nodeId("R", "y"))).done, undefined);
+});
+
+test("flow: attribute carriers draw as steps and rootDefaults.attrEdges is ignored", () => {
+  const tree = mk(["R", [["a", [["c", [["x"]], true, "Causes::"]]]]]);
+  const els = flowBuild(tree, [], { rootDefaults: { attrEdges: true } });
+  assert.ok(get(els, nodeId("R", "c")), "the carrier is a step in flow");
+  assert.ok(isEmptyOps(run(els, tree, { layout: "flow", rootDefaults: { attrEdges: true } })));
+});
+
+test("flow: bench 200-step flow reconcile stays fast and zero-op", () => {
+  const kids = [];
+  for (let i = 0; i < 50; i++) {
+    kids.push([`d${i}`, [[`y${i}`, [[`y${i}a`], [`y${i}b`]], true, `Yes: go ${i}`], [`n${i}`, [], true, `No: stop ${i}`]], true, `Check ${i}? #lane/L${i % 4}`]);
+  }
+  const tree = mk(["R", kids, true, "Big"]);
+  let t0 = performance.now();
+  const els = flowBuild(tree);
+  const cold = performance.now() - t0;
+  t0 = performance.now();
+  const ops = run(els, tree, { layout: "flow" });
+  const warm = performance.now() - t0;
+  assert.ok(isEmptyOps(ops));
+  console.log(`[bench] reconcile flow 251 steps: cold add ${cold.toFixed(2)} ms, warm no-op ${warm.toFixed(2)} ms`);
+  assert.ok(warm < 50, `warm ${warm}`);
 });

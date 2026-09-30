@@ -35,7 +35,7 @@ Regions live as children of one collapsed `{{[[plexus-regions]]}}` block, the la
 
 The command palette holds two Plexus entries:
 
-- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, present from here or an outline, print frames, PNG per frame, make slide, audits, restore, chart from JSON, drawing to outline, mind-map layouts, cache, settings).
+- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, present from here or an outline, print frames, PNG per frame, make slide, audits, restore, chart from JSON, drawing to outline, mind-map layouts, templates, cache, settings).
 - Plexus: Mind map (Alt+Shift+M).
 
 The list exists because each palette entry costs every keystroke you type in Roam: Roam's key handler walks all registered commands, about 0.055 ms each, so 23 entries added about 1.3 ms per key.
@@ -61,6 +61,25 @@ Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E
 - "Cause-and-effect from JSON..." inserts a chart from the Plexus Canvas schema. "Drawing to outline..." writes a drawing's text as an outline under a Plexus block; "Copy as Roam markdown" copies it.
 - "Restore an earlier version..." lists this session's changes and versions saved on this device (not kept on encrypted graphs).
 - `RoamPlexus.build()` and `scene(uid).addChart()` script the same from other extensions (`apiVersion` 5).
+
+## Process flows (MM-12)
+
+Choose "Mind map layout: Flow" to draw an outline as a process flow. The layout is set from the map menu or command list; Alt+L does not cycle into or out of it. Steps follow the outline, so drag only reparents (drop onto a step); every other drop snaps back, and Alt+P (pin) does nothing.
+
+- **Steps.** The root is the start oval. Its child blocks are the main sequence, in outline order, with an arrow from each step to the next. A step's own children continue the sequence right after it, before its next sibling.
+- **Decisions.** A step whose text ends with `?`, or that carries `#decision`, is a diamond. Its children are branches. Start a branch with `Yes:` or `No:` (any short label up to 12 characters works) and the label goes on the arrow; the step shows the text without the label. The block keeps the label, and F2 on the canvas edits the text only. A decision with branches has no arrow to the next step; each branch ends with an arrow to the step after the decision, unless the branch ends in a loop or merge reference or in a step tagged `#end`. A `#end` step has no outgoing arrows and is drawn as an oval.
+- **Tags kept on the block.** `#decision`, `#end`, `#CCP` (or `#CCP1`), `#hazard`, `#lane/Name` and `#[[lane/Name]]` stay in the block string. The canvas shows the step without them, and F2 leaves them in place. `#CCP` and `#hazard` add a small chip at the step's top-right corner.
+- **Loops and merges.** A child block whose whole text is exactly `((uid))` is not a step. It draws a dashed arrow from its parent step to the referenced step. It counts only when it has no children of its own, points at another step in the same flow (or the root), and is not a reference to its own parent block. Otherwise it is drawn as an ordinary step. If the target is folded away, the arrow goes to its nearest visible ancestor. Write and edit these blocks in the outline only.
+- **Lanes.** A `Lane:: Name` child block, or an inline `#lane/Name` tag, puts a step in lane Name (the child block wins; with several tags the first counts). A step without a lane stays in the lane of the step before it in the sequence. Lanes are columns, left to right, in order of first appearance, and each is a frame named after the lane. Steps in the same lane flow top to bottom. Lane names are case-sensitive. Each lane frame also gets a region block under the drawing once; removing a lane later keeps its region.
+- **Copy and delete.** Copying a branch copies its `((uid))` reference blocks, which still point at the original steps. Alt+Backspace refuses to delete a step that a reference block points to.
+- **Keys.** Shift+Tab selects the step's predecessor. Tab adds a branch under a decision, otherwise the next step in its sub-sequence. Enter adds the next sibling. Edits to a branch label on an arrow are reverted; change the `Yes:`/`No:` prefix in the outline.
+- "Mind map: attribute blocks as edges" is not used in flow layout.
+
+## Templates and arrange
+
+- "Insert template..." (drawing open) picks from eight built-in starters (HACCP flow, 5-Why, fishbone, Apollo cause map, SIPOC, swimlane, swab-site map, 16:9 slide) and your own templates, and places it at the centre of the view as one undo step. "New drawing from template..." (no drawing open) creates a drawing below the focused block, or on today's page.
+- "Save selection as template..." asks for a name, saves the selection as a drawing under `Plexus/Templates` and reopens your drawing. Esc closes the picker without closing the drawing.
+- Canvas menu "Plexus: Arrange >" lays out the selection: row, column, grid, equal size, box around, grid of images, frame children, swap two, untangle. Each is one undo step; bound arrows follow, bent arrows keep their shape, and mind-map nodes are skipped.
 
 ## Development
 

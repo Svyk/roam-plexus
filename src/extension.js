@@ -1,4 +1,4 @@
-import { createLifecycle } from "./lifecycle.js";
+import { createLifecycle, sweepExtensionDom } from "./lifecycle.js";
 import { HOTKEYS, SETTING_IDS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
@@ -23,6 +23,9 @@ import { createSnapshotScheduler, createSnapshotStore, planRestore } from "./hos
 import { openRestoreDialog } from "./view/restore-dialog.js";
 import { openChartDialog } from "./view/chart-dialog.js";
 import { createOutlineActions } from "./actions-outline.js";
+import { createTemplateActions } from "./actions-templates.js";
+import { createArrangeActions } from "./actions-arrange.js";
+import { createLaneRegionMaker } from "./lane-regions.js";
 import * as camera from "./host/camera.js";
 import { createRegionsLayer } from "./view/regions-layer.js";
 import { installRegionLanding } from "./view/landing.js";
@@ -250,7 +253,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const presenter = createPresenter({ doc, api, host });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, guardedWrite: guard.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
+      const createLaneRegions = createLaneRegionMaker({ host, emit: (detail) => emitter.emit(detail) });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, guardedWrite: guard.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000), createLaneRegions });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
@@ -277,6 +281,18 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         viewHistory: (app) => (mounted?.app === app ? mounted.history : null),
       });
       lifecycle.add(() => actions.dispose());
+      const templates = createTemplateActions({
+        doc, host, native, api, toaster,
+        guardedWrite: guard.guardedWrite,
+        beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label),
+        measure: scenes.measure,
+        openDrawing: (uid, opts) => actions.openDrawing(uid, opts),
+        newDrawing: (opts) => actions.newDrawing(opts),
+        thumbnail: (uid, opts) => actions.thumbnail(uid, opts),
+        zIndexFor: (editor) => (editor ? zIndexFor(editor.el) + 2 : 1000),
+      });
+      lifecycle.add(() => templates.dispose());
+      const arrange = createArrangeActions({ doc, native, toaster, guardedWrite: guard.guardedWrite, beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label) });
       lifecycle.add(installCanvasPaste({
         win: doc.defaultView,
         doc,
@@ -382,6 +398,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         restoreHandle = null;
         chartHandle = null;
         try { outline.closePreview(); } catch (error) { console.warn("[plexus] outline preview close failed", error); }
+        try { templates.closeDialogs(); } catch (error) { console.warn("[plexus] template dialogs close failed", error); }
       };
       lifecycle.add(closeDialogs);
       const openEditor = () => {
@@ -462,6 +479,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         chart: chartDialog,
         outline: (ctx) => withTarget(ctx, (uid) => outline.drawingToOutline(uid, { selection: !!native.activeEditor(doc) && native.selectedElementIds(native.activeEditor(doc).app).length > 0 })),
         copyMarkdown: (ctx) => withTarget(ctx, (uid) => outline.copyMarkdown(uid, { selection: !!native.activeEditor(doc) && native.selectedElementIds(native.activeEditor(doc).app).length > 0 })),
+        insertTemplate: () => templates.insertTemplate(),
+        newFromTemplate: (ctx) => templates.newFromTemplate(ctx),
+        saveTemplate: () => templates.saveSelectionAsTemplate(),
         setLayout: (layout) => { const editor = mmEditor(); return editor ? mindmap.setLayout(editor.app, layout) : false; },
         toggleAttrEdges: () => {
           const editor = mmEditor();
@@ -616,6 +636,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         onAlias: (a) => regionref.claimAlias(a),
         onEditorMount: (el) => {
           const outer = el.closest(".excalidraw-outer-container");
+          // show() replaces any previous bar. The unmount below clears the previous editor and must leave this bar up.
           if (outer) toolbar.show(outer);
           unmountEditor();
           const app = native.findApp(el);
@@ -740,7 +761,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(installCanvasMenu({
             doc, app, containerEl: el,
             getItems: (point) => plexusCanvasItems({
-              app, native, actions, openSettings, drawingUid: mountUid, guard, point, tools, mindmap,
+              app, native, actions, openSettings, drawingUid: mountUid, guard, point, tools, mindmap, arrange,
               openPicker: (p) => openPicker(p),
               noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
               toScene: (p) => sceneAt(app, p),
@@ -856,6 +877,10 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "mmLayoutRight", label: "Mind map layout: Right", run: () => (tools ? tools.setLayout("right") : unavailable("mmLayout")) },
       { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => (tools ? tools.setLayout("cause") : unavailable("mmLayout")) },
       { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => (tools ? tools.setLayout("fishbone") : unavailable("mmLayout")) },
+      { id: "mmLayoutFlow", label: "Mind map layout: Flow", run: () => (tools ? tools.setLayout("flow") : unavailable("mmLayout")) },
+      { id: "insertTemplate", label: "Insert template\u2026", run: () => (tools ? tools.insertTemplate() : unavailable("insertTemplate")) },
+      { id: "newFromTemplate", label: "New drawing from template\u2026", run: (ctx) => (tools ? tools.newFromTemplate(ctx) : unavailable("newFromTemplate")) },
+      { id: "saveTemplate", label: "Save selection as template\u2026", run: () => (tools ? tools.saveTemplate() : unavailable("saveTemplate")) },
       { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => (tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges")) },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
@@ -897,6 +922,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
   return async () => {
     if (activeLifecycle === lifecycle) activeLifecycle = null;
     await lifecycle.dispose();
+    await new Promise((r) => setTimeout(r, 0));
+    sweepExtensionDom(globalThis.document);
   };
 }
 
@@ -904,6 +931,8 @@ export async function onunload() {
   const lifecycle = activeLifecycle;
   activeLifecycle = null;
   if (lifecycle) await lifecycle.dispose();
+  await new Promise((r) => setTimeout(r, 0));
+  sweepExtensionDom(globalThis.document);
   console.info("[plexus] Unloaded");
 }
 

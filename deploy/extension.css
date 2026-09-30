@@ -58,6 +58,13 @@
   box-shadow: 0 2px 8px rgba(16, 22, 26, 0.2);
 }
 
+/* Toolbar is body-fixed one step above the editor, so it covers the bottom of a tall context menu that lives inside the editor.
+   The class is toggled from the toolbar while that editor is mounted, so a closed page does not pay for it on each keystroke. */
+body.plexus-excal-popover .plexus-portal.plexus-toolbar {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .plexus-portal .plexus-toolbar-button {
   padding: 4px 10px;
   border: 0;
@@ -1470,4 +1477,121 @@ body.bt-theme-dark .plexus-settings .plexus-settings-input[type="color"] {
   border: 0;
   border-radius: 2px;
   background: #2d72d2;
+}
+
+/* == p13:templates == */
+.plexus-portal.plexus-template-picker,
+.plexus-portal.plexus-name-prompt {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--plexus-border, #ced4da);
+  border-radius: 8px;
+  background: var(--plexus-bg, #fff);
+  color: var(--plexus-fg, #1e1e1e);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+.plexus-portal.plexus-template-picker {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 76vh;
+  overflow-y: auto;
+}
+.plexus-portal.plexus-name-prompt { width: min(380px, calc(100vw - 32px)); }
+.plexus-template-title,
+.plexus-name-title { font-weight: 600; }
+.plexus-template-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.plexus-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.plexus-portal .plexus-template-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  padding: 6px;
+  border: 1px solid var(--plexus-border, #ced4da);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.plexus-template-tile:hover,
+.plexus-template-tile:focus-visible { border-color: var(--plexus-accent, #1971c2); outline: none; }
+.plexus-template-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.08);
+  overflow: hidden;
+}
+.plexus-template-img { display: block; max-width: 100%; max-height: 96px; }
+.plexus-template-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plexus-template-empty { opacity: 0.65; }
+.plexus-template-actions,
+.plexus-name-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.plexus-name-input {
+  padding: 6px 8px;
+  border: 1px solid var(--plexus-border, #ced4da);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.plexus-name-error { min-height: 1.4em; color: #c92a2a; }
+:root.bp3-dark .plexus-portal.plexus-template-picker,
+:root.bp3-dark .plexus-portal.plexus-name-prompt {
+  border-color: #495057;
+  background: #252a31;
+  color: #e9ecef;
+}
+:root.bp3-dark .plexus-template-tile,
+:root.bp3-dark .plexus-name-input { border-color: #495057; }
+
+/* == p13:flyout == */
+.excalidraw .popover:has(> ul.context-menu) {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.excalidraw .context-menu li.plexus-submenu {
+  position: relative;
+}
+
+.excalidraw .context-menu li.plexus-submenu > ul.plexus-flyout {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 100%;
+  min-width: 200px;
+  margin: 0;
+  padding: 0.5rem 0;
+  list-style: none;
+  border: 1px solid var(--plexus-border, #ced4da);
+  border-radius: 6px;
+  background: var(--popup-bg-color, #fff);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  z-index: 1;
+}
+
+.excalidraw .context-menu li.plexus-submenu[data-open] > ul.plexus-flyout {
+  display: block;
+}
+
+.excalidraw .context-menu ul.plexus-flyout button.context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

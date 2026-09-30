@@ -20,10 +20,18 @@ export const FRAME_PRESETS = Object.freeze([
 const DEFAULT_PRESET = "16:9";
 const presetLabel = (id) => (FRAME_PRESETS.find((p) => p.id === id) ?? FRAME_PRESETS[2]).label;
 const POPOVER_STOP = ["keydown", "keyup", "keypress", "pointerdown", "pointerup", "mousedown", "click", "wheel"];
+export const EXCAL_POPOVER_CLASS = "plexus-excal-popover";
+
+// body:has() is checked on every Roam keystroke. A class set only while the editor is mounted is not.
+export function syncExcalPopoverClass(outerEl, body) {
+  const open = !!outerEl?.querySelector?.(".popover");
+  body?.classList?.toggle?.(EXCAL_POPOVER_CLASS, open);
+  return open;
+}
 
 // Frame flyout callbacks (wired by unit I): onAddFrame(presetId), onReformatFrame(presetId), canReformat(), onMakeSlide(),
 // onLayout(kind, presetId) with kind "2x2" or "strip". Preset ids are FRAME_PRESETS ids.
-export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeSlide, onLayout, doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
+export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeSlide, onLayout, doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack, MutationObserverImpl = globalThis.MutationObserver }) {
   const view = doc.defaultView;
   const mac = /mac|iphone|ipad/i.test(String(view?.navigator?.platform ?? ""));
   const withKey = (name, id) => {
@@ -37,7 +45,13 @@ export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, 
   let refreshTimer = null;
   let popover = null;
   let popoverButton = null;
+  let popoverWatch = null;
   let lastPreset = DEFAULT_PRESET;
+  const stopPopoverWatch = () => {
+    try { popoverWatch?.disconnect?.(); } catch { /* already gone */ }
+    popoverWatch = null;
+    doc.body?.classList?.remove?.(EXCAL_POPOVER_CLASS);
+  };
   const inside = (root, t) => !!root && !!t && (root === t || !!root.contains?.(t));
   const onDocPointerDown = (e) => {
     if (inside(popover, e?.target) || inside(popoverButton, e?.target)) return;
@@ -170,11 +184,14 @@ export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, 
 
   const hide = () => {
     closePopover();
+    stopPopoverWatch();
     popoverButton = null;
     view?.removeEventListener("resize", place);
     if (refreshTimer != null) { clearTimeout(refreshTimer); refreshTimer = null; }
     outer?.removeEventListener?.("pointerup", scheduleRefresh, true);
     outer?.removeEventListener?.("keyup", scheduleRefresh, true);
+    // A second mount can leave the previous bar attached if this closure no longer points at it.
+    for (const el of doc.body?.querySelectorAll?.(".plexus-portal.plexus-toolbar") || []) el.remove?.();
     bar?.remove();
     bar = null;
     outer = null;
@@ -186,6 +203,13 @@ export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, 
     show(outerEl) {
       hide();
       outer = outerEl;
+      if (typeof MutationObserverImpl === "function") {
+        try {
+          popoverWatch = new MutationObserverImpl(() => syncExcalPopoverClass(outer, doc.body));
+          popoverWatch.observe(outerEl, { childList: true, subtree: true });
+        } catch { popoverWatch = null; }
+      }
+      syncExcalPopoverClass(outerEl, doc.body);
       bar = doc.createElement("div");
       bar.className = "plexus-portal plexus-toolbar";
       bar.style.zIndex = String(baseZIndex(doc, outerEl) + 1);

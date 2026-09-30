@@ -4,7 +4,7 @@ import {
   plainText, hasMarkup, wrapLines, nodeSize, layoutTree, nearestInDirection, treeFromPull, countHidden,
   visibleNodes, SIBLING_GAP, LEVEL_GAP, RADIAL_RADIUS, RADIAL_STEP, MAX_DISPLAY,
   LAYOUTS, CAUSE_LAYOUTS, isHiddenString, isExcludedString, taskParts, taskState, tagColor, editableText, visualTree,
-  fishboneLayout,
+  fishboneLayout, FLOW_LAYOUT, drawnTree, flowParts, flowEditable, isDecision, laneOf, branchLabel, isFolded,
 } from "../src/model/mindmap.js";
 
 const res = (uid) => ({ abc: "ref **text**", loop: "((loop))", long: "x".repeat(100) }[uid] ?? null);
@@ -383,4 +383,32 @@ test("fishbone: head at the anchor, bones alternate, subtrees clear the spine, s
   // no causes: no spine
   const lone = mk(["r"]);
   assert.equal(fishboneLayout({ tree: lone, sizes: fixedSizes(lone) }).spine, null);
+});
+
+// ---- P13: the flow names are reachable from mindmap.js and leave the other layouts alone ----
+
+test("flow exports live on mindmap.js; FLOW_LAYOUT is not in LAYOUTS or CAUSE_LAYOUTS", () => {
+  assert.equal(FLOW_LAYOUT, "flow");
+  assert.ok(!LAYOUTS.includes(FLOW_LAYOUT) && !CAUSE_LAYOUTS.includes(FLOW_LAYOUT));
+  for (const f of [drawnTree, flowParts, flowEditable, isDecision, laneOf, branchLabel]) assert.equal(typeof f, "function");
+});
+
+test("drawnTree: non-flow layouts return exactly visualTree; the raw pull tree keeps Lane:: blocks", () => {
+  const pull = { ":block/uid": "R", ":block/string": "Root", ":block/children": [
+    { ":block/uid": "a", ":block/string": "A", ":block/order": 0, ":block/children": [{ ":block/uid": "l", ":block/string": "Lane:: QA", ":block/order": 0 }] },
+  ] };
+  const tree = treeFromPull(pull);
+  assert.equal(tree.children[0].children.length, 1, "treeFromPull does not hide Lane::");
+  for (const layout of ["right", "cause", "fishbone", "radial"]) assert.equal(drawnTree(tree, { layout }), tree);
+  assert.deepEqual(drawnTree(tree, { layout: "right", attrEdges: true }), visualTree(tree, { attrEdges: true }));
+  assert.equal(drawnTree(tree, { layout: "flow" }).children[0].children.length, 0);
+});
+
+test("editableText is unchanged for a folded node (raw descendant count) while flow counts drawn descendants", () => {
+  const node = { uid: "f", string: "Fold", open: false, children: [{ uid: "l", string: "Lane:: X", open: true, children: [] }, { uid: "k", string: "k", open: true, children: [] }] };
+  assert.ok(isFolded(node));
+  assert.equal(editableText(node, "Fold two (+2)"), "Fold two");
+  const drawn = drawnTree({ uid: "R", string: "R", open: true, children: [node] }, { layout: "flow" }).children[0];
+  assert.equal(flowEditable(drawn, "Fold two (+1)"), "Fold two");
+  assert.equal(flowEditable(drawn, "Fold two (+2)"), null);
 });

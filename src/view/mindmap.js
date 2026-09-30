@@ -1,4 +1,5 @@
-import { CAUSE_LAYOUTS, LAYOUTS, allUids, editableText, isExcludedString, plainText, hasMarkup, taskParts, treeFromPull, visibleNodes, visualTree, countHidden, nearestInDirection } from "../model/mindmap.js";
+import { CAUSE_LAYOUTS, FLOW_LAYOUT, LAYOUTS, allUids, drawnTree, editableText, flowEditable, flowParts, isExcludedString, plainText, hasMarkup, taskParts, treeFromPull, visibleNodes, countHidden, nearestInDirection } from "../model/mindmap.js";
+import { flowStructure } from "../model/flow.js";
 import { resolveDrop } from "../model/mmdrop.js";
 import { viewportToScene } from "../model/scene.js";
 import { applyOps, boundaryId, bump, edgeId, isEmptyOps, makeSizer, mmOf, nodeId, patchMarker, planMap, projectionIds, reconcile, textId } from "../model/mmsync.js";
@@ -19,6 +20,11 @@ const MARKUP_HINT = "Edit this node in the outline (it has links or formatting)"
 const WRITE_FAILED = "Could not update the outline";
 const CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
 const LABEL_HINT = "Edit the attribute block in the outline";
+const FLOW_LABEL_HINT = "Edit the Yes:/No: prefix in the outline";
+const FLOW_LAYOUT_HINT = "Flow layout: change it from the map menu";
+const FLOW_STEPS_HINT = "Flow steps follow the outline";
+const FLOW_ATTR_HINT = "Not used in flow layout";
+const LANE_ID_RE = /^pmm-.+-lane-/;
 const SELF_MOVE = "Cannot move a branch into itself";
 const CHANGE_BACK = "choose again to change back";
 const ATTR_HINT = "Attribute blocks show as labelled edges (Plexus menu to turn off)";
@@ -56,8 +62,9 @@ function rawWalk(raw, fn) {
 }
 
 // Controller for mind maps. Nothing is registered until mount(); every listener, watch and portal dies with the editor.
-export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1000, guardedWrite = defaultGuardedWrite, getTagColors = () => new Map() }) {
+export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1000, guardedWrite = defaultGuardedWrite, getTagColors = () => new Map(), createLaneRegions = async () => [] }) {
   const sessions = new Map();
+  const laneFlights = new Map();
   let disposed = false;
 
   const warn = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
@@ -73,6 +80,26 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
   const textOf = (uid, node) => plainText(node.string, blockString);
   const sizer = makeSizer((text, size) => measurer.measure(text, size));
   const tagColors = () => { try { return getTagColors() || new Map(); } catch (error) { warn("tag colours", error); return new Map(); } };
+
+  // One lane-region request in flight per drawing; frames asked for while it runs are merged into one queued re-run.
+  function requestLaneRegions(drawingUid, frames) {
+    if (disposed || !drawingUid || !frames.length) return;
+    const flight = laneFlights.get(drawingUid);
+    if (flight) {
+      for (const f of frames) flight.queued.set(f.id, f);
+      return;
+    }
+    const state = { queued: new Map() };
+    laneFlights.set(drawingUid, state);
+    (async () => {
+      let batch = frames;
+      while (batch.length && !disposed) {
+        try { await createLaneRegions(drawingUid, batch); } catch (error) { warn("lane regions", error); }
+        batch = [...state.queued.values()];
+        state.queued.clear();
+      }
+    })().finally(() => { laneFlights.delete(drawingUid); });
+  }
 
   function mount({ app, containerEl, outerEl, zIndex, drawingUid = null } = {}) {
     if (disposed || !app || !containerEl) return () => {};
@@ -111,6 +138,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     let drag = null;
     let dragCancelled = false;
     let labelToasted = false;
+    let flowLabelToasted = false;
 
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard = () => alive && !disposed && native.activeEditor(doc)?.app === app;
@@ -137,11 +165,17 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       if (mutate) next = mutate(next);
       let changed = next !== els();
       const staged = [];
+      const laneIds = new Set();
       for (const root of roots) {
         const tree = trees.get(root);
         if (!tree) continue;
         const ops = reconcile({ elements: next, tree, sizes: sizer, textOf, rootPos: rootPos.get(root), ...mapOpts(root) });
-        if (!isEmptyOps(ops)) { next = applyOps(next, ops); changed = true; }
+        if (!isEmptyOps(ops)) {
+          for (const a of ops.add) if (isLaneFrame(a)) laneIds.add(a.id);
+          for (const u of ops.update) if (u.patch?.isDeleted === false && typeof u.id === "string" && LANE_ID_RE.test(u.id)) laneIds.add(u.id);
+          next = applyOps(next, ops);
+          changed = true;
+        }
         staged.push(tree);
       }
       if (!changed) return false;
@@ -150,8 +184,21 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       if (!written) return false;
       for (const root of roots) forceMarks.delete(root);
       takeSnapshot();
+      if (laneIds.size) askLaneRegions(next.filter((e) => laneIds.has(e.id)));
       afterApply(roots);
       return true;
+    }
+
+    const isLaneFrame = (el) => !!el && el.type === "frame" && typeof el.id === "string" && LANE_ID_RE.test(el.id);
+    const isFlow = (root) => mmOf(rootElement(root))?.layout === FLOW_LAYOUT;
+
+    function askLaneRegions(frames) {
+      const list = [];
+      for (const el of frames) {
+        if (!isLaneFrame(el) || el.isDeleted || typeof el.name !== "string" || el.name === "") continue;
+        list.push({ id: el.id, name: el.name });
+      }
+      requestLaneRegions(drawingUid, list);
     }
 
     function mapOpts(root) {
@@ -266,6 +313,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
         for (const root of roots) if (!trees.has(root)) trees.set(root, null);
         for (const root of roots) { ensureRoot(root); refreshRoot(root); }
         takeSnapshot();
+        askLaneRegions(els().filter((e) => isLaneFrame(e) && !e.isDeleted && [...roots].some((r) => e.id.startsWith(`pmm-${r}-lane-`))));
       };
       poll();
     }
@@ -326,11 +374,14 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       dragCancelled = false;
       if (cancelled || !pds || activeTool?.type !== "selection" || !pds.drag?.hasOccurred) return;
       if (pds.resize?.isResizing || state().viewModeEnabled || pds.hit?.hasBeenDuplicated) return;
-      if (event && (event.metaKey || event.ctrlKey)) return;
+      const modified = !!(event && (event.metaKey || event.ctrlKey));
       const sel = selectedNode();
       if (!sel || sel.isRoot) return;
+      const flow = isFlow(sel.root);
+      if (modified && !flow) return;
       const hitId = pds.hit?.element?.id;
       if (hitId !== nodeId(sel.root, sel.uid) && hitId !== textId(sel.root, sel.uid)) return;
+      if (modified) { pendingDrop = { root: sel.root, uid: sel.uid, snap: true }; return; }
       const point = pointOf(event, pds);
       const seen = drag && drag.active && drag.root === sel.root && drag.uid === sel.uid && drag.plan && drag.tree;
       if (point) pendingDrop = { root: sel.root, uid: sel.uid, point, ...(seen ? { plan: drag.plan, tree: drag.tree } : {}) };
@@ -356,9 +407,12 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       pendingDrop = null;
       if (!d || !trees.get(d.root) || !findNode(trees.get(d.root), d.uid)) return;
       const snapBack = () => commit(null, [d.root]);
+      if (d.snap) { snapBack(); return; }
+      const flow = isFlow(d.root);
       if (otherMapAt(d.root, d.point)) { snapBack(); return; }
       const ctx = d.plan && d.tree ? { plan: d.plan, tree: d.tree } : planOf(d.root);
       const res = resolveDrop({ plan: ctx.plan, tree: ctx.tree, dragged: d.uid, point: d.point, layout: ctx.plan.dir });
+      if (flow && res.type !== "reparent" && res.type !== "refuse") { snapBack(); return; }
       if (res.type === "pin") return;
       if (res.type === "refuse") {
         if (res.reason === "own-subtree") toast(SELF_MOVE);
@@ -517,17 +571,28 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const container = els().find((e) => e.id === txt.containerId);
       const mm = mmOf(container);
       if (mm && Array.isArray(mm.edge) && mm.via && !labelToasted) { labelToasted = true; toast(LABEL_HINT); return; }
+      if (mm && (mm.flow === "branch" || (mm.flow && typeof mm.flow === "object")) && container?.type === "arrow") {
+        if (!flowLabelToasted) { flowLabelToasted = true; toast(FLOW_LABEL_HINT); }
+        return;
+      }
       if (!mm || !mm.uid) return;
       const tree = trees.get(mm.map);
       const found = tree ? findNode(tree, mm.uid) : null;
       if (!found) return;
       const node = found.node;
-      if (hasMarkup(taskParts(node.string).rest)) { toast(MARKUP_HINT); return; }
+      const flow = isFlow(mm.map);
+      const branch = flow && isBranch(tree, mm.uid);
+      if (hasMarkup(flow ? flowParts(node.string, { branch }).body : taskParts(node.string).rest)) { toast(MARKUP_HINT); return; }
       const text = typeof txt.originalText === "string" ? txt.originalText : txt.text;
       if (text === "" || text === "·") return;
-      const next = editableText(node, text, { star: starFor(mm.map, mm.uid) });
+      const next = flow ? flowEditable(findNode(drawnTree(tree, { layout: FLOW_LAYOUT }), mm.uid)?.node ?? node, text, { branch }) : editableText(node, text, { star: starFor(mm.map, mm.uid) });
       if (next === null || next === undefined || next === node.string) return;
       writeString(mm.map, mm.uid, next, node.string);
+    }
+
+    // A branch head (its `Yes:` prefix is a label, not text): same source as planMap.
+    function isBranch(tree, uid) {
+      return !!tree && !!flowStructure(tree).byUid.get(uid)?.branchHead;
     }
 
     function starFor(root, uid) {
@@ -550,7 +615,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const pinPatch = new Map();
       for (const root of trees.keys()) {
         const tree = trees.get(root);
-        if (!tree) continue;
+        if (!tree || isFlow(root)) continue;
         const plan = planMap({ elements: live, tree, sizes: sizer, textOf, ...mapOpts(root) });
         // A root-only drag shifts every planned position; unmoved children then sit at plan - delta.
         const rootEl = plan.info.get(root)?.el;
@@ -636,14 +701,14 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       s.fontSize = `${(txt && Number.isFinite(txt.fontSize) ? txt.fontSize : 16) * zoom}px`;
     }
 
-    function openInput({ root, uid, base, placeholder = null, prefix = "" }) {
+    function openInput({ root, uid, base, placeholder = null, prefix = "", suffix = "" }) {
       closeInput({ write: true });
       const el = doc.createElement("input");
       el.type = "text";
       el.className = "plexus-portal plexus-mm-input";
-      el.value = base.slice(prefix.length);
+      el.value = base.slice(prefix.length, base.length - suffix.length);
       el.style.zIndex = String((zIndex ?? zIndexFor(outerEl)) + 2);
-      const handle = { el, rootUid: root, uid, base, prefix, placeholder, composing: false, listeners: [], done: false };
+      const handle = { el, rootUid: root, uid, base, prefix, suffix, placeholder, composing: false, listeners: [], done: false };
       const on = (type, fn) => { el.addEventListener(type, fn); handle.listeners.push([type, fn]); };
       on("keydown", (e) => {
         e.stopPropagation();
@@ -677,9 +742,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     }
 
     function finishInput(handle, value) {
-      const { rootUid, uid, base, placeholder, prefix } = handle;
+      const { rootUid, uid, base, placeholder, prefix, suffix } = handle;
       if (value === "") { if (placeholder) discard(rootUid, uid, placeholder); return; }
-      const next = prefix + value;
+      const next = prefix + value + suffix;
       if (next === base) return;
       writeString(rootUid, uid, next, base);
     }
@@ -767,6 +832,15 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     function editSelected(sel) {
       const node = findNode(trees.get(sel.root), sel.uid)?.node;
       if (!node) return;
+      if (isFlow(sel.root)) {
+        const parts = flowParts(node.string, { branch: isBranch(trees.get(sel.root), sel.uid) });
+        if (hasMarkup(parts.body)) { toast(MARKUP_HINT); return; }
+        const suffix = parts.suffix || "";
+        const prefix = node.string.slice(0, node.string.length - parts.body.length - suffix.length);
+        if (prefix + parts.body + suffix !== node.string) { toast(MARKUP_HINT); return; }
+        openInput({ root: sel.root, uid: sel.uid, base: node.string, prefix, suffix });
+        return;
+      }
       const parts = taskParts(node.string);
       if (hasMarkup(parts.rest)) { toast(MARKUP_HINT); return; }
       openInput({ root: sel.root, uid: sel.uid, base: node.string, prefix: parts.prefix });
@@ -787,7 +861,8 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     function drawnNodes(root) {
       const tree = trees.get(root);
       if (!tree) return [];
-      return visibleNodes(visualTree(tree, { attrEdges: mmOf(rootElement(root))?.attrEdges === true }));
+      const mm = mmOf(rootElement(root));
+      return visibleNodes(drawnTree(tree, { layout: mm?.layout || "right", attrEdges: mm?.attrEdges === true }));
     }
 
     function reorderSelected(sel, dir) {
@@ -805,8 +880,19 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     }
 
     function selectParent(sel) {
-      const v = drawnNodes(sel.root).find((x) => x.node.uid === sel.uid);
-      if (v && v.parent) select(sel.root, v.parent.uid);
+      const list = drawnNodes(sel.root);
+      const v = list.find((x) => x.node.uid === sel.uid);
+      if (!v || !v.parent) return;
+      if (!isFlow(sel.root)) { select(sel.root, v.parent.uid); return; }
+      // Primary predecessor: the decision for a branch head, else the tail of the previous sibling's continuation, or the parent for a first child.
+      const pred = flowStructure(trees.get(sel.root)).byUid.get(sel.uid)?.pred;
+      if (pred) { select(sel.root, pred); return; }
+      const kids = new Map();
+      for (const x of list) if (x.parent) kids.set(x.parent.uid, [...(kids.get(x.parent.uid) || []), x.node]);
+      const tail = (node) => { const k = kids.get(node.uid); return k && k.length ? tail(k[k.length - 1]) : node; };
+      const sibs = kids.get(v.parent.uid) || [];
+      const i = sibs.findIndex((n) => n.uid === sel.uid);
+      select(sel.root, i > 0 ? tail(sibs[i - 1]).uid : v.parent.uid);
     }
 
     function placeholderDeletable(sel) {
@@ -865,6 +951,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const rootEl = rootElement(sel.root);
       if (!rootEl) return null;
       const cur = mmOf(rootEl)?.layout || "right";
+      if (cur === FLOW_LAYOUT) { toast(FLOW_LAYOUT_HINT); return null; }
       const next = LAYOUTS[(LAYOUTS.indexOf(cur) + 1) % LAYOUTS.length];
       commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, { layout: next }) : e)), [sel.root]);
       toast(`Layout: ${next}`);
@@ -882,7 +969,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     function setLayout(layout) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS].includes(layout)) return false;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout)) return false;
       const done = commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, { layout }) : e)), [sel.root]);
       if (done) toast(`Layout: ${layout} (${CHANGE_BACK})`);
       return done;
@@ -892,6 +979,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
       if (!rootEl) return false;
+      if (mmOf(rootEl)?.layout === FLOW_LAYOUT) { toast(FLOW_ATTR_HINT); return false; }
       const done = commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, { attrEdges: on ? true : undefined }) : e)), [sel.root]);
       if (done) toast(`Attribute blocks as edges: ${on ? "on" : "off"} (${CHANGE_BACK})`);
       return done;
@@ -899,6 +987,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
 
     function togglePin(sel) {
       if (sel.isRoot) return null;
+      if (isFlow(sel.root)) { toast(FLOW_STEPS_HINT); return null; }
       const pinned = mmOf(sel.el)?.pinned === true;
       commit((list) => list.map((e) => (e.id === sel.el.id ? patchMarker(e, { pinned: pinned ? undefined : true }) : e)), [sel.root]);
       return null;

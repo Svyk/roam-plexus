@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createEditorToolbar } from "../src/view/toolbar.js";
+import { createEditorToolbar, syncExcalPopoverClass } from "../src/view/toolbar.js";
 
 function fakeDoc(barHeight) {
   const bar = {
@@ -41,6 +41,76 @@ test("toolbar falls back to 40px height when it measures 0", () => {
   const { doc, bar } = fakeDoc(0);
   createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {} }).show(outerEl);
   assert.equal(bar.style.top, `${700 - 16 - 40}px`);
+});
+
+test("showing the toolbar twice leaves one bar", () => {
+  const children = [];
+  const body = {
+    append(el) { children.push(el); },
+    querySelectorAll(sel) {
+      return sel === ".plexus-portal.plexus-toolbar" ? children.filter((el) => String(el.className).includes("plexus-toolbar")) : [];
+    },
+  };
+  const doc = {
+    body,
+    defaultView: { getComputedStyle: () => ({ zIndex: "auto" }), addEventListener() {}, removeEventListener() {} },
+    createElement() {
+      const el = {
+        style: {}, className: "", textContent: "", disabled: false, title: "",
+        append() {},
+        remove() { const i = children.indexOf(el); if (i >= 0) children.splice(i, 1); },
+        setAttribute() {},
+        addEventListener() {},
+        getBoundingClientRect: () => ({ height: 36, left: 0, top: 0, width: 10, right: 10, bottom: 36 }),
+      };
+      return el;
+    },
+  };
+  const outer = { ...outerEl, addEventListener() {}, removeEventListener() {}, querySelector() { return null; } };
+  const tb = createEditorToolbar({
+    doc, onAreaRegion() {}, onImageRegion() {}, MutationObserverImpl: class { observe() {} disconnect() {} },
+  });
+  tb.show(outer);
+  tb.show(outer);
+  const bars = children.filter((el) => String(el.className).includes("plexus-toolbar"));
+  assert.equal(bars.length, 1);
+  tb.hide();
+  assert.equal(children.filter((el) => String(el.className).includes("plexus-toolbar")).length, 0);
+});
+
+test("toolbar sets plexus-excal-popover only while the mounted editor contains a popover", () => {
+  const classes = new Set();
+  const { doc } = fakeDoc(36);
+  doc.body.classList = {
+    toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
+    remove(name) { classes.delete(name); },
+  };
+  let pop = null;
+  const outer = {
+    ...outerEl,
+    querySelector(sel) { return sel === ".popover" ? pop : null; },
+  };
+  class Watch {
+    constructor(cb) { this.cb = cb; Watch.last = this; }
+    observe() { this.observing = true; }
+    disconnect() { this.observing = false; }
+  }
+  const tb = createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {}, MutationObserverImpl: Watch });
+  tb.show(outer);
+  assert.equal(Watch.last.observing, true);
+  assert.equal(classes.has("plexus-excal-popover"), false);
+  pop = { className: "popover" };
+  Watch.last.cb();
+  assert.equal(syncExcalPopoverClass(outer, doc.body), true);
+  assert.equal(classes.has("plexus-excal-popover"), true);
+  pop = null;
+  Watch.last.cb();
+  assert.equal(classes.has("plexus-excal-popover"), false);
+  pop = { className: "popover" };
+  Watch.last.cb();
+  tb.hide();
+  assert.equal(Watch.last.observing, false);
+  assert.equal(classes.has("plexus-excal-popover"), false);
 });
 
 test("Frame button is disabled unless canFrame reports a single frame", async () => {

@@ -1,5 +1,18 @@
+const SWEEP_REMOVE = ".plexus-portal, .plexus-root, .plexus-offscreen, [data-plexus-dock]";
+const SWEEP_CLASSES = ["plexus-hidden", "plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden", "plexus-dock-open", "plexus-dock-narrowed"];
+
 function isPromiseLike(value) {
   return value != null && typeof value.then === "function";
+}
+
+// A queued mutation callback can reclaim a node after the disposers have run. Drop whatever is still marked.
+export function sweepExtensionDom(doc) {
+  const body = doc?.body;
+  if (!body?.querySelectorAll) return;
+  for (const el of body.querySelectorAll(SWEEP_REMOVE)) el.remove?.();
+  const marked = SWEEP_CLASSES.map((name) => "." + name).join(", ");
+  for (const el of body.querySelectorAll(marked)) el.classList?.remove?.(...SWEEP_CLASSES);
+  body.classList?.remove?.("plexus-dock-open", "plexus-excal-popover");
 }
 
 async function callSafely(disposer) {

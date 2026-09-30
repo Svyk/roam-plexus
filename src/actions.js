@@ -492,7 +492,7 @@ export function createActions({
     return String(text ?? "").replace(/\[\[|\]\]|#/g, "").replace(/\s+/g, " ").trim();
   }
 
-  async function newDrawingRun({ where, uid, open, order: wantOrder }) {
+  async function newDrawingRun({ where, uid, open, order: wantOrder, fresh = false }) {
     if (native.activeEditor(doc)) {
       toaster.show("Close the open drawing first", { kind: "error" });
       return null;
@@ -545,7 +545,7 @@ export function createActions({
       const title = api.util.dateToPageTitle(now);
       create = async () => {
         const pageUid = await host.ensurePage(title);
-        const existing = host.firstDrawingChild(pageUid);
+        const existing = fresh ? null : host.firstDrawingChild(pageUid);
         if (existing) return { uid: existing, reused: true };
         return host.createDrawing({ parentUid: pageUid, order: "last" });
       };
@@ -580,7 +580,7 @@ export function createActions({
     const memoKey = `${where}|${key}`;
     const recent = newDone.get(memoKey);
     let result;
-    if (recent && Date.now() - recent.at < NEW_REUSE_MS) {
+    if (!fresh && recent && Date.now() - recent.at < NEW_REUSE_MS) {
       result = { uid: recent.uid, reused: true };
     } else {
       try {
@@ -595,11 +595,12 @@ export function createActions({
         toaster.show("Could not create the drawing", { kind: "error" });
         return null;
       }
-      newDone.set(memoKey, { uid: result.uid, at: Date.now() });
+      if (!fresh) newDone.set(memoKey, { uid: result.uid, at: Date.now() });
       if (!result.reused) {
         try { emit({ uid: result.uid, kind: "drawing" }); } catch (error) { console.warn("[plexus] change emit failed", error); }
       }
     }
+    let opened = false;
     if (open && !disposed) {
       const rendered = () => {
         for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
@@ -609,9 +610,10 @@ export function createActions({
       };
       await waitFor(rendered, 1500, 50, aborted);
       const editor = disposed ? null : await openDrawingOnce(result.uid, { reuseIcon: true, placeholder: true, quiet: true });
-      if (!editor && !disposed) toaster.show("Drawing created; open it from the outline");
+      opened = !!editor;
+      if (!editor && !disposed && !fresh) toaster.show("Drawing created; open it from the outline");
     }
-    return result.uid;
+    return fresh ? { uid: result.uid, reused: !!result.reused, opened } : result.uid;
   }
 
   async function embedFromPickRun({ ref, scenePoint, app } = {}) {
@@ -946,9 +948,10 @@ export function createActions({
     },
 
     // New drawing where the user is. where: "here" | "below" | "page" | "today". uid: the target block (else the focused block).
-    newDrawing({ where = "here", uid, open = true, order } = {}) {
+    // fresh: skip the reuse memo and the today-page reuse, and return { uid, reused, opened } (P13 templates).
+    newDrawing({ where = "here", uid, open = true, order, fresh = false } = {}) {
       const target = typeof uid === "string" && uid ? uid : safe(() => api.ui?.getFocusedBlock?.()?.["block-uid"]);
-      return once("new-drawing", () => newDrawingRun({ where, uid: target, open, order }));
+      return once("new-drawing", () => newDrawingRun({ where, uid: target, open, order, fresh }));
     },
 
     embedFromPick: (opts) => embedFromPickRun(opts),
@@ -1390,7 +1393,7 @@ export function createActions({
 
     editEmbed: () => once("edit-embed", editEmbedOnce),
 
-    openDrawing: (uid, { sidebar = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true })),
+    openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
 
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
 

@@ -4,6 +4,7 @@ import { overrideKey } from "../model/refdisplay.js";
 import { isImageKind } from "../model/label.js";
 import { hotkeyFor } from "../settings.js";
 import { resolveRegionTarget } from "./regionref.js";
+import { ARRANGE_OPS } from "../model/arrange.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const PLEXUS_START = /^\s*\{\{\[\[plexus-/;
@@ -356,6 +357,74 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
     return n;
   };
 
+  const entry = (item) => {
+    const button = make("button", "context-menu-item");
+    button.type = "button";
+    button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", item.kbd ?? ""));
+    if (item.hint) button.setAttribute?.("title", item.hint);
+    if (item.enabled === false) {
+      button.disabled = true;
+      return button;
+    }
+    button.addEventListener("click", (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      try { app?.setState?.({ contextMenu: null }); } catch (error) { console.warn("[plexus] close menu failed", error); }
+      guard(item.label, () => item.run())();
+    });
+    return button;
+  };
+
+  // A flyout opens on hover and on click, flips to the left edge when it would leave the viewport, and dies with its li.
+  const submenu = (item, kids) => {
+    const li = make("li", "plexus-submenu");
+    li.setAttribute?.("data-testid", `plexus-${item.id}`);
+    const button = make("button", "context-menu-item");
+    button.type = "button";
+    button.setAttribute?.("aria-haspopup", "true");
+    button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", ""));
+    const flyout = make("ul", "plexus-flyout");
+    for (const kid of kids) {
+      const kli = make("li");
+      kli.setAttribute?.("data-testid", `plexus-${kid.id}`);
+      kli.append(entry(kid));
+      flyout.append(kli);
+    }
+    // Fixed, not absolute: the context menu scrolls inside the editor, and overflow would clip an absolute flyout.
+    const place = () => {
+      try {
+        flyout.style.position = "fixed";
+        flyout.style.right = "auto";
+        flyout.style.zIndex = "100002";
+        const anchor = button.getBoundingClientRect?.();
+        if (!anchor || !flyout.getBoundingClientRect) return;
+        const rect = flyout.getBoundingClientRect();
+        const width = win?.innerWidth ?? 0;
+        const height = win?.innerHeight ?? 0;
+        const fw = rect.width || 200;
+        const fh = rect.height || 0;
+        let left = anchor.right;
+        let top = anchor.top;
+        if (width && left + fw > width - 8) left = Math.max(8, anchor.left - fw);
+        if (height && top + fh > height - 8) top = Math.max(8, height - 8 - fh);
+        flyout.style.left = `${left}px`;
+        flyout.style.top = `${top}px`;
+      } catch (error) { console.warn("[plexus] flyout clamp failed", error); }
+    };
+    const setOpen = (open) => {
+      if (open) { li.setAttribute("data-open", "1"); place(); } else li.removeAttribute?.("data-open");
+    };
+    li.addEventListener("mouseenter", () => setOpen(true));
+    li.addEventListener("mouseleave", () => setOpen(false));
+    button.addEventListener("click", (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      setOpen(true);
+    });
+    li.append(button, flyout);
+    return li;
+  };
+
   const inject = (ul) => {
     removeOurs(ul);
     let items = [];
@@ -363,18 +432,14 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
     if (!items.length) return;
     ul.append(make("hr", "context-menu-item-separator"));
     for (const item of items) {
+      if (Array.isArray(item.children)) {
+        const kids = item.children.filter(Boolean);
+        if (kids.some((k) => k.enabled)) ul.append(submenu(item, kids));
+        continue;
+      }
       const li = make("li");
       li.setAttribute?.("data-testid", `plexus-${item.id}`);
-      const button = make("button", "context-menu-item");
-      button.type = "button";
-      button.append(make("div", "context-menu-item__label", item.label), make("kbd", "context-menu-item__shortcut", item.kbd ?? ""));
-      button.addEventListener("click", (e) => {
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        try { app?.setState?.({ contextMenu: null }); } catch (error) { console.warn("[plexus] close menu failed", error); }
-        guard(item.label, () => item.run())();
-      });
-      li.append(button);
+      li.append(entry(item));
       ul.append(li);
     }
     clamp(ul);
@@ -425,7 +490,7 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
 }
 
 // The canvas-menu items, built fresh on every right-click so each `enabled` reads the current selection.
-export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, tools, mindmap, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
+export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, tools, mindmap, arrange, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
   const kbd = (id) => hotkeyFor(id, { mac });
   const can = (fn) => { try { return !!fn(); } catch { return false; } };
   const call = (name, fn) => () => {
@@ -449,6 +514,10 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
   const pend = pending();
   const mm = (() => { try { return mindmap?.mapOptions?.(app) ?? null; } catch { return null; } })();
   const layoutItem = (layout, name) => ({ id: `mm-layout-${layout}`, label: `Plexus: Mind map layout: ${name}${mm?.layout === layout ? " (current)" : ""}`, enabled: !!mm, run: call(`mm-layout-${layout}`, () => mindmap.setLayout(app, layout)) });
+  const arrangeItem = () => {
+    const children = ARRANGE_OPS.map((op) => ({ id: `arrange-${op.op}`, label: op.label, hint: op.hint, enabled: can(() => arrange?.canRun(op.op)), run: call(`arrange-${op.op}`, () => arrange.run(op.op)) }));
+    return { id: "arrange", label: "Plexus: Arrange \u203a", enabled: children.some((c) => c.enabled), children };
+  };
   const placing = (() => { try { return actions.pendingPlace?.() ?? null; } catch { return null; } })();
 
   return [
@@ -476,7 +545,9 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     layoutItem("right", "Right"),
     layoutItem("cause", "Cause"),
     layoutItem("fishbone", "Fishbone"),
+    layoutItem("flow", "Flow"),
     { id: "mm-attr-edges", label: `Plexus: Attribute blocks as edges${mm ? (mm.attrEdges ? ": on" : ": off") : ""}`, enabled: !!mm, run: call("mm-attr-edges", () => mindmap.setAttrEdges(app, !mm.attrEdges)) },
+    arrangeItem(),
     { id: "text-only", label: "Plexus: Select text only", enabled: can(() => {
       const els = selectedElements();
       return els.length >= 2 && els.some(freeText);
