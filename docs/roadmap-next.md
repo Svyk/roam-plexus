@@ -609,16 +609,9 @@ M · value high · depends: none · Fable next 4/5 · Opus later 4/5
 5. "Drawing to outline" on a 3-frame board writes headings and refs under the chosen parent; a re-run updates in place; preview shown above 50 blocks.
 6. `RoamPlexus.build` makes a connected 3-box diagram; `apiVersion` and spec §8 are bumped.
 
-### P13: Process flows and templates — in progress, paused 2026-09-30 (built, uncommitted, 0.13.0)
+### P13: Process flows and templates — done 2026-09-30, v0.13.0 (`b33dbd3`)
 
-**Status (2026-09-30).** Contract and 32 critic amendments: `docs/phase13-contract.md` (`1771663`). The build is in the working tree, uncommitted, with `package.json` at 0.13.0.
-
-- **Live acceptance passed:** flow render (3 locked lanes, decision diamond, Yes/No labels, CCP and Hazard chips, dashed loop); gate b (F2 keeps the `#CCP1` suffix and the `Yes:` label); gate d (two reopens leave 3 lane regions); gate e (zero writes over 10 s); gate i (picker lists 8 starters, Esc closes only the picker); HACCP flow (30 elements), Fishbone (21), Swab-site map (21), 5-Why (20) and 16:9 slide (3) insert with valid bindings, and one Cmd+Z removes each.
-- **Fix before release:**
-  1. Template tile names are invisible under a dark theme: `.bp3-dark button` (0,1,1) outranks `.plexus-template-tile`. Use `.plexus-portal .plexus-template-tile` in `src/extension.css`.
-  2. Starter tiles show an empty `.plexus-template-thumb` box. Create the thumb only for user templates in `src/view/template-picker.js`.
-- **Gates still to run:** 16:9 frame membership; h (inserted `firebaseUrl` image shows, or the fallback applies); f (save selection as template: `Plexus/Templates` structure, main page unchanged, original drawing reopens); g (closing the template editor mid-save leaves no empty block and shows a toast); New drawing from template with the editor closed; j (Arrange as row re-routes bound arrows in one undo); k (elbow arrow keeps its shape and shows the toast); a (locked lanes clip members and render crops); c (folding a loop target, optional); l (typing bench); m (unload with the picker open or mid-save).
-- **Then:** clean up Readwisenotes (flow outline `plxFL0001`, drawing `b5PFt6IFI` and its lane regions, any `Plexus/Templates` test items), `npm run check`, spec §13 "Phase 13 live acceptance" table, commit, push, Pages `cmp`, KB note, mark this heading done and add the row to `docs/roadmap.md`.
+**Status (2026-09-30).** Contract and 32 critic amendments: `docs/phase13-contract.md` (`1771663`). Shipped in `b33dbd3`. Spec §13 has the live table. Tile colour uses `.plexus-portal .plexus-template-tile`. Thumbs exist only on user templates. Gate c is a recorded miss: folding a loop target drops the dashed arrow. The save poll is 40 ms (the contract step said 250). Typing +0.04 ms/key. Named Readwisenotes test blocks are removed at the end of the phase.
 
 **Goal.** HACCP-style process flows with swimlanes from an ordered outline, drawing templates stored as Roam blocks, and arrange helpers.
 
