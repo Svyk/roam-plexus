@@ -2,14 +2,16 @@ import { REGION_BUTTON_CLASS } from "../model/region.js";
 
 const SKIP_SELECTOR = ".plexus-offscreen, .plexus-root";
 const ALIAS_CLASS = "rm-alias--block";
+const DOCK_SELECTOR = ".plexus-dock";
 const EDITOR_OUTER = ".excalidraw-outer-container.full-screen";
 
 function skipped(node) {
   return !!node.closest?.(SKIP_SELECTOR);
 }
 
+// The dock never hosts an editor of its own; a drawing block rendered inside it is not the open editor.
 function underFullScreen(el) {
-  return !!el.closest?.(EDITOR_OUTER);
+  return !!el.closest?.(EDITOR_OUTER) && !el.closest?.(DOCK_SELECTOR);
 }
 
 // Cheap per-added-node classification: class checks only, no layout reads.
@@ -83,7 +85,7 @@ export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, 
     scanExisting() {
       try {
         const regionButtons = Array.from(root.querySelectorAll(`.${REGION_BUTTON_CLASS}`)).filter((el) => !skipped(el));
-        const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el));
+        const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el) && !el.closest?.(DOCK_SELECTOR));
         const aliases = Array.from(root.querySelectorAll(`a.${ALIAS_CLASS}`)).filter((el) => !skipped(el));
         handle({ regionButtons, editors, aliases });
       } catch (error) {

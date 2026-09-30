@@ -1,4 +1,4 @@
-/* Plexus v0.9.0 | MIT | generated; edit src/ */
+/* Plexus v0.10.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -195,7 +195,8 @@ var SETTING_IDS = Object.freeze({
   regionLanding: "region-landing",
   pasteRefs: "paste-refs",
   cardHome: "card-home",
-  drawingName: "drawing-name"
+  drawingName: "drawing-name",
+  dockWidth: "dock-width"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -217,7 +218,8 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.regionLanding]: false,
   [SETTING_IDS.pasteRefs]: "text",
   [SETTING_IDS.cardHome]: "drawing",
-  [SETTING_IDS.drawingName]: "Drawing {date}"
+  [SETTING_IDS.drawingName]: "Drawing {date}",
+  [SETTING_IDS.dockWidth]: "320"
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -232,7 +234,8 @@ var HOTKEYS = Object.freeze([
   Object.freeze({ id: "present", spec: "alt-shift-p", label: "Present open drawing" }),
   Object.freeze({ id: "mindmap", spec: "alt-shift-m", label: "Mind map" }),
   Object.freeze({ id: "embed", spec: "alt-shift-e", label: "Embed page or block" }),
-  Object.freeze({ id: "note", spec: "alt-shift-n", label: "New note card" })
+  Object.freeze({ id: "note", spec: "alt-shift-n", label: "New note card" }),
+  Object.freeze({ id: "dock", spec: "alt-shift-o", label: "Outline dock" })
 ]);
 function formatHotkey(spec, { mac = false } = {}) {
   const parts = String(spec ?? "").split("-").filter(Boolean);
@@ -335,7 +338,8 @@ function readSettings(extensionAPI) {
     regionLanding: !!get(SETTING_IDS.regionLanding),
     pasteRefs: oneOf(get(SETTING_IDS.pasteRefs), PASTE_REFS, "text"),
     cardHome: oneOf(get(SETTING_IDS.cardHome), CARD_HOMES, "drawing"),
-    drawingName: drawingNameOf(get(SETTING_IDS.drawingName))
+    drawingName: drawingNameOf(get(SETTING_IDS.drawingName)),
+    dockWidth: clampNumber(get(SETTING_IDS.dockWidth), 320, 240, 640)
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -1407,6 +1411,16 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       pageTitle: page?.[":node/title"] ?? null
     };
   }
+  function parentOf(uid) {
+    const info = blockInfo(uid);
+    if (!info || !info.parentUid) return null;
+    return {
+      uid: info.parentUid,
+      isPage: info.parentIsPage,
+      title: info.parentIsPage ? info.pageTitle : info.parentString,
+      pageTitle: info.pageTitle
+    };
+  }
   function topAncestor(uid) {
     let cur = uid;
     for (let i = 0; i < PATH_CAP && cur; i++) {
@@ -1606,6 +1620,7 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     pageUidByTitle,
     pageTitleOf,
     blockInfo,
+    parentOf,
     topAncestor,
     blockPaths,
     createBlock,
@@ -1656,7 +1671,7 @@ function findApp(excalidrawEl) {
 }
 function activeEditor(doc = globalThis.document) {
   const el = doc?.querySelector?.(".excalidraw-outer-container.full-screen .excalidraw");
-  if (!el || el.closest?.(".plexus-offscreen")) return null;
+  if (!el || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) return null;
   const outer = el.closest(".excalidraw-outer-container");
   const app = findApp(el);
   if (!app) return null;
@@ -2506,7 +2521,7 @@ function baseZIndex(doc, outerEl) {
   }
   return 1e3;
 }
-function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onBack, canBack }) {
+function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
   const view2 = doc.defaultView;
   const mac = /mac|iphone|ipad/i.test(String(view2?.navigator?.platform ?? ""));
   const withKey = (name, id) => {
@@ -2546,7 +2561,15 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
   const place = () => {
     if (!bar || !outer) return;
     const rect = outer.getBoundingClientRect();
-    bar.style.left = `${rect.left + rect.width / 2}px`;
+    let inset = 0;
+    try {
+      inset = Math.max(0, Number(dockInset?.()) || 0);
+    } catch {
+      inset = 0;
+    }
+    const visible = Math.max(0, rect.width - inset);
+    bar.style.maxWidth = `${Math.max(0, visible - 24)}px`;
+    bar.style.left = `${rect.left + visible / 2}px`;
     const height = bar.getBoundingClientRect().height || 40;
     bar.style.top = `${rect.bottom - 16 - height}px`;
   };
@@ -2609,6 +2632,14 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
         pressed.push([regionsButton, regionsVisible]);
         controls.push(regionsButton);
       }
+      if (onToggleDock) {
+        const dockButton = button("Outline", async () => {
+          await onToggleDock();
+          refresh();
+        }, "dock");
+        pressed.push([dockButton, dockOpen]);
+        controls.push(dockButton);
+      }
       if (onBack) {
         const backButton = button("Back", async () => {
           await onBack();
@@ -2627,6 +2658,7 @@ function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, 
       view2?.addEventListener("resize", place);
     },
     refresh: scheduleRefresh,
+    place,
     hide,
     dispose: hide
   };
@@ -2789,7 +2821,7 @@ var SELECTION_RECHECK_MS = 100;
 var QUIET_CAP_MS = 900;
 var FOCUS_WAIT_MS = 300;
 var REFOCUS_WINDOW_MS = 1200;
-var ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open";
+var ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open:not(.bp3-toast-container)";
 var POPUP_HOST_SELECTOR = ".bp3-portal";
 var MENU_KEYS = /* @__PURE__ */ new Set(["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"]);
 var KEY_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];
@@ -3644,14 +3676,14 @@ function createCanvasBacklinks({
   let disposed = false;
   let capLogged = false;
   let popover = null;
-  const warn4 = (message, error) => console.warn("[plexus]", message, error);
+  const warn5 = (message, error) => console.warn("[plexus]", message, error);
   const excludedUids = () => /* @__PURE__ */ new Set([drawingUid, ...regions.map((r) => r.uid)]);
   function loadRefs(uid) {
     let raw;
     try {
       raw = api.data.pull(REFS_PATTERN, [":block/uid", uid]);
     } catch (error) {
-      warn4("backlinks pull failed", error);
+      warn5("backlinks pull failed", error);
       return [];
     }
     const excluded = excludedUids();
@@ -3669,7 +3701,7 @@ function createCanvasBacklinks({
     try {
       regions = host.regionsOf(drawingUid) ?? [];
     } catch (error) {
-      warn4("backlinks regions failed", error);
+      warn5("backlinks regions failed", error);
       regions = [];
     }
     regionsAt = now();
@@ -3715,7 +3747,7 @@ function createCanvasBacklinks({
         const out = regionSceneBBox({ ...region, pad: 0 }, elements, appState);
         if (out?.bbox) add(regionNodeUid(region, live, byId) ?? uid, uid, out.bbox);
       } catch (error) {
-        warn4("backlinks region bbox failed", error);
+        warn5("backlinks region bbox failed", error);
       }
     }
     for (const el of live) {
@@ -3724,7 +3756,7 @@ function createCanvasBacklinks({
       try {
         add(uid, uid, elementBounds(el));
       } catch (error) {
-        warn4("backlinks node bbox failed", error);
+        warn5("backlinks node bbox failed", error);
       }
     }
     return [...byAnchor.values()].map((t) => ({ uids: [...t.uids], bbox: t.bbox }));
@@ -3752,14 +3784,14 @@ function createCanvasBacklinks({
           render();
           layout();
         } catch (error) {
-          warn4("backlinks watch failed", error);
+          warn5("backlinks watch failed", error);
         }
       };
       try {
         api.data.addPullWatch(WATCH_PATTERN, eid, cb);
         watches.set(uid, { eid, cb });
       } catch (error) {
-        warn4("backlinks watch failed", error);
+        warn5("backlinks watch failed", error);
       }
     }
   }
@@ -3768,7 +3800,7 @@ function createCanvasBacklinks({
     try {
       api.data.removePullWatch(WATCH_PATTERN, entry.eid, entry.cb);
     } catch (error) {
-      warn4("backlinks unwatch failed", error);
+      warn5("backlinks unwatch failed", error);
     }
   }
   function groups() {
@@ -3905,7 +3937,7 @@ function createCanvasBacklinks({
       try {
         update();
       } catch (error) {
-        warn4("backlinks update failed", error);
+        warn5("backlinks update failed", error);
       }
     });
   }
@@ -3956,7 +3988,7 @@ function createCanvasBacklinks({
       try {
         api.ui.components.renderString({ el: body, string: ref.string });
       } catch (error) {
-        warn4("backlinks render failed", error);
+        warn5("backlinks render failed", error);
         body.textContent = ref.string;
       }
       const onClick = (e) => {
@@ -3966,7 +3998,7 @@ function createCanvasBacklinks({
         try {
           openTarget({ type: "block", uid: ref.uid }, { sidebar: !!e?.shiftKey });
         } catch (error) {
-          warn4("backlinks open failed", error);
+          warn5("backlinks open failed", error);
         }
       };
       row.addEventListener("click", onClick);
@@ -3998,7 +4030,7 @@ function createCanvasBacklinks({
       try {
         api.ui.components.unmountNode({ el: host_ });
       } catch (error) {
-        warn4("backlinks unmount failed", error);
+        warn5("backlinks unmount failed", error);
       }
     }
     for (const [row, fn] of p.rowHandlers) row.removeEventListener("click", fn);
@@ -4019,7 +4051,7 @@ function createCanvasBacklinks({
       for (const uid of [...refsByUid.keys()]) refsByUid.delete(uid);
       update();
     } catch (error) {
-      warn4("backlinks refresh failed", error);
+      warn5("backlinks refresh failed", error);
     }
   }
   function dispose() {
@@ -4032,7 +4064,7 @@ function createCanvasBacklinks({
     try {
       unsubscribe2?.();
     } catch (error) {
-      warn4("backlinks unsubscribe failed", error);
+      warn5("backlinks unsubscribe failed", error);
     }
     unsubscribe2 = null;
     closePopover();
@@ -4045,7 +4077,7 @@ function createCanvasBacklinks({
   try {
     unsubscribe2 = native.subscribeViewport(app, schedule);
   } catch (error) {
-    warn4("backlinks subscribe failed", error);
+    warn5("backlinks subscribe failed", error);
   }
   refresh();
   return { refresh, dispose };
@@ -5175,12 +5207,13 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
 // src/view/discover.js
 var SKIP_SELECTOR = ".plexus-offscreen, .plexus-root";
 var ALIAS_CLASS = "rm-alias--block";
+var DOCK_SELECTOR = ".plexus-dock";
 var EDITOR_OUTER = ".excalidraw-outer-container.full-screen";
 function skipped(node) {
   return !!node.closest?.(SKIP_SELECTOR);
 }
 function underFullScreen(el) {
-  return !!el.closest?.(EDITOR_OUTER);
+  return !!el.closest?.(EDITOR_OUTER) && !el.closest?.(DOCK_SELECTOR);
 }
 function classifyAddedNode(node) {
   const out = { regionButtons: [], editors: [], aliases: [] };
@@ -5243,7 +5276,7 @@ function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEdito
     scanExisting() {
       try {
         const regionButtons = Array.from(root.querySelectorAll(`.${REGION_BUTTON_CLASS}`)).filter((el) => !skipped(el));
-        const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el));
+        const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el) && !el.closest?.(DOCK_SELECTOR));
         const aliases = Array.from(root.querySelectorAll(`a.${ALIAS_CLASS}`)).filter((el) => !skipped(el));
         handle({ regionButtons, editors, aliases });
       } catch (error) {
@@ -6904,12 +6937,12 @@ function rawWalk(raw, fn) {
 function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite }) {
   const sessions = /* @__PURE__ */ new Map();
   let disposed = false;
-  const warn4 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
+  const warn5 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
   const toast = (message, opts) => {
     try {
       toaster.show(message, opts);
     } catch (error) {
-      warn4("toast", error);
+      warn5("toast", error);
     }
   };
   const failToast = () => toast(WRITE_FAILED, { kind: "error" });
@@ -7011,7 +7044,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           fontSig.set(root, sig);
           Promise.resolve(measurer.ensureFonts(texts)).then((cleared) => {
             if (cleared && alive) commit(null, [root]);
-          }).catch((error) => warn4("fonts", error));
+          }).catch((error) => warn5("fonts", error));
         }
       }
       if (input) {
@@ -7080,7 +7113,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         raw = writer.pullTree(root);
       } catch (error) {
-        warn4("pull", error);
+        warn5("pull", error);
         return;
       }
       onRaw(root, raw);
@@ -7182,7 +7215,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         for (const id of finishedIds) nativeTextEdit(id);
         nativeChanges();
       } catch (error) {
-        warn4("change pass", error);
+        warn5("change pass", error);
       }
       for (const root of refreshRoots) if (trees.has(root)) refreshRoot(root);
       if (input) placeInput();
@@ -7197,7 +7230,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         pass(true);
       } catch (error) {
-        warn4("flush", error);
+        warn5("flush", error);
       }
     }
     function nativeTextEdit(textId2) {
@@ -7275,7 +7308,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           refreshRoot(root);
         }
       }).catch((error) => {
-        warn4("write", error);
+        warn5("write", error);
         failToast();
         refreshRoot(root);
       });
@@ -7300,7 +7333,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       select(root, uid);
       openInput({ root, uid, base: PLACEHOLDER_CHILD, placeholder: PLACEHOLDER_CHILD });
       Promise.resolve(job).catch((error) => {
-        warn4("create", error);
+        warn5("create", error);
         closeInput({ write: false });
         failToast();
         refreshRoot(root);
@@ -7394,7 +7427,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         if (selectedId(root, uid)) select(root, anchor.uid);
       }
       writer.discardPlaceholder(root, uid, placeholder).then(() => refreshRoot(root)).catch((error) => {
-        warn4("discard", error);
+        warn5("discard", error);
         refreshRoot(root);
       });
     }
@@ -7417,17 +7450,17 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (st.openDialog || st.openMenu || st.openPopup || st.contextMenu) return;
       const sel = selectedNode();
       if (!sel) return;
-      const swallow3 = () => {
+      const swallow4 = () => {
         e.preventDefault();
         e.stopImmediatePropagation();
       };
       if (e.metaKey || e.ctrlKey) {
         if (e.altKey) return;
         if (e.key in ARROWS) {
-          swallow3();
+          swallow4();
           toast(GROW_HINT);
         } else if (e.code === "KeyZ") {
-          swallow3();
+          swallow4();
           toast("Undo mind-map edits in the outline");
         }
         return;
@@ -7444,7 +7477,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         repeatSafe = false;
       } else if (plain && e.key === "F2") action = () => editSelected(sel);
       else if (alt && e.key in ARROWS) {
-        swallow3();
+        swallow4();
         moveSelection(sel, ARROWS[e.key]);
         return;
       } else if (alt && e.key === "Backspace") {
@@ -7456,7 +7489,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         repeatSafe = letter !== "V";
       }
       if (!action) return;
-      swallow3();
+      swallow4();
       if (e.repeat && !repeatSafe) return;
       if (e.altKey && e.key !== "Backspace") pendingDelete = null;
       else if (!(e.key === "Backspace")) pendingDelete = null;
@@ -7464,11 +7497,11 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         const out = action();
         if (out && typeof out.catch === "function") out.catch((error) => {
-          warn4("hotkey", error);
+          warn5("hotkey", error);
           failToast();
         });
       } catch (error) {
-        warn4("hotkey", error);
+        warn5("hotkey", error);
       }
     }
     function editSelected(sel) {
@@ -7522,7 +7555,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       node.open = open4;
       commit(null, [sel.root], { force: true });
       return writer.setOpen(sel.root, sel.uid, open4).catch((error) => {
-        warn4("fold", error);
+        warn5("fold", error);
         failToast();
         refreshRoot(sel.root);
       });
@@ -7659,7 +7692,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       select(root, root);
       openInput({ root, uid: root, base: PLACEHOLDER_ROOT, placeholder: PLACEHOLDER_ROOT });
       Promise.resolve(job).catch((error) => {
-        warn4("start", error);
+        warn5("start", error);
         closeInput({ write: false });
         detach(root);
         failToast();
@@ -7690,14 +7723,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         const off = app[name]?.on?.(() => onChange());
         if (typeof off === "function") offs.push(off);
       } catch (error) {
-        warn4("subscribe", error);
+        warn5("subscribe", error);
       }
     }
     try {
       const off = app.onPointerUpEmitter?.on?.(onPointerUp);
       if (typeof off === "function") offs.push(off);
     } catch (error) {
-      warn4("subscribe", error);
+      warn5("subscribe", error);
     }
     const view2 = doc.defaultView;
     if (view2?.addEventListener) listen(view2, "pagehide", () => flush({ unloading: true }));
@@ -7723,14 +7756,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           try {
             off();
           } catch (error) {
-            warn4("cleanup", error);
+            warn5("cleanup", error);
           }
         }
         for (const off of watches.values()) {
           try {
             off();
           } catch (error) {
-            warn4("cleanup", error);
+            warn5("cleanup", error);
           }
         }
         watches.clear();
@@ -8214,7 +8247,7 @@ function createRegionsLayer({
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
   const debugOn = () => typeof debug === "function" ? !!debug() : !!debug;
-  const warn4 = (message, error) => console.warn("[plexus]", message, error);
+  const warn5 = (message, error) => console.warn("[plexus]", message, error);
   let root = null;
   let stage = null;
   let svg = null;
@@ -8241,7 +8274,7 @@ function createRegionsLayer({
     try {
       regions = host.regionsOf(drawingUid) ?? [];
     } catch (error) {
-      warn4("regions layer regions failed", error);
+      warn5("regions layer regions failed", error);
       regions = [];
     }
     regionsAt = now();
@@ -8298,7 +8331,7 @@ function createRegionsLayer({
         if (e?.shiftKey) onOpenSidebar(uid);
         else onSelect(uid);
       } catch (error) {
-        warn4("regions layer chip failed", error);
+        warn5("regions layer chip failed", error);
       }
     };
     const onMouseDown = (e) => e?.preventDefault?.();
@@ -8357,7 +8390,7 @@ function createRegionsLayer({
       try {
         out = regionSceneBBox(entry.region, live, appState, sceneIndex);
       } catch (error) {
-        warn4("regions layer bbox failed", error);
+        warn5("regions layer bbox failed", error);
         continue;
       }
       if (!out?.bbox) continue;
@@ -8517,7 +8550,7 @@ function createRegionsLayer({
       try {
         update();
       } catch (error) {
-        warn4("regions layer update failed", error);
+        warn5("regions layer update failed", error);
       }
     });
   }
@@ -8528,7 +8561,7 @@ function createRegionsLayer({
       sceneSig = null;
       update();
     } catch (error) {
-      warn4("regions layer refresh failed", error);
+      warn5("regions layer refresh failed", error);
     }
   }
   function show() {
@@ -8559,7 +8592,7 @@ function createRegionsLayer({
     try {
       unsubscribe2 = native.subscribeViewport(app, schedule);
     } catch (error) {
-      warn4("regions layer subscribe failed", error);
+      warn5("regions layer subscribe failed", error);
     }
     refresh();
   }
@@ -8571,7 +8604,7 @@ function createRegionsLayer({
     try {
       unsubscribe2?.();
     } catch (error) {
-      warn4("regions layer unsubscribe failed", error);
+      warn5("regions layer unsubscribe failed", error);
     }
     unsubscribe2 = null;
     for (const item of items.values()) item.detach();
@@ -8743,14 +8776,14 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     if (text != null) node.textContent = String(text);
     return node;
   };
-  const warn4 = (what) => (error) => console.warn(`[plexus] audit dialog ${what} failed`, error);
+  const warn5 = (what) => (error) => console.warn(`[plexus] audit dialog ${what} failed`, error);
   const run = (what, fn) => {
     try {
       const out = fn();
-      if (out && typeof out.catch === "function") out.catch(warn4(what));
+      if (out && typeof out.catch === "function") out.catch(warn5(what));
       return out;
     } catch (error) {
-      warn4(what)(error);
+      warn5(what)(error);
       return void 0;
     }
   };
@@ -10301,7 +10334,7 @@ function createActions({
     if (open4 && !disposed) {
       const rendered = () => {
         for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-          if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
+          if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && !el.closest?.(".plexus-dock") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
         }
         return false;
       };
@@ -10452,6 +10485,8 @@ function createActions({
   async function placeBlocksInner(items, { mode = "embed", scenePoint, app, onPlaced } = {}) {
     const editor = native.activeEditor(doc);
     if (!editor || app && editor.app !== app) return placeRefuse("Open a drawing first");
+    if (mode !== "embed" && mode !== "link" && mode !== "label") return placeRefuse("Could not place");
+    const textMode = mode === "link" || mode === "label";
     const seen = /* @__PURE__ */ new Set();
     const parsed = [];
     for (const item of items || []) {
@@ -10464,12 +10499,12 @@ function createActions({
     const paths = host.blockPaths(parsed.filter((p) => p.kind === "block").map((p) => p.uid));
     const listed = new Set(paths.keys());
     const blocks = parsed.filter((p) => p.kind === "block" && paths.has(p.uid) && !paths.get(p.uid).ancestors.some((a) => listed.has(a))).sort((a, b) => compareOrders(paths.get(a.uid).orders, paths.get(b.uid).orders));
-    const pages = parsed.filter((p) => p.kind === "page" && (mode === "link" || host.pageUidByTitle(p.title)));
+    const pages = parsed.filter((p) => p.kind === "page" && (textMode || host.pageUidByTitle(p.title)));
     let list = [...blocks, ...pages];
     if (!list.length) return placeRefuse("Nothing to place");
     const at = Number.isFinite(scenePoint?.x) && Number.isFinite(scenePoint?.y) ? scenePoint : void 0;
     if (scenePoint && !at) console.warn("[plexus] place: bad click point, using the view centre", scenePoint);
-    if (mode !== "link" && list.length > EMBED_PLACE_CAP) {
+    if (!textMode && list.length > EMBED_PLACE_CAP) {
       const n2 = list.length;
       toaster.show(`Too many to embed live (${n2}, max ${EMBED_PLACE_CAP})`, {
         action: { label: `Place ${n2} as links`, run: () => {
@@ -10479,13 +10514,13 @@ function createActions({
       return null;
     }
     const cap = mindmap?.NODE_CAP ?? 500;
-    if (mode === "link" && list.length > cap) {
+    if (textMode && list.length > cap) {
       toaster.show(`Placing the first ${cap} of ${list.length}`);
       list = list.slice(0, cap);
     }
     const labels = list.map((p) => p.kind === "page" ? p.title : host.labelSource?.(p.uid)?.string ?? "");
     let nodes;
-    if (mode === "link") {
+    if (textMode) {
       const texts = labels.map((l, i) => linkLabel(l) || (list[i].kind === "page" ? list[i].title : "Block"));
       if (ensureFonts) {
         try {
@@ -10496,7 +10531,7 @@ function createActions({
       }
       nodes = texts.map((t, i) => {
         const w = measure2 ? Math.ceil(measure2(t, LINK_FONT)) : Math.ceil(t.length * LINK_FONT * 0.6);
-        return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), list[i].ref)] };
+        return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), mode === "label" ? null : list[i].ref)] };
       });
     } else {
       nodes = list.map((p, i) => ({ w: 360, h: 200, build: (x, y) => makeEmbedAnchor({ ref: p.ref, label: labels[i], x, y, width: 360, height: 200, idPrefix: "plexus-embed-" }) }));
@@ -10516,7 +10551,8 @@ function createActions({
     const y0 = c.y - (rows * cellH - PLACE_GAP) / 2;
     const elements = nodes.flatMap((node, i) => node.build(x0 + i % cols * cellW, y0 + Math.floor(i / cols) * cellH));
     if (!insertGuarded(editor.app, editor.drawingUid, elements, "Place blocks")) return placeRefuse("Could not place: the drawing refused the write");
-    toaster.show(n === 1 ? `Placed 1 ${mode === "link" ? "link" : "block"}` : `Placed ${n} ${mode === "link" ? "links" : "blocks"}`);
+    const noun = mode === "link" ? "link" : mode === "label" ? "label" : "block";
+    toaster.show(n === 1 ? `Placed 1 ${noun}` : `Placed ${n} ${noun}s`);
     try {
       onPlaced?.();
     } catch (error) {
@@ -10668,6 +10704,19 @@ function createActions({
     embedFromPick: (opts) => embedFromPickRun(opts),
     createPageAndEmbed: (title, scenePoint, opts) => createPageAndEmbedRun(title, scenePoint, opts),
     placeBlocks: (items, opts) => placeBlocksRun(items, opts),
+    async addOutlineBlock(rootUid) {
+      try {
+        if (!rootUid || !host.pullBlock(rootUid)) {
+          toaster.show("Could not add a block", { kind: "error" });
+          return null;
+        }
+        return await host.createBlock({ parentUid: rootUid, order: "last", string: "" });
+      } catch (error) {
+        console.warn("[plexus] add outline block failed", error);
+        toaster.show("Could not add a block", { kind: "error" });
+        return null;
+      }
+    },
     // Remembers an ordered list of blocks to place once a drawing is open (the full-screen editor hides the outline).
     armPlace(uids, { mode = "embed" } = {}) {
       const items = [...new Set((uids || []).map((u) => parseEmbedRef(refText(u))?.ref).filter(Boolean))];
@@ -12312,7 +12361,7 @@ function createActions({
   }
   function findRenderedImage(blockUid, index = 0) {
     for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-      if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen")) continue;
+      if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
       const img = el.querySelectorAll("img.rm-inline-img:not(.rm-inline-img--excalidraw)")[index];
       if (img) return img;
     }
@@ -12683,7 +12732,7 @@ function createActions({
     };
     const findIcon = () => {
       for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
         const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") ?? (placeholder ? el.querySelector(".excalidraw-container > div") : null);
         if (found && found.isConnected !== false) return found;
       }
@@ -12760,7 +12809,7 @@ function createActions({
     };
     const findIcon = () => {
       for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
         const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
         if (found && found.isConnected !== false) return found;
       }
@@ -13898,9 +13947,9 @@ function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } = {}) {
       li.append(button);
       ul.append(li);
     }
-    clamp(ul);
+    clamp2(ul);
   };
-  const clamp = (ul) => {
+  const clamp2 = (ul) => {
     try {
       const popover = ul.closest?.(".popover") ?? ul.parentNode;
       if (!popover?.getBoundingClientRect) return;
@@ -15062,7 +15111,8 @@ var HOTKEY_CODES = Object.freeze({
   KeyP: "present",
   KeyM: "mindmap",
   KeyE: "embed",
-  KeyN: "note"
+  KeyN: "note",
+  KeyO: "dock"
 });
 var DEDUPE_MS = 300;
 var isTextTarget = (el) => {
@@ -15122,12 +15172,1733 @@ function installHotkeyGuard({ containerEl, run, doc } = {}) {
   return () => target.removeEventListener("keydown", onKey, true);
 }
 
+// src/view/dock.js
+var PLEXUS_REF_MIME = "application/x-plexus-ref";
+var DOCK_MIN_WIDTH = 240;
+var DOCK_MAX_WIDTH = 640;
+var DOCK_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-menu, .bp3-overlay-open:not(.bp3-toast-container), .bp3-popover:not(.bp3-tooltip)";
+var LEAVE_WAIT_MS2 = 300;
+var SELECTION_RECHECK_MS2 = 100;
+var REFOCUS_WINDOW_MS2 = 1200;
+var STRAY_FOCUS_MS = 500;
+var POLL_MS = 25;
+var ADD_POLL_MAX_MS = 1e3;
+var FOCUS_WAIT_MS2 = 300;
+var LABEL_MAX = 60;
+var CHILDREN_PATTERN = "[:block/uid {:block/children [:block/uid :block/order]}]";
+var REF_SELECTOR = "[data-link-title], [data-tag], .rm-page-ref, .rm-block-ref[data-uid], .rm-alias[data-link-uid], .rm-alias[data-link-title]";
+var POPUP_HOST_SELECTOR2 = ".bp3-portal";
+var BLOCK_SELECTOR = '.rm-block__input, [id^="block-input-"]';
+var MENU_ESC_SETTLE_MS = 150;
+var MENU_KEYS2 = /* @__PURE__ */ new Set(["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"]);
+var KEY_EVENTS2 = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];
+var POINTER_EVENTS = ["pointerdown", "mousedown", "wheel", "dblclick", "contextmenu"];
+var synthetic = false;
+function within3(node, root) {
+  for (let n = node; n; n = n.parentNode ?? n.parentElement) if (n === root) return true;
+  return false;
+}
+var swallow3 = (e) => {
+  e.preventDefault?.();
+  e.stopImmediatePropagation?.();
+};
+var isTextarea = (n) => n?.tagName === "TEXTAREA";
+var hasClass = (n, name) => n?.classList ? n.classList.contains(name) : String(n?.className ?? "").split(/\s+/).includes(name);
+var addClass = (n, name) => {
+  if (n?.classList) n.classList.add(name);
+  else if (n && !hasClass(n, name)) n.className = `${n.className} ${name}`.trim();
+};
+var removeClass = (n, name) => {
+  if (n?.classList) n.classList.remove(name);
+  else if (n) n.className = String(n.className).split(/\s+/).filter((c) => c && c !== name).join(" ");
+};
+var clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+var uidOfId = (id) => String(id ?? "").slice(-9);
+var sameKeys = (a = {}, b = {}) => {
+  const ka = Object.keys(a).filter((k) => a[k]);
+  const kb = Object.keys(b).filter((k) => b[k]);
+  return ka.length === kb.length && ka.every((k) => b[k]);
+};
+function createDock({
+  doc,
+  api = globalThis.roamAlphaAPI,
+  app,
+  containerEl,
+  outerEl,
+  drawingUid,
+  zIndex = 1e3,
+  width = 320,
+  onWidth = () => {
+  },
+  onClose = () => {
+  },
+  onNavigate = () => {
+  },
+  mac,
+  parentOf = () => null,
+  addBlock = async () => null,
+  toast = () => {
+  },
+  raf,
+  setTimeout: setTimer = globalThis.setTimeout,
+  clearTimeout: clearTimer = globalThis.clearTimeout,
+  MutationObserver: MO,
+  menuSelector = DOCK_MENU_SELECTOR,
+  now = () => Date.now()
+}) {
+  const view2 = doc.defaultView;
+  const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimer(cb, 16));
+  const isMac = mac ?? /Mac/i.test(String(view2?.navigator?.platform ?? ""));
+  const MutationObs = MO ?? view2?.MutationObserver ?? globalThis.MutationObserver;
+  let open4 = true;
+  let rootKind = "drawing";
+  let rootUid = drawingUid;
+  let childUids = [];
+  const hosts = /* @__PURE__ */ new Map();
+  let unwatch = null;
+  let editing = false;
+  let focusUid = null;
+  let lastTa = null;
+  let lastCaret = null;
+  let lastKeyAt = 0;
+  let strayLogged = false;
+  let requestedWidth = clamp(Number(width) || 320, DOCK_MIN_WIDTH, DOCK_MAX_WIDTH);
+  let applyQueued = false;
+  let drag = null;
+  let narrowMode = "narrowed";
+  let escapeVia = null;
+  let focusGen = 0;
+  let clearGen = 0;
+  let rootGen = 0;
+  let closePromise = null;
+  let overlayLogged = false;
+  const pending = /* @__PURE__ */ new Set();
+  const offs = [];
+  const warn5 = (what, error) => console.warn(`[plexus] dock ${what}`, error);
+  const safe = (what, fn) => (...args) => {
+    try {
+      return fn(...args);
+    } catch (error) {
+      warn5(`${what} failed`, error);
+      return void 0;
+    }
+  };
+  const on = (target, type, fn, capture = false) => {
+    if (!target?.addEventListener) return;
+    target.addEventListener(type, fn, capture);
+    offs.push(() => target.removeEventListener?.(type, fn, capture));
+  };
+  const wait = (ms) => new Promise((resolve) => {
+    let rec = null;
+    const t = setTimer(() => {
+      pending.delete(rec);
+      resolve(true);
+    }, ms);
+    rec = { cancel: () => {
+      clearTimer(t);
+      resolve(false);
+    } };
+    pending.add(rec);
+  });
+  const frames = (n) => new Promise((resolve) => {
+    let left = n;
+    const rec = { live: true, cancel: () => {
+      rec.live = false;
+      resolve(false);
+    } };
+    pending.add(rec);
+    const tick = () => {
+      if (!rec.live) return;
+      left -= 1;
+      if (left <= 0) {
+        pending.delete(rec);
+        resolve(true);
+      } else requestFrame(tick);
+    };
+    requestFrame(tick);
+  });
+  const cancelPending = () => {
+    for (const rec of [...pending]) rec.cancel();
+    pending.clear();
+  };
+  const el = doc.createElement("div");
+  el.className = "plexus-portal plexus-dock";
+  el.style.zIndex = String(zIndex + 2);
+  el.setAttribute?.("role", "complementary");
+  el.setAttribute?.("aria-label", "Outline");
+  const handle = doc.createElement("div");
+  handle.className = "plexus-dock-handle";
+  const header = doc.createElement("div");
+  header.className = "plexus-dock-header";
+  const label = doc.createElement("div");
+  label.className = "plexus-dock-label";
+  const parentBtn = doc.createElement("button");
+  parentBtn.className = "plexus-dock-button plexus-dock-parent";
+  parentBtn.textContent = "Parent";
+  parentBtn.setAttribute?.("type", "button");
+  const closeBtn = doc.createElement("button");
+  closeBtn.className = "plexus-dock-button plexus-dock-close";
+  closeBtn.textContent = "×";
+  closeBtn.setAttribute?.("type", "button");
+  closeBtn.setAttribute?.("aria-label", "Close outline");
+  const body = doc.createElement("div");
+  body.className = "plexus-dock-body";
+  const footer = doc.createElement("div");
+  footer.className = "plexus-dock-footer";
+  const addBtn = doc.createElement("button");
+  addBtn.className = "plexus-dock-add";
+  addBtn.textContent = "+ Add a block";
+  addBtn.setAttribute?.("type", "button");
+  footer.append(addBtn);
+  header.append(label, parentBtn, closeBtn);
+  el.append(handle, header, body, footer);
+  const styleEl = doc.createElement("style");
+  styleEl.setAttribute?.("data-plexus-dock", "");
+  const styleHost = doc.head ?? doc.body;
+  let parentInfo = null;
+  try {
+    parentInfo = parentOf(drawingUid) ?? null;
+  } catch (error) {
+    warn5("parentOf failed", error);
+  }
+  const hasParent = !!parentInfo && parentInfo.isPage === false && !!parentInfo.uid;
+  parentBtn.hidden = !hasParent;
+  if (!hasParent) parentBtn.setAttribute?.("hidden", "");
+  const effectiveWidth = () => {
+    const inner = Number(view2?.innerWidth) || DOCK_MAX_WIDTH * 2;
+    return clamp(requestedWidth, DOCK_MIN_WIDTH, Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.floor(inner / 2))));
+  };
+  let theme = null;
+  let themeBg = null;
+  const hostBackground = () => {
+    for (const node of [doc.body, doc.documentElement]) {
+      if (!node) continue;
+      const c = parseColor(view2?.getComputedStyle?.(node)?.backgroundColor);
+      if (c && c.a > 0) return String(view2.getComputedStyle(node).backgroundColor);
+    }
+    return null;
+  };
+  const applyTheme = () => {
+    const next = isHostDark(doc) ? "dark" : "light";
+    if (next !== theme) {
+      theme = next;
+      el.setAttribute?.("data-theme", next);
+    }
+    const bg = hostBackground();
+    if (bg !== themeBg) {
+      themeBg = bg;
+      if (bg == null) el.style.removeProperty?.("--plexus-dock-bg");
+      else if (typeof el.style.setProperty === "function") el.style.setProperty("--plexus-dock-bg", bg);
+      else el.style["--plexus-dock-bg"] = bg;
+    }
+  };
+  const refreshTheme = () => {
+    if (!open4) return;
+    resetThemeMemo();
+    applyTheme();
+  };
+  const applyWidth = () => {
+    styleEl.textContent = `.plexus-dock-narrowed, .plexus-dock { --plexus-dock-w: ${effectiveWidth()}px; } body.plexus-dock-open { --plexus-dock-z: ${zIndex + 2}; }`;
+    applyTheme();
+  };
+  const scheduleApply = () => {
+    if (applyQueued || !open4) return;
+    applyQueued = true;
+    requestFrame(() => {
+      applyQueued = false;
+      if (open4) applyWidth();
+    });
+  };
+  const widthOf = () => app?.state?.width;
+  async function verifyNarrow(w0) {
+    if (typeof w0 !== "number") return;
+    if (!await frames(2)) return;
+    if (widthOf() !== w0) return;
+    try {
+      const Ev = view2?.Event ?? globalThis.Event;
+      view2?.dispatchEvent?.(new Ev("resize"));
+    } catch (error) {
+      warn5("resize dispatch failed", error);
+    }
+    if (!await frames(2)) return;
+    if (widthOf() !== w0) return;
+    narrowMode = "overlay";
+    removeClass(outerEl, "plexus-dock-narrowed");
+    addClass(el, "plexus-dock--overlay");
+    try {
+      const icon = outerEl?.querySelector?.(".bp3-icon-minimize");
+      const rect = icon?.getBoundingClientRect?.();
+      if (rect && Number.isFinite(rect.bottom)) el.style.top = `${Math.ceil(rect.bottom)}px`;
+    } catch (error) {
+      warn5("overlay offset failed", error);
+    }
+    if (!overlayLogged) {
+      overlayLogged = true;
+      console.warn("[plexus] dock overlays the canvas: Excalidraw did not follow the narrowed container");
+    }
+  }
+  const highlight = () => !!el.querySelector?.(".block-highlight-blue");
+  const dockHasTextarea = () => !!el.querySelector?.("textarea");
+  const focusedTa = () => isTextarea(doc.activeElement) && within3(doc.activeElement, el) ? doc.activeElement : null;
+  const menuOpen = () => !!doc.querySelector?.(menuSelector);
+  const snapSel = () => ({ ids: { ...app?.state?.selectedElementIds || {} }, groups: { ...app?.state?.selectedGroupIds || {} } });
+  const restoreSel = safe("selection restore", (snap) => {
+    if (!snap || !app) return;
+    const st = app.state || {};
+    if (sameKeys(st.selectedElementIds, snap.ids) && sameKeys(st.selectedGroupIds, snap.groups)) return;
+    const live = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((x) => !x.isDeleted).map((x) => x.id));
+    if (!Object.keys(snap.ids).every((id) => live.has(id))) return;
+    app.updateScene({ appState: { selectedElementIds: snap.ids, selectedGroupIds: snap.groups } });
+  });
+  async function ownsSelection() {
+    try {
+      const get = api?.ui?.multiselect?.getSelected;
+      if (typeof get !== "function") return false;
+      const list = await get.call(api.ui.multiselect);
+      const prefixes = [rootUid, ...childUids].map((u) => `render-block-path-${u}`);
+      return Array.isArray(list) && list.some((x) => {
+        const id = String(x?.["window-id"] ?? "");
+        return prefixes.some((p) => id.startsWith(p));
+      });
+    } catch (error) {
+      warn5("selection read failed", error);
+      return false;
+    }
+  }
+  function dispatchEscape(via) {
+    escapeVia = via;
+    const target = via === "document" ? doc : view2;
+    synthetic = true;
+    try {
+      const Ctor = view2?.KeyboardEvent ?? globalThis.KeyboardEvent;
+      target?.dispatchEvent?.(new Ctor("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+    } catch (error) {
+      warn5("synthetic Escape failed", error);
+    } finally {
+      synthetic = false;
+    }
+  }
+  async function clearSelection({ refocus = false } = {}) {
+    const my = ++clearGen;
+    try {
+      await clearRounds(my);
+    } finally {
+      if (refocus && my === clearGen && open4) {
+        const a = doc.activeElement;
+        if (!a || a === doc.body || a === doc.documentElement) {
+          try {
+            containerEl?.focus?.({ preventScroll: true });
+          } catch (error) {
+            warn5("container focus failed", error);
+          }
+        }
+      }
+    }
+  }
+  async function clearRounds(my) {
+    let dispatched = false;
+    if (highlight() || await ownsSelection()) {
+      dispatchEscape("window");
+      dispatched = true;
+    }
+    for (let round = 0; round < 2; round++) {
+      if (!await wait(SELECTION_RECHECK_MS2) || my !== clearGen || !open4) return;
+      const held = highlight() || await ownsSelection();
+      if (my !== clearGen || !open4) return;
+      if (!dispatched) {
+        if (!dockHasTextarea() && !held) return;
+        dispatchEscape("window");
+        dispatched = true;
+        continue;
+      }
+      if (round === 0 ? dockHasTextarea() || held : held) {
+        const snap = snapSel();
+        dispatchEscape("document");
+        setTimer(() => restoreSel(snap), 0);
+      }
+      return;
+    }
+  }
+  function leaveEditing({ refocus = true } = {}) {
+    const ta = focusedTa();
+    if (ta) {
+      try {
+        ta.blur?.();
+      } catch (error) {
+        warn5("blur failed", error);
+      }
+    }
+    editing = false;
+    if (refocus) {
+      try {
+        containerEl?.focus?.({ preventScroll: true });
+      } catch (error) {
+        warn5("container focus failed", error);
+      }
+    }
+    void clearSelection({ refocus }).catch((error) => warn5("selection clear failed", error));
+  }
+  const findInput = (uid) => [...body.querySelectorAll?.(".rm-block__input") ?? []].find((n) => String(n.id ?? "").endsWith(uid)) ?? null;
+  const focusedBlockTa = (uid) => {
+    const ta = focusedTa();
+    return ta && String(ta.id ?? "").endsWith(uid) ? ta : null;
+  };
+  const caretToEnd = (ta) => {
+    const n = String(ta.value ?? "").length;
+    if (typeof ta.setSelectionRange === "function") ta.setSelectionRange(n, n);
+    else {
+      ta.selectionStart = n;
+      ta.selectionEnd = n;
+    }
+  };
+  function clickInput(input) {
+    const Mouse = view2?.MouseEvent ?? globalThis.MouseEvent;
+    for (const type of ["mousedown", "mouseup", "click"]) input.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, view: view2 }));
+  }
+  async function focusBlock(uid) {
+    const my = ++focusGen;
+    const stale = () => !open4 || my !== focusGen;
+    let input = null;
+    for (let waited = 0; ; waited += POLL_MS) {
+      input = findInput(uid);
+      if (input || waited >= ADD_POLL_MAX_MS) break;
+      if (!await wait(POLL_MS) || stale()) return false;
+    }
+    if (!input) return false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (stale()) return false;
+      try {
+        clickInput(findInput(uid) ?? input);
+      } catch (error) {
+        warn5("focus click failed", error);
+        return false;
+      }
+      for (let waited = 0; waited <= FOCUS_WAIT_MS2; waited += POLL_MS) {
+        const ta = focusedBlockTa(uid);
+        if (ta) {
+          caretToEnd(ta);
+          return true;
+        }
+        if (!await wait(POLL_MS) || stale()) return false;
+      }
+    }
+    return false;
+  }
+  const uidsOf2 = (pulled) => (Array.isArray(pulled?.[":block/children"]) ? pulled[":block/children"] : []).slice().sort((a, b) => (a?.[":block/order"] ?? 0) - (b?.[":block/order"] ?? 0)).map((c) => c?.[":block/uid"]).filter(Boolean);
+  function unmountHost(h) {
+    try {
+      api?.ui?.components?.unmountNode?.({ el: h });
+    } catch (error) {
+      warn5("unmount failed", error);
+    }
+    h.remove?.();
+  }
+  function syncList(uids) {
+    const active = doc.activeElement;
+    const held = isTextarea(active) && within3(active, el) ? { ta: active, start: active.selectionStart, end: active.selectionEnd } : null;
+    for (const [uid, h] of [...hosts]) {
+      if (!uids.includes(uid)) {
+        unmountHost(h);
+        hosts.delete(uid);
+      }
+    }
+    uids.forEach((uid, i) => {
+      let h = hosts.get(uid);
+      const fresh2 = !h;
+      if (fresh2) {
+        h = doc.createElement("div");
+        h.className = "plexus-dock-child";
+        hosts.set(uid, h);
+      }
+      const at = body.children?.[i] ?? null;
+      if (at !== h) body.insertBefore(h, at);
+      if (fresh2) {
+        try {
+          api.ui.components.renderBlock({ uid, el: h, "open?": true });
+        } catch (error) {
+          warn5("block render failed", error);
+          h.textContent = "Could not render this block";
+        }
+      }
+    });
+    childUids = uids;
+    if (held && within3(held.ta, el) && doc.activeElement !== held.ta) {
+      try {
+        held.ta.focus?.({ preventScroll: true });
+        if (typeof held.ta.setSelectionRange === "function") held.ta.setSelectionRange(held.start, held.end);
+        else {
+          held.ta.selectionStart = held.start;
+          held.ta.selectionEnd = held.end;
+        }
+      } catch (error) {
+        warn5("focus restore failed", error);
+      }
+    }
+  }
+  function blockExists(uid) {
+    try {
+      return api.data.pull("[:block/uid]", `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`) != null;
+    } catch {
+      return true;
+    }
+  }
+  function neighbourInput(prev, uids, goneUid) {
+    const before = prev[prev.indexOf(goneUid) - 1];
+    const host = hosts.get(before && uids.includes(before) ? before : uids[0]);
+    const inputs = host?.querySelectorAll?.(".rm-block__input") ?? [];
+    const last = inputs[inputs.length - 1];
+    return last ? uidOfId(last.id) : null;
+  }
+  function onChildren(uids) {
+    if (!open4) return;
+    if (uids.length === childUids.length && uids.every((u, i) => u === childUids[i])) return;
+    const prev = childUids;
+    const added = uids.filter((u) => !prev.includes(u));
+    const removed = prev.filter((u) => !uids.includes(u));
+    let follow = null;
+    let gone = null;
+    if (editing) {
+      follow = added.length ? added[added.length - 1] : focusUid && removed.includes(focusUid) ? focusUid : null;
+      if (follow && !added.length && !blockExists(follow)) {
+        gone = follow;
+        follow = null;
+      }
+    }
+    syncList(uids);
+    if (gone) follow = neighbourInput(prev, uids, gone);
+    if (gone && !follow) editing = false;
+    if (follow) void focusBlock(follow).catch((error) => warn5("focus follow failed", error));
+  }
+  const visible = (uids) => rootKind === "parent" ? uids.filter((u) => u !== drawingUid) : uids;
+  function startWatch(uid) {
+    const ident = `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`;
+    let initial = [];
+    try {
+      initial = visible(uidsOf2(api.data.pull(CHILDREN_PATTERN, ident)));
+    } catch (error) {
+      warn5("children pull failed", error);
+    }
+    syncList(initial);
+    if (typeof api?.data?.addPullWatch !== "function") return;
+    const handler = (_before, after) => {
+      try {
+        onChildren(visible(uidsOf2(after)));
+      } catch (error) {
+        warn5("children watch failed", error);
+      }
+    };
+    try {
+      api.data.addPullWatch(CHILDREN_PATTERN, ident, handler);
+    } catch (error) {
+      warn5("children watch failed", error);
+      return;
+    }
+    unwatch = () => {
+      unwatch = null;
+      try {
+        api.data.removePullWatch(CHILDREN_PATTERN, ident, handler);
+      } catch (error) {
+        warn5("removePullWatch failed", error);
+      }
+    };
+  }
+  let dragRef = null;
+  function updateHeader() {
+    let text = "";
+    dragRef = null;
+    if (rootKind === "parent") {
+      text = String(parentInfo?.title ?? "").slice(0, LABEL_MAX);
+      if (parentInfo?.uid) dragRef = `((${parentInfo.uid}))`;
+    } else {
+      text = String(parentInfo?.pageTitle ?? "");
+      if (text) dragRef = `[[${text}]]`;
+    }
+    label.textContent = text || "Outline";
+    label.draggable = !!dragRef;
+    label.setAttribute?.("draggable", dragRef ? "true" : "false");
+    if (rootKind === "parent") addClass(el, "plexus-dock--parent-root");
+    else removeClass(el, "plexus-dock--parent-root");
+    parentBtn.setAttribute?.("aria-pressed", rootKind === "parent" ? "true" : "false");
+  }
+  async function setRoot(which) {
+    if (!open4 || which !== "drawing" && which !== "parent") return false;
+    if (which === rootKind) return true;
+    let target = drawingUid;
+    if (which === "parent") {
+      if (!hasParent) return false;
+      target = parentInfo.uid;
+    }
+    const my = ++rootGen;
+    if (focusedTa() || editing) {
+      leaveEditing();
+      await new Promise((resolve) => setTimer(resolve, LEAVE_WAIT_MS2));
+      if (!open4 || my !== rootGen) return false;
+    }
+    try {
+      unwatch?.();
+    } catch (error) {
+      warn5("unwatch failed", error);
+    }
+    unwatch = null;
+    for (const h of hosts.values()) unmountHost(h);
+    hosts.clear();
+    childUids = [];
+    rootUid = target;
+    rootKind = which;
+    updateHeader();
+    startWatch(rootUid);
+    return true;
+  }
+  function installKeys() {
+    on(el, "keydown", safe("keydown", (e) => {
+      if (synthetic || !e.isTrusted || e.isComposing || e.keyCode === 229) return;
+      lastKeyAt = now();
+      const t = e.target;
+      if (isTextarea(t)) lastCaret = { ta: t, start: t.selectionStart, end: t.selectionEnd };
+      const mOpen = menuOpen();
+      if (e.key === "Escape") {
+        if (mOpen) {
+          const snap = snapSel();
+          setTimer(() => restoreSel(snap), 0);
+          setTimer(() => {
+            if (!open4 || dockHasTextarea()) return;
+            editing = false;
+            void clearSelection({ refocus: true }).catch((error) => warn5("selection clear failed", error));
+          }, MENU_ESC_SETTLE_MS);
+          return;
+        }
+        if (isTextarea(t)) {
+          swallow3(e);
+          leaveEditing();
+        }
+        return;
+      }
+      if (!isTextarea(t)) return;
+      const start = t.selectionStart;
+      const end = t.selectionEnd;
+      const len = String(t.value ?? "").length;
+      const key = e.key;
+      const mod = e.metaKey || e.ctrlKey;
+      const blocks = [...el.querySelectorAll?.(BLOCK_SELECTOR) ?? []].map((n) => uidOfId(n.id));
+      const mine = uidOfId(t.id);
+      const isFirst = !blocks.length || blocks[0] === mine;
+      const isLast = !blocks.length || blocks[blocks.length - 1] === mine;
+      const direct = childUids.findIndex((u) => String(t.id ?? "").endsWith(u));
+      let deny = false;
+      if (mod && !e.altKey && !e.shiftKey && (e.code === "KeyA" || String(key).toLowerCase() === "a") && start === 0 && end === len) deny = true;
+      else if (direct >= 0 && key === "Tab" && e.shiftKey) deny = true;
+      else if (direct >= 0 && e.shiftKey && (e.altKey || mod) && (key === "ArrowUp" && direct === 0 || key === "ArrowDown" && direct === childUids.length - 1)) deny = true;
+      else if (e.shiftKey && !e.altKey && !mod && (key === "ArrowUp" && start === 0 || key === "ArrowDown" && end === len)) deny = !mOpen;
+      else if (isFirst && key === "Backspace" && start === 0 && end === 0) deny = true;
+      else if (isFirst && (key === "ArrowLeft" && start === 0 && end === 0 || key === "ArrowUp" && start === 0)) deny = !mOpen;
+      else if (isLast && key === "Delete" && start === len && end === len) deny = true;
+      else if (isLast && (key === "ArrowRight" && end === len || key === "ArrowDown" && end === len)) deny = !mOpen;
+      if (deny) swallow3(e);
+    }), true);
+    const undoChord = (e) => {
+      const k = String(e.key).toLowerCase();
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && k === "z") return true;
+      return !isMac && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k === "y";
+    };
+    const stopKey = (e) => {
+      if (MENU_KEYS2.has(e.key) && menuOpen()) return;
+      if (e.type === "keydown" && isTextarea(e.target) && undoChord(e)) return;
+      if (e.key === "Escape" && !isTextarea(e.target)) return;
+      e.stopPropagation();
+    };
+    const stop = (e) => e.stopPropagation();
+    for (const type of KEY_EVENTS2) on(el, type, type === "keydown" || type === "keyup" ? stopKey : stop);
+    for (const type of POINTER_EVENTS) on(el, type, stop);
+    on(el, "click", (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (e.target?.closest?.(".rm-bullet")) {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+      }
+    }, true);
+    const refTarget = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.button ?? 0) !== 0) return null;
+      const ref = e.target?.closest?.(REF_SELECTOR);
+      if (!ref || !within3(ref, el)) return null;
+      const attr = (n, name) => n?.getAttribute?.(name) ?? null;
+      const uid = attr(ref, "data-uid") ?? attr(ref, "data-link-uid");
+      const title = attr(ref, "data-link-title") ?? attr(ref, "data-tag");
+      if (title) return { type: "page", title };
+      if (uid) {
+        try {
+          const page = api.data.pull("[:node/title]", `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`);
+          if (page?.[":node/title"]) return { type: "page", title: page[":node/title"] };
+        } catch (error) {
+          warn5("ref pull failed", error);
+        }
+        return { type: "block", uid };
+      }
+      const text = String(ref.textContent ?? "").replace(/^#?\[*/, "").replace(/\]*$/, "").trim();
+      return text ? { type: "page", title: text } : null;
+    };
+    on(el, "mousedown", safe("ref mousedown", (e) => {
+      if (refTarget(e)) swallow3(e);
+    }), true);
+    on(el, "click", safe("ref click", (e) => {
+      const target = refTarget(e);
+      if (!target) return;
+      swallow3(e);
+      onNavigate({ target, sidebar: !!e.shiftKey });
+    }), true);
+    on(el, "focusin", safe("focusin", (e) => {
+      if (!isTextarea(e.target)) return;
+      editing = true;
+      focusUid = uidOfId(e.target.id);
+      lastTa = e.target;
+    }));
+    on(doc, "keydown", safe("document keydown", (e) => {
+      if (synthetic || !e.isTrusted || e.isComposing || e.keyCode === 229) return;
+      const t = e.target;
+      if (within3(t, el)) return;
+      if (t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR2}`)) return;
+      if (highlight()) {
+        if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "c") return;
+        swallow3(e);
+        if (e.key === "Escape") void clearSelection().catch((error) => warn5("selection clear failed", error));
+        return;
+      }
+      if (editing && (!t || t === doc.body) && lastKeyAt && now() - lastKeyAt <= REFOCUS_WINDOW_MS2) {
+        swallow3(e);
+        refocusLast();
+      }
+    }), true);
+    on(doc, "focusin", safe("document focusin", (e) => {
+      const t = e.target;
+      if (!t || t === doc.body || within3(t, el)) return;
+      if (editing && isTextarea(t) && /^block-input-/.test(String(t.id ?? "")) && lastKeyAt && now() - lastKeyAt <= STRAY_FOCUS_MS) {
+        try {
+          t.blur?.();
+        } catch (error) {
+          warn5("stray blur failed", error);
+        }
+        refocusLast();
+        if (!strayLogged) {
+          strayLogged = true;
+          console.warn("[plexus] dock: focus escaped to a block outside the dock; returned it");
+        }
+        return;
+      }
+      editing = false;
+    }), true);
+    on(containerEl, "pointerdown", safe("canvas pointerdown", () => {
+      if (focusedTa()) leaveEditing({ refocus: false });
+    }), true);
+    on(containerEl, "pointerup", safe("canvas pointerup", () => {
+      if (highlight()) void clearSelection().catch((error) => warn5("selection clear failed", error));
+    }), true);
+  }
+  function refocusLast() {
+    const ta = lastTa && within3(lastTa, el) ? lastTa : el.querySelector?.("textarea");
+    if (!ta) return;
+    try {
+      ta.focus?.({ preventScroll: true });
+      if (lastCaret && lastCaret.ta === ta && typeof ta.setSelectionRange === "function") ta.setSelectionRange(lastCaret.start, lastCaret.end);
+    } catch (error) {
+      warn5("refocus failed", error);
+    }
+  }
+  function installHeader() {
+    const noFocus = (target) => on(target, "mousedown", (e) => e.preventDefault?.());
+    noFocus(parentBtn);
+    noFocus(closeBtn);
+    noFocus(handle);
+    noFocus(addBtn);
+    on(label, "dragstart", safe("dragstart", (e) => {
+      if (!dragRef || !e.dataTransfer) {
+        e.preventDefault?.();
+        return;
+      }
+      leaveEditing({ refocus: false });
+      e.dataTransfer.effectAllowed = "copyLink";
+      e.dataTransfer.setData(PLEXUS_REF_MIME, dragRef);
+    }));
+    on(parentBtn, "click", () => {
+      void setRoot(rootKind === "parent" ? "drawing" : "parent").catch((error) => warn5("setRoot failed", error));
+    });
+    on(closeBtn, "click", () => {
+      void shutdown(true);
+    });
+    on(addBtn, "click", () => {
+      Promise.resolve().then(() => addBlock(rootUid)).then((uid) => uid && open4 ? focusBlock(uid) : null).catch((error) => {
+        warn5("add block failed", error);
+        toast("Could not add a block");
+      });
+    });
+    const finishDrag = safe("resize end", () => {
+      if (!drag) return;
+      drag = null;
+      try {
+        onWidth(requestedWidth);
+      } catch (error) {
+        warn5("onWidth failed", error);
+      }
+    });
+    on(handle, "pointerdown", safe("resize start", (e) => {
+      e.preventDefault?.();
+      try {
+        handle.setPointerCapture?.(e.pointerId);
+      } catch {
+      }
+      drag = { startX: e.clientX, startW: effectiveWidth() };
+    }));
+    on(handle, "pointermove", safe("resize", (e) => {
+      if (!drag) return;
+      requestedWidth = clamp(Math.round(drag.startW + (drag.startX - e.clientX)), DOCK_MIN_WIDTH, DOCK_MAX_WIDTH);
+      scheduleApply();
+    }));
+    on(handle, "pointerup", finishDrag);
+    on(handle, "pointercancel", finishDrag);
+    on(handle, "lostpointercapture", finishDrag);
+    on(view2, "resize", safe("window resize", scheduleApply));
+  }
+  function installObservers() {
+    if (typeof MutationObs !== "function") return;
+    const outerMo = new MutationObs(safe("outer observer", () => {
+      if (open4 && !hasClass(outerEl, "full-screen")) void shutdown(false);
+    }));
+    outerMo.observe(outerEl, { attributes: true, attributeFilter: ["class"] });
+    offs.push(() => outerMo.disconnect());
+    const menuMo = new MutationObs(safe("menu observer", () => {
+      const menu = body.querySelector?.(".rm-autocomplete__results");
+      if (menu) menu.scrollIntoView?.({ block: "nearest" });
+    }));
+    menuMo.observe(body, { childList: true, subtree: true });
+    offs.push(() => menuMo.disconnect());
+  }
+  function shutdown(notify) {
+    if (!open4) return closePromise ?? Promise.resolve();
+    open4 = false;
+    const ta = focusedTa();
+    const wasEditing = !!ta || editing;
+    try {
+      if (ta) ta.blur?.();
+      if (highlight()) dispatchEscape("window");
+    } catch (error) {
+      warn5("close blur failed", error);
+    }
+    editing = false;
+    cancelPending();
+    for (const off of offs.splice(0)) {
+      try {
+        off();
+      } catch (error) {
+        warn5("listener removal failed", error);
+      }
+    }
+    try {
+      unwatch?.();
+    } catch (error) {
+      warn5("unwatch failed", error);
+    }
+    unwatch = null;
+    try {
+      el.style.display = "none";
+      removeClass(outerEl, "plexus-dock-narrowed");
+      removeClass(doc.body, "plexus-dock-open");
+      styleEl.remove?.();
+      containerEl?.focus?.({ preventScroll: true });
+    } catch (error) {
+      warn5("close restore failed", error);
+    }
+    closePromise = (async () => {
+      if (wasEditing) await new Promise((resolve) => setTimer(resolve, LEAVE_WAIT_MS2));
+      for (const h of hosts.values()) unmountHost(h);
+      hosts.clear();
+      el.remove?.();
+    })().catch((error) => warn5("close failed", error));
+    if (notify) {
+      try {
+        onClose();
+      } catch (error) {
+        warn5("onClose failed", error);
+      }
+    }
+    return closePromise;
+  }
+  updateHeader();
+  applyWidth();
+  styleHost.append(styleEl);
+  doc.body.append(el);
+  addClass(doc.body, "plexus-dock-open");
+  addClass(outerEl, "plexus-dock-narrowed");
+  const width0 = widthOf();
+  installKeys();
+  installHeader();
+  installObservers();
+  try {
+    startWatch(rootUid);
+  } catch (error) {
+    warn5("start failed", error);
+  }
+  void verifyNarrow(width0).catch((error) => warn5("narrowing check failed", error));
+  return {
+    el,
+    isOpen: () => open4,
+    close: () => shutdown(true),
+    dispose: () => shutdown(false),
+    setRoot,
+    refreshTheme,
+    root: () => rootKind,
+    rootUid: () => rootUid,
+    mode: () => narrowMode,
+    escapeVia: () => escapeVia
+  };
+}
+
+// src/view/drop.js
+var PLEXUS_MIME = "application/x-plexus-ref";
+var PARENTS = "roam/block-uid-list-only-parents";
+var BLOCKS = "roam/block-uid-list";
+var URIS = "roam/roam-uri-list";
+var CLAIM = [PARENTS, BLOCKS, PLEXUS_MIME];
+var UID_RE4 = /^[\w-]{9}$/;
+var CAP = 500;
+var WATCHDOG_MS = 250;
+var OFFSET = 12;
+var LABELS = { embed: "Embed", link: "Link", label: "Label" };
+function claimableTypes(types) {
+  let list;
+  try {
+    list = Array.from(types ?? []);
+  } catch {
+    return false;
+  }
+  return CLAIM.some((t) => list.includes(t));
+}
+function dropMode(e) {
+  return e?.shiftKey ? "label" : e?.altKey ? "link" : "embed";
+}
+var uidsOf = (text) => String(text ?? "").split(/[^A-Za-z0-9_-]+/).filter((s) => UID_RE4.test(s));
+function uriUids(text) {
+  const out = [];
+  for (const line of String(text ?? "").split(/[\r\n]+/)) {
+    const m = /\/page\/([\w-]{9})\s*$/.exec(line.trim());
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+async function parseRoamDrop(dataTransfer, { resolve, exclude } = {}) {
+  let candidates = [];
+  try {
+    const get = (t) => {
+      try {
+        return dataTransfer.getData(t) || "";
+      } catch {
+        return "";
+      }
+    };
+    const plexus = parseEmbedRef(get(PLEXUS_MIME));
+    if (plexus && (plexus.kind === "block" || plexus.kind === "page")) candidates = [plexus];
+    if (!candidates.length) candidates = uidsOf(get(PARENTS)).map((uid) => ({ kind: "block", uid }));
+    if (!candidates.length) candidates = uidsOf(get(BLOCKS)).map((uid) => ({ kind: "block", uid }));
+    if (!candidates.length) candidates = uriUids(get(URIS)).map((uid) => ({ kind: "block", uid }));
+  } catch (error) {
+    console.warn("[plexus] drop parse failed", error);
+    return null;
+  }
+  const skip = new Set([].concat(typeof exclude === "function" ? exclude() : exclude ?? []).filter(Boolean));
+  const seen = /* @__PURE__ */ new Set();
+  const items = [];
+  let excluded = 0;
+  for (const c of candidates) {
+    if (items.length >= CAP) break;
+    let item = null;
+    if (c.kind === "page") {
+      item = { kind: "page", title: c.title, ref: c.ref };
+    } else {
+      if (skip.has(c.uid)) {
+        excluded++;
+        continue;
+      }
+      let info = null;
+      try {
+        info = await resolve?.(c.uid);
+      } catch (error) {
+        console.warn("[plexus] drop resolve failed", error);
+      }
+      if (!info) continue;
+      item = info.kind === "page" && info.title ? { kind: "page", title: info.title, ref: `[[${info.title}]]` } : { kind: "block", uid: c.uid, ref: `((${c.uid}))` };
+    }
+    if (seen.has(item.ref)) continue;
+    seen.add(item.ref);
+    items.push(item);
+  }
+  if (!items.length && !excluded) return null;
+  return { items, excluded };
+}
+function effectFor(allowed) {
+  const a = String(allowed ?? "").toLowerCase();
+  if (!a || a === "all" || a === "uninitialized" || a === "none") return "copy";
+  for (const e of ["copy", "link", "move"]) if (a.includes(e)) return e;
+  return "copy";
+}
+function installRoamDrop({ doc, containerEl, app, zIndex = 1e3, resolve, exclude, onDrop, toast, setTimeout: setT = globalThis.setTimeout.bind(globalThis), clearTimeout: clearT = globalThis.clearTimeout.bind(globalThis) }) {
+  const win = doc.defaultView ?? null;
+  let ghost = null;
+  let timer = null;
+  let disposed = false;
+  const say = (message) => {
+    try {
+      toast?.(message);
+    } catch {
+    }
+  };
+  const hideGhost = () => {
+    if (timer != null) clearT(timer);
+    timer = null;
+    ghost?.remove();
+    ghost = null;
+  };
+  const showGhost = (e) => {
+    if (!ghost) {
+      ghost = doc.createElement("div");
+      ghost.className = "plexus-portal plexus-drop-ghost";
+      ghost.style.zIndex = String(Number(zIndex) + 3);
+      doc.body.append(ghost);
+    }
+    ghost.textContent = LABELS[dropMode(e)];
+    const w = ghost.offsetWidth || 64;
+    const h = ghost.offsetHeight || 24;
+    const maxX = (win?.innerWidth ?? Infinity) - w;
+    const maxY = (win?.innerHeight ?? Infinity) - h;
+    ghost.style.left = `${Math.max(0, Math.min(e.clientX + OFFSET, maxX))}px`;
+    ghost.style.top = `${Math.max(0, Math.min(e.clientY + OFFSET, maxY))}px`;
+    if (timer != null) clearT(timer);
+    timer = setT(hideGhost, WATCHDOG_MS);
+  };
+  const claimed = (e) => claimableTypes(e?.dataTransfer?.types);
+  const onOver = (e) => {
+    try {
+      if (disposed || !claimed(e)) return;
+      e.preventDefault?.();
+      e.stopImmediatePropagation?.();
+      e.stopPropagation?.();
+      try {
+        e.dataTransfer.dropEffect = effectFor(e.dataTransfer.effectAllowed);
+      } catch {
+      }
+      showGhost(e);
+    } catch (error) {
+      console.warn("[plexus] drag over failed", error);
+    }
+  };
+  const onDropEvent = (e) => {
+    try {
+      if (disposed || !claimed(e)) return;
+      e.preventDefault?.();
+      e.stopImmediatePropagation?.();
+      e.stopPropagation?.();
+      hideGhost();
+      const mode = dropMode(e);
+      const rect = containerEl.getBoundingClientRect?.() ?? { left: 0, top: 0 };
+      const point = { x: e.clientX, y: e.clientY };
+      const appState = { ...app?.state ?? {}, offsetLeft: rect.left, offsetTop: rect.top };
+      const parsed = parseRoamDrop(e.dataTransfer, { resolve, exclude });
+      Promise.resolve(parsed).then(async (result) => {
+        if (disposed) return;
+        if (!result) return say("Nothing to place");
+        if (!result.items.length) return say("The drawing can't contain itself");
+        const scenePoint = viewportToScene({ x: point.x, y: point.y, appState });
+        await onDrop?.({ items: result.items, mode, scenePoint });
+      }).catch((error) => console.warn("[plexus] drop failed", error));
+    } catch (error) {
+      console.warn("[plexus] drop failed", error);
+    }
+  };
+  const docEnd = () => hideGhost();
+  const onBlur = () => hideGhost();
+  containerEl.addEventListener("dragenter", onOver, true);
+  containerEl.addEventListener("dragover", onOver, true);
+  containerEl.addEventListener("drop", onDropEvent, true);
+  doc.addEventListener("dragend", docEnd, true);
+  doc.addEventListener("drop", docEnd, true);
+  win?.addEventListener("blur", onBlur);
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    hideGhost();
+    containerEl.removeEventListener("dragenter", onOver, true);
+    containerEl.removeEventListener("dragover", onOver, true);
+    containerEl.removeEventListener("drop", onDropEvent, true);
+    doc.removeEventListener("dragend", docEnd, true);
+    doc.removeEventListener("drop", docEnd, true);
+    win?.removeEventListener("blur", onBlur);
+  };
+}
+
+// src/model/tokens.js
+var MASK = "\0";
+var UID_RE5 = /^\(\(([A-Za-z0-9_-]{9})\)\)/;
+var ALIAS_HEAD_RE = /^\[[^[\]\n]*\]\(/;
+var TAG_CHAR_RE = /[\p{L}\p{N}_\-/.:@]/u;
+var blank2 = (s) => MASK.repeat(s.length);
+function maskBraces(text) {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "{" && text[i + 1] === "{") {
+      let depth = 0;
+      let j = i;
+      let end = -1;
+      while (j < text.length) {
+        if (text[j] === "{" && text[j + 1] === "{") {
+          depth++;
+          j += 2;
+          continue;
+        }
+        if (text[j] === "}" && text[j + 1] === "}") {
+          depth--;
+          j += 2;
+          if (depth === 0) {
+            end = j;
+            break;
+          }
+          continue;
+        }
+        j++;
+      }
+      if (end > 0) {
+        out += blank2(text.slice(i, end));
+        i = end;
+        continue;
+      }
+    }
+    out += text[i];
+    i++;
+  }
+  return out;
+}
+function maskText(text) {
+  return maskBraces(
+    String(text ?? "").replace(/```[\s\S]*?```/g, blank2).replace(/`[^`\n]*`/g, blank2).replace(/https?:\/\/\S+/g, blank2)
+  );
+}
+function closeOf(m, open4, limit) {
+  let depth = 1;
+  let i = open4 + 2;
+  while (i < limit) {
+    if (m[i] === "[" && m[i + 1] === "[") {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (m[i] === "]" && m[i + 1] === "]") {
+      depth--;
+      i += 2;
+      if (depth === 0) return i;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+function scan(m, from, to, nested, out, inTitle = false) {
+  let i = from;
+  while (i < to) {
+    const c = m[i];
+    if (inTitle && c !== "[" && !(c === "#" && m[i + 1] === "[" && m[i + 2] === "[")) {
+      i++;
+      continue;
+    }
+    if (c === "[" && m[i + 1] !== "[") {
+      if (inTitle) {
+        i++;
+        continue;
+      }
+      const head = ALIAS_HEAD_RE.exec(m.slice(i, to));
+      if (head) {
+        const p = i + head[0].length;
+        if (m[p] === "[" && m[p + 1] === "[") {
+          const end = closeOf(m, p, to);
+          if (end > 0 && m[end] === ")" && end - 2 > p + 2) {
+            out.push({ kind: "page", title: m.slice(p + 2, end - 2), start: i, end: end + 1 });
+            i = end + 1;
+            continue;
+          }
+        } else if (m[p] === "(" && m[p + 1] === "(") {
+          const u = UID_RE5.exec(m.slice(p, to));
+          if (u && m[p + u[0].length] === ")") {
+            out.push({ kind: "block", uid: u[1], start: i, end: p + u[0].length + 1 });
+            i = p + u[0].length + 1;
+            continue;
+          }
+        }
+      }
+      i++;
+      continue;
+    }
+    if (c === "[" && m[i + 1] === "[") {
+      const end = closeOf(m, i, to);
+      if (end > 0 && end - 2 > i + 2) {
+        out.push({ kind: "page", title: m.slice(i + 2, end - 2), start: i, end });
+        if (nested) scan(m, i + 2, end - 2, nested, out, true);
+        i = end;
+        continue;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === "#" && m[i + 1] === "[" && m[i + 2] === "[") {
+      const end = closeOf(m, i + 1, to);
+      if (end > 0 && end - 2 > i + 3) {
+        out.push({ kind: "tag", title: m.slice(i + 3, end - 2), start: i, end });
+        if (nested) scan(m, i + 3, end - 2, nested, out, true);
+        i = end;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (c === "#") {
+      let j = i + 1;
+      while (j < to && TAG_CHAR_RE.test(m[j])) j++;
+      while (j > i + 1 && m[j - 1] === ":") j--;
+      if (j > i + 1) {
+        out.push({ kind: "tag", title: m.slice(i + 1, j), start: i, end: j });
+        i = j;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (c === "(" && m[i + 1] === "(") {
+      const u = UID_RE5.exec(m.slice(i, to));
+      if (u) {
+        out.push({ kind: "block", uid: u[1], start: i, end: i + u[0].length });
+        i += u[0].length;
+        continue;
+      }
+    }
+    i++;
+  }
+}
+function findTokens(text, { nested = false } = {}) {
+  const src = String(text ?? "");
+  if (!src) return [];
+  const m = maskText(src);
+  const out = [];
+  scan(m, 0, m.length, nested, out);
+  for (const t of out) if (t.title != null) t.title = titleFrom(src, t);
+  return out.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+function titleFrom(src, t) {
+  const raw = src.slice(t.start, t.end);
+  if (raw.startsWith("#[[")) return raw.slice(3, -2);
+  if (raw.startsWith("[[")) return raw.slice(2, -2);
+  if (raw.startsWith("#")) return raw.slice(1);
+  const alias = ALIAS_HEAD_RE.exec(raw);
+  if (alias) return raw.slice(alias[0].length + 2, -3);
+  return t.title;
+}
+function alignWrapped(text, originalText) {
+  const t = String(text ?? "");
+  const o = String(originalText ?? "");
+  const map = new Int32Array(t.length + 1);
+  let i = 0;
+  let j = 0;
+  while (i < t.length) {
+    if (j < o.length && t[i] === o[j]) {
+      map[i++] = j++;
+      continue;
+    }
+    if (t[i] === "\n") {
+      map[i++] = j;
+      if (j < o.length && /\s/.test(o[j])) j++;
+      continue;
+    }
+    if (j < o.length && /\s/.test(o[j])) {
+      j++;
+      continue;
+    }
+    return null;
+  }
+  map[t.length] = o.length;
+  return map;
+}
+
+// src/view/text-links.js
+var MAX_MOVE_PX2 = 6;
+var MAX_HOLD_MS2 = 400;
+var MEASURE_CAP = 2e3;
+var LAYOUT_CAP = 500;
+var NOTE_ARMED_ATTR = "data-plexus-note-armed";
+var CHOOSER_LABEL_MAX = 60;
+var FRAME_TYPES = /* @__PURE__ */ new Set(["frame", "magicframe"]);
+var LINEAR_TYPES = /* @__PURE__ */ new Set(["arrow", "line"]);
+var FAMILY = {
+  1: "Virgil",
+  2: "Helvetica",
+  3: "Cascadia",
+  5: "Excalifont",
+  6: "Nunito",
+  7: "Lilita One",
+  8: "Comic Shanns",
+  9: "Liberation Sans"
+};
+var warn4 = (what, ...rest) => console.warn(`[plexus] ${what}`, ...rest);
+var fontFor = (element) => `${element.fontSize ?? 20}px ${FAMILY[element.fontFamily] ?? "Excalifont"}, Xiaolai, sans-serif, Segoe UI Emoji`;
+function createFontMeasurer({ doc = globalThis.document } = {}) {
+  const memo3 = /* @__PURE__ */ new Map();
+  let ctx = null;
+  const context = () => {
+    if (ctx) return ctx;
+    try {
+      ctx = doc?.createElement?.("canvas")?.getContext?.("2d") || null;
+    } catch {
+      ctx = null;
+    }
+    return ctx;
+  };
+  return function measure2(text, font) {
+    const str = String(text ?? "");
+    const key = `${font}|${str}`;
+    if (memo3.has(key)) {
+      const hit = memo3.get(key);
+      memo3.delete(key);
+      memo3.set(key, hit);
+      return hit;
+    }
+    const c = context();
+    let width;
+    if (c) {
+      c.font = font;
+      width = c.measureText(str).width;
+    } else {
+      width = str.length * (parseFloat(font) || 20) * 0.6;
+    }
+    memo3.set(key, width);
+    if (memo3.size > MEASURE_CAP) memo3.delete(memo3.keys().next().value);
+    return width;
+  };
+}
+var defaultMeasure = null;
+var layouts = /* @__PURE__ */ new WeakMap();
+function tokenTarget(token) {
+  return token.kind === "block" ? { type: "block", uid: token.uid } : { type: "page", title: token.title };
+}
+function layoutOf(element, measure2) {
+  let byId = layouts.get(measure2);
+  if (!byId) {
+    byId = /* @__PURE__ */ new Map();
+    layouts.set(measure2, byId);
+  }
+  const cached = byId.get(element.id);
+  if (cached && cached.version === element.version && cached.text === element.text && cached.original === element.originalText) return cached;
+  const text = String(element.text ?? "");
+  const lines = text.split("\n");
+  const font = fontFor(element);
+  const lhPx = (element.fontSize ?? 20) * (element.lineHeight ?? 1.25);
+  const align = element.textAlign || "left";
+  const boxes = [];
+  let at = 0;
+  lines.forEach((line, i) => {
+    const w = measure2(line, font);
+    const left = align === "center" ? element.x + (element.width - w) / 2 : align === "right" ? element.x + element.width - w : element.x;
+    boxes.push({ line, start: at, left, top: element.y + i * lhPx, height: lhPx });
+    at += line.length + 1;
+  });
+  const segsIn = (map2, tok) => {
+    const segs = [];
+    for (const b of boxes) {
+      let a = -1;
+      let z = -1;
+      for (let k = 0; k < b.line.length; k++) {
+        const o = map2[b.start + k];
+        if (o >= tok.start && o < tok.end) {
+          if (a < 0) a = k;
+          z = k + 1;
+        }
+      }
+      if (a < 0) continue;
+      const x1 = b.left + measure2(b.line.slice(0, a), font);
+      const x2 = b.left + measure2(b.line.slice(0, z), font);
+      segs.push({ x1, x2, y1: b.top, y2: b.top + b.height });
+    }
+    return segs;
+  };
+  const map = element.originalText != null && element.originalText !== "" ? alignWrapped(text, element.originalText) : null;
+  const nested = [];
+  const flat = [];
+  if (map) {
+    const orig = String(element.originalText);
+    for (const tok of findTokens(orig, { nested: true })) nested.push({ ...tok, segs: segsIn(map, tok) });
+    for (const tok of findTokens(orig)) flat.push({ ...tok });
+  } else {
+    boxes.forEach((b) => {
+      for (const tok of findTokens(b.line, { nested: true })) {
+        const seg = {
+          x1: b.left + measure2(b.line.slice(0, tok.start), font),
+          x2: b.left + measure2(b.line.slice(0, tok.end), font),
+          y1: b.top,
+          y2: b.top + b.height
+        };
+        nested.push({ ...tok, segs: [seg] });
+      }
+      for (const tok of findTokens(b.line)) flat.push({ ...tok });
+    });
+  }
+  const entry = { version: element.version, text: element.text, original: element.originalText, nested, flat };
+  byId.set(element.id, entry);
+  if (byId.size > LAYOUT_CAP) byId.delete(byId.keys().next().value);
+  return entry;
+}
+function toLocal(element, point) {
+  const angle = element.angle || 0;
+  if (!angle) return point;
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+  const cos = Math.cos(-angle);
+  const sin = Math.sin(-angle);
+  const dx = point.x - cx;
+  const dy = point.y - cy;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+var inBox = (el, p) => p.x >= el.x && p.x <= el.x + el.width && p.y >= el.y && p.y <= el.y + el.height;
+function hitToken({ element, point, measure: measure2 } = {}) {
+  if (!element || element.type !== "text" || !point) return null;
+  measure2 = measure2 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
+  const p = toLocal(element, point);
+  let best = null;
+  for (const tok of layoutOf(element, measure2).nested) {
+    if (!tok.segs.some((s) => p.x >= s.x1 && p.x <= s.x2 && p.y >= s.y1 && p.y <= s.y2)) continue;
+    if (!best || tok.end - tok.start < best.end - best.start) best = tok;
+  }
+  if (!best) return null;
+  const { segs, ...token } = best;
+  return token;
+}
+function elementTokens({ element, measure: measure2 } = {}) {
+  if (!element || element.type !== "text") return [];
+  measure2 = measure2 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
+  return layoutOf(element, measure2).flat.map((t) => ({ ...t }));
+}
+function topmostText(elements, point) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const el of elements) if (el) byId.set(el.id, el);
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (!el || el.isDeleted || FRAME_TYPES.has(el.type)) continue;
+    if (!inBox(el, toLocal(el, point))) continue;
+    if (el.type === "text") return { text: el, container: el.containerId ? byId.get(el.containerId) ?? null : null };
+    if (LINEAR_TYPES.has(el.type)) return null;
+    const bound = (el.boundElements || []).find((b) => b?.type === "text");
+    const text = bound ? byId.get(bound.id) : null;
+    return text && !text.isDeleted ? { text, container: el } : null;
+  }
+  return null;
+}
+function installTextLinks({
+  doc,
+  api = globalThis.roamAlphaAPI,
+  app,
+  containerEl,
+  navigate: navigate2,
+  toast,
+  zIndex = 0,
+  mac = /mac|iphone|ipad/i.test(String(doc?.defaultView?.navigator?.platform ?? "")),
+  measure: measure2,
+  now = () => Date.now(),
+  raf = (fn) => (doc?.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame)(fn),
+  caf = (id) => (doc?.defaultView?.cancelAnimationFrame ?? globalThis.cancelAnimationFrame)?.(id)
+} = {}) {
+  if (!app || !containerEl?.addEventListener) return () => {
+  };
+  const win = doc?.defaultView ?? null;
+  const measurer = measure2 || createFontMeasurer({ doc });
+  let down = null;
+  let chooser = null;
+  let hoverOn = false;
+  let frame = null;
+  let last = null;
+  let disposed = false;
+  const modifier = (e) => mac ? !!e.metaKey && !e.ctrlKey : !!e.ctrlKey && !e.metaKey;
+  const isModifierKey = (e) => mac ? e.key === "Meta" : e.key === "Control";
+  function blocked() {
+    const s = app.state || {};
+    if (s.editingTextElement || s.newElement || s.multiElement || s.selectedLinearElement?.isEditing) return true;
+    if (s.openDialog || s.openMenu || s.contextMenu) return true;
+    return !!doc?.body?.hasAttribute?.(NOTE_ARMED_ATTR);
+  }
+  function scenePoint(e) {
+    const r = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
+    return viewportToScene({ x: e.clientX, y: e.clientY, appState: { ...app.state, offsetLeft: r.left, offsetTop: r.top } });
+  }
+  function locate(e) {
+    if (!linksActive(app) || blocked()) return null;
+    const point = scenePoint(e);
+    const found = app.getElementLinkAtPosition?.(point, null);
+    if (typeof found === "string" ? found : found?.link) return null;
+    const top = topmostText(app.getSceneElements?.() ?? [], point);
+    if (!top || top.text.link || top.container?.link) return null;
+    return { ...top, point };
+  }
+  function decide(e) {
+    const hit = locate(e);
+    if (!hit) return null;
+    const token = hitToken({ element: hit.text, point: hit.point, measure: measurer });
+    if (token) return { tokens: [token] };
+    const all = elementTokens({ element: hit.text, measure: measurer });
+    return all.length ? { tokens: all } : null;
+  }
+  function exists(token) {
+    const t = tokenTarget(token);
+    try {
+      const found = t.type === "block" ? api.data.pull("[:block/uid]", [":block/uid", t.uid]) : api.data.pull("[:block/uid]", [":node/title", t.title]);
+      return !!found;
+    } catch (error) {
+      warn4("token lookup failed", error);
+      return false;
+    }
+  }
+  function go(token, sidebar) {
+    if (disposed) return;
+    const target = tokenTarget(token);
+    if (!exists(token)) {
+      toast?.(target.type === "block" ? "Block not found" : `No page named ${target.title}`);
+      return;
+    }
+    try {
+      navigate2?.({ target, sidebar: !!sidebar });
+    } catch (error) {
+      warn4("token navigation failed", error);
+    }
+  }
+  function blockLabel(uid) {
+    try {
+      const raw = api.data.pull("[:block/string]", [":block/uid", uid]);
+      const s = String(raw?.[":block/string"] ?? "").replace(/\s+/g, " ").trim();
+      return s ? s.slice(0, CHOOSER_LABEL_MAX) : `((${uid}))`;
+    } catch {
+      return `((${uid}))`;
+    }
+  }
+  const labelOf = (t) => t.kind === "block" ? blockLabel(t.uid) : t.kind === "tag" ? `#${t.title}` : t.title;
+  function closeChooser(refocus = true) {
+    const c = chooser;
+    if (!c) return;
+    chooser = null;
+    c.dispose();
+    if (refocus) {
+      try {
+        containerEl.focus?.({ preventScroll: true });
+      } catch {
+      }
+    }
+  }
+  function openChooser(tokens2, at) {
+    closeChooser(false);
+    const root = doc.createElement("div");
+    root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-token-chooser";
+    root.setAttribute("tabindex", "-1");
+    root.style.position = "fixed";
+    root.style.zIndex = String((zIndex || 0) + 3);
+    const scroll = doc.createElement("div");
+    scroll.className = "rm-autocomplete__results-scroll";
+    const rows = [];
+    let active = 0;
+    const setActive = (i) => {
+      active = i;
+      rows.forEach((r, k) => {
+        r.style.backgroundColor = k === i ? "rgb(213, 218, 223)" : "";
+      });
+    };
+    const choose = (token, sidebar) => {
+      closeChooser(false);
+      go(token, sidebar);
+    };
+    tokens2.forEach((token, k) => {
+      const row = doc.createElement("div");
+      row.className = "dont-unfocus-block";
+      row.style.padding = "6px";
+      row.style.cursor = "pointer";
+      row.style.borderRadius = "2px";
+      const inner = doc.createElement("div");
+      inner.className = "rm-autocomplete-result";
+      inner.textContent = labelOf(token);
+      row.append(inner);
+      row.addEventListener("mousemove", () => setActive(k));
+      row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        choose(token, ev.shiftKey);
+      });
+      scroll.append(row);
+      rows.push(row);
+    });
+    root.append(scroll);
+    const stop = (ev) => ev.stopPropagation();
+    root.addEventListener("keyup", stop);
+    root.addEventListener("keypress", stop);
+    root.addEventListener("pointerdown", stop);
+    root.addEventListener("mousedown", (ev) => {
+      ev.preventDefault?.();
+      ev.stopPropagation();
+    });
+    root.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeChooser(true);
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        setActive((active + 1) % rows.length);
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        setActive((active - 1 + rows.length) % rows.length);
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        choose(tokens2[active], ev.shiftKey);
+      }
+    });
+    const onOutside = (ev) => {
+      if (!(ev.target && root.contains?.(ev.target))) closeChooser(true);
+    };
+    const onWheel = (ev) => {
+      if (!(ev.target && root.contains?.(ev.target))) closeChooser(true);
+    };
+    doc.addEventListener("pointerdown", onOutside, true);
+    doc.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    doc.body.append(root);
+    const rect = root.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const vw = win?.innerWidth ?? Infinity;
+    const vh = win?.innerHeight ?? Infinity;
+    root.style.left = `${Math.max(0, Math.min(at.x, vw - (rect.width || 0) - 8))}px`;
+    root.style.top = `${Math.max(0, Math.min(at.y, vh - (rect.height || 0) - 8))}px`;
+    setActive(0);
+    chooser = {
+      dispose() {
+        doc.removeEventListener("pointerdown", onOutside, true);
+        doc.removeEventListener("wheel", onWheel, { capture: true });
+        root.remove();
+      }
+    };
+    try {
+      root.focus({ preventScroll: true });
+    } catch {
+    }
+  }
+  const onDown = (e) => {
+    down = null;
+    if (disposed || !e.isTrusted || (e.button ?? 0) !== 0 || !modifier(e)) return;
+    try {
+      if (!isCanvasEvent(e)) return;
+      const decision = decide(e);
+      if (!decision) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      down = { x: e.clientX, y: e.clientY, t: now(), tokens: decision.tokens, pointerId: e.pointerId };
+    } catch (error) {
+      warn4("text link claim failed", error);
+    }
+  };
+  const onUp = (e) => {
+    const start = down;
+    if (!start || disposed) return;
+    if (e.pointerId !== start.pointerId) return;
+    down = null;
+    e.preventDefault?.();
+    e.stopImmediatePropagation?.();
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX2 || now() - start.t > MAX_HOLD_MS2) return;
+    try {
+      if (start.tokens.length === 1) go(start.tokens[0], e.shiftKey);
+      else openChooser(start.tokens, { x: e.clientX, y: e.clientY });
+    } catch (error) {
+      warn4("text link navigation failed", error);
+    }
+  };
+  const onCancel = () => {
+    down = null;
+  };
+  const onWinUp = (e) => {
+    if (down && !containerEl.contains?.(e.target)) down = null;
+  };
+  function setHover(on) {
+    if (on === hoverOn) return;
+    hoverOn = on;
+    if (on) containerEl.classList?.add("plexus-token-hover");
+    else containerEl.classList?.remove("plexus-token-hover");
+  }
+  function evaluate() {
+    frame = null;
+    if (disposed || !last) return;
+    let over = false;
+    try {
+      if (last.mod && isCanvasEvent(last)) {
+        const hit = locate(last);
+        over = !!(hit && hitToken({ element: hit.text, point: hit.point, measure: measurer }));
+      }
+    } catch (error) {
+      warn4("text link hover failed", error);
+    }
+    setHover(over);
+  }
+  const schedule = () => {
+    if (frame == null) frame = raf(evaluate);
+  };
+  const onMove = (e) => {
+    if (!modifier(e)) {
+      last = null;
+      if (hoverOn) setHover(false);
+      return;
+    }
+    last = { clientX: e.clientX, clientY: e.clientY, target: e.target, mod: true };
+    schedule();
+  };
+  const onKeyUp = (e) => {
+    if (isModifierKey(e)) {
+      last = null;
+      setHover(false);
+    }
+  };
+  const onOff = () => {
+    last = null;
+    setHover(false);
+  };
+  containerEl.addEventListener("pointerdown", onDown, true);
+  containerEl.addEventListener("pointerup", onUp, true);
+  containerEl.addEventListener("pointercancel", onCancel, true);
+  containerEl.addEventListener("pointermove", onMove, { capture: true, passive: true });
+  containerEl.addEventListener("pointerleave", onOff);
+  win?.addEventListener?.("keyup", onKeyUp, true);
+  win?.addEventListener?.("pointerup", onWinUp, true);
+  win?.addEventListener?.("blur", onOff);
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    down = null;
+    last = null;
+    if (frame != null) {
+      try {
+        caf(frame);
+      } catch {
+      }
+      frame = null;
+    }
+    closeChooser(false);
+    setHover(false);
+    containerEl.removeEventListener("pointerdown", onDown, true);
+    containerEl.removeEventListener("pointerup", onUp, true);
+    containerEl.removeEventListener("pointercancel", onCancel, true);
+    containerEl.removeEventListener("pointermove", onMove, { capture: true });
+    containerEl.removeEventListener("pointerleave", onOff);
+    win?.removeEventListener?.("keyup", onKeyUp, true);
+    win?.removeEventListener?.("pointerup", onWinUp, true);
+    win?.removeEventListener?.("blur", onOff);
+  };
+}
+
 // src/extension.js
 var activeLifecycle = null;
 var THUMB_WIDTHS = [160, 480];
 var THUMB_WARM_DELAY_MS = 1500;
 var REFRESH_DEBOUNCE_MS = 300;
 var LAYER_REFRESH_MS = 200;
+var DOCK_SETTLE_MS = 150;
 function createEmitter() {
   const listeners = /* @__PURE__ */ new Map();
   return {
@@ -15187,6 +16958,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let audit = null;
     let toggleLayer = null;
     let backCommand = null;
+    let showDockParent = null;
     let mountedApp = null;
     const hotkeyHandlers = {};
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
@@ -15227,6 +16999,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         canEditEmbed: () => actions.canEditEmbed(),
         onToggleRegions: () => toggleRegionsLayer(),
         regionsVisible: () => !!mounted?.layer?.visible(),
+        onToggleDock: () => toggleDock(),
+        dockOpen: () => !!mounted?.dock?.isOpen(),
+        dockInset: () => {
+          const dock = mounted?.dock;
+          return dock?.isOpen() && dock.mode() === "overlay" ? dock.el.getBoundingClientRect().width : 0;
+        },
         onBack: () => goBack(),
         canBack: () => (mounted?.history?.size() ?? 0) > 0
       });
@@ -15253,6 +17031,56 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         }
         toolbar.refresh();
         return layerOn;
+      };
+      let dockOn = false;
+      const placeToolbar = () => {
+        toolbar.refresh();
+        toolbar.place();
+        later(() => toolbar.place(), DOCK_SETTLE_MS);
+      };
+      const openDock = () => {
+        const current2 = mounted;
+        if (!current2?.uid || !current2.outer || current2.dock?.isOpen()) return null;
+        const dock = createDock({
+          doc,
+          api,
+          app: current2.app,
+          containerEl: current2.el,
+          outerEl: current2.outer,
+          drawingUid: current2.uid,
+          zIndex: current2.z,
+          width: getSettings().dockWidth,
+          onWidth: (w) => {
+            writeSetting(extensionAPI, SETTING_IDS.dockWidth, String(w));
+            placeToolbar();
+          },
+          onClose: () => {
+            if (current2.dock === dock) current2.dock = null;
+            dockOn = false;
+            placeToolbar();
+          },
+          parentOf: (uid) => host.parentOf(uid),
+          onNavigate: ({ target, sidebar } = {}) => {
+            if (!navigateToTarget({ api, containerEl: current2.el, target, sidebar: !!sidebar })) return;
+            if (!sidebar) navigatedAt = Date.now();
+            hover.hide();
+            if (sidebar) toaster.show("Opened in sidebar");
+          },
+          addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
+          toast: (message) => toaster.show(message, { kind: "error" })
+        });
+        current2.dock = dock;
+        dockOn = true;
+        placeToolbar();
+        return dock;
+      };
+      const toggleDock = () => {
+        const dock = mounted?.dock;
+        if (dock?.isOpen()) {
+          dock.close();
+          return false;
+        }
+        return !!openDock();
       };
       const goBack = async () => {
         const current2 = mounted;
@@ -15391,6 +17219,17 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       hotkeyHandlers.present = runAction("presentDrawing");
       hotkeyHandlers.mindmap = () => mounted ? actions.startMindMap() : actions.mindMapFromOutline(api.ui?.getFocusedBlock?.()?.["block-uid"]);
       hotkeyHandlers.embed = () => openPicker();
+      hotkeyHandlers.dock = () => {
+        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        toggleDock();
+      };
+      showDockParent = () => {
+        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        const parent = host.parentOf(mounted.uid);
+        if (!parent || parent.isPage) return void toaster.show("This drawing sits directly on its page", { kind: "error" });
+        const dock = mounted.dock?.isOpen() ? mounted.dock : openDock();
+        void Promise.resolve(dock?.setRoot("parent")).catch((error) => console.warn("[plexus] dock parent failed", error));
+      };
       hotkeyHandlers.note = () => {
         if (!mounted?.noteTool) return void toaster.show("Open a drawing first", { kind: "error" });
         mounted.noteTool.arm();
@@ -15457,6 +17296,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           try {
             resetThemeMemo();
             const now = isHostDark(doc);
+            if (mounted?.dock?.isOpen()) mounted.dock.refreshTheme();
             if (now !== wasDark) {
               wasDark = now;
               scheduleRefresh();
@@ -15564,7 +17404,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             console.warn("[plexus] mount hash failed", error);
           }
           const history = createViewHistory({ onChange: () => toolbar.refresh() });
-          mounted = { uid: mountUid, app, disposers: [], overlay: null, hash: mountHash, history, layer: null };
+          const mountZ = outer ? baseZIndex(doc, outer) : 1e3;
+          mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -15661,6 +17502,50 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               layerTimer = null;
             });
           }
+          mounted.disposers.push(installRoamDrop({
+            doc,
+            containerEl: el,
+            app,
+            zIndex: mountZ,
+            exclude: mountUid,
+            resolve: (uid) => {
+              const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
+              if (raw?.[":node/title"] != null) return { kind: "page", title: raw[":node/title"] };
+              return raw?.[":block/string"] != null ? { kind: "block" } : null;
+            },
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            onDrop: ({ items, mode, scenePoint }) => {
+              Promise.resolve(actions.placeBlocks(items, { mode, scenePoint, app })).catch((error) => console.warn("[plexus] drop failed", error));
+            }
+          }));
+          mounted.disposers.push(installTextLinks({
+            doc,
+            api,
+            app,
+            containerEl: el,
+            zIndex: mountZ,
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            navigate: ({ target, sidebar } = {}) => {
+              if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
+              if (!sidebar) navigatedAt = Date.now();
+              hover.hide();
+              if (sidebar) toaster.show("Opened in sidebar");
+            }
+          }));
+          const own = mounted;
+          mounted.disposers.push(() => {
+            const dock = own.dock;
+            if (!dock) return void 0;
+            own.dock = null;
+            return dock.dispose();
+          });
+          if (dockOn && mountUid) {
+            try {
+              openDock();
+            } catch (error) {
+              console.warn("[plexus] dock open failed", error);
+            }
+          }
           mounted.disposers.push(installCanvasMenu({
             doc,
             app,
@@ -15756,6 +17641,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "present", label: "Present open drawing", hotkey: hk("present"), run: () => runHotkey("present") },
       { id: "back", label: "Back to previous view", run: guarded("back", () => backCommand && (() => backCommand())) },
       { id: "toggleLayer", label: "Toggle regions layer", run: guarded("toggleLayer", () => toggleLayer && (() => toggleLayer())) },
+      { id: "dock", label: "Toggle outline dock", hotkey: hk("dock"), run: () => runHotkey("dock") },
+      { id: "dockParent", label: "Outline dock: show parent", run: () => showDockParent ? showDockParent() : unavailable("dockParent") },
       { id: "refreshCrops", label: "Refresh crops for open drawing", run: run("refreshCropsForOpenDrawing") },
       { id: "clearCache", label: "Clear crop cache", run: run("clearCache") },
       { id: "auditPage", label: "Audit regions on this page", run: guarded("auditPage", () => audit && (() => audit("page"))) },

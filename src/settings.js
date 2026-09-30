@@ -21,6 +21,7 @@ export const SETTING_IDS = Object.freeze({
   pasteRefs: "paste-refs",
   cardHome: "card-home",
   drawingName: "drawing-name",
+  dockWidth: "dock-width",
 });
 
 const DEFAULTS = Object.freeze({
@@ -44,6 +45,7 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.pasteRefs]: "text",
   [SETTING_IDS.cardHome]: "drawing",
   [SETTING_IDS.drawingName]: "Drawing {date}",
+  [SETTING_IDS.dockWidth]: "320",
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -62,6 +64,7 @@ export const HOTKEYS = Object.freeze([
   Object.freeze({ id: "mindmap", spec: "alt-shift-m", label: "Mind map" }),
   Object.freeze({ id: "embed", spec: "alt-shift-e", label: "Embed page or block" }),
   Object.freeze({ id: "note", spec: "alt-shift-n", label: "New note card" }),
+  Object.freeze({ id: "dock", spec: "alt-shift-o", label: "Outline dock" }),
 ]);
 
 // Excalidraw's own kbd wording: "Shift+Alt+R", and "Shift+Option+R" on macOS.
@@ -171,6 +174,7 @@ export function readSettings(extensionAPI) {
     pasteRefs: oneOf(get(SETTING_IDS.pasteRefs), PASTE_REFS, "text"),
     cardHome: oneOf(get(SETTING_IDS.cardHome), CARD_HOMES, "drawing"),
     drawingName: drawingNameOf(get(SETTING_IDS.drawingName)),
+    dockWidth: clampNumber(get(SETTING_IDS.dockWidth), 320, 240, 640),
   };
 }
 

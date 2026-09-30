@@ -586,7 +586,7 @@ export function createActions({
     if (open && !disposed) {
       const rendered = () => {
         for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-          if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
+          if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && !el.closest?.(".plexus-dock") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
         }
         return false;
       };
@@ -719,6 +719,8 @@ export function createActions({
   async function placeBlocksInner(items, { mode = "embed", scenePoint, app, onPlaced } = {}) {
     const editor = native.activeEditor(doc);
     if (!editor || (app && editor.app !== app)) return placeRefuse("Open a drawing first");
+    if (mode !== "embed" && mode !== "link" && mode !== "label") return placeRefuse("Could not place");
+    const textMode = mode === "link" || mode === "label";
     const seen = new Set();
     const parsed = [];
     for (const item of items || []) {
@@ -733,12 +735,12 @@ export function createActions({
     const blocks = parsed
       .filter((p) => p.kind === "block" && paths.has(p.uid) && !paths.get(p.uid).ancestors.some((a) => listed.has(a)))
       .sort((a, b) => compareOrders(paths.get(a.uid).orders, paths.get(b.uid).orders));
-    const pages = parsed.filter((p) => p.kind === "page" && (mode === "link" || host.pageUidByTitle(p.title)));
+    const pages = parsed.filter((p) => p.kind === "page" && (textMode || host.pageUidByTitle(p.title)));
     let list = [...blocks, ...pages];
     if (!list.length) return placeRefuse("Nothing to place");
     const at = Number.isFinite(scenePoint?.x) && Number.isFinite(scenePoint?.y) ? scenePoint : undefined;
     if (scenePoint && !at) console.warn("[plexus] place: bad click point, using the view centre", scenePoint);
-    if (mode !== "link" && list.length > EMBED_PLACE_CAP) {
+    if (!textMode && list.length > EMBED_PLACE_CAP) {
       const n = list.length;
       toaster.show(`Too many to embed live (${n}, max ${EMBED_PLACE_CAP})`, {
         action: { label: `Place ${n} as links`, run: () => { void placeBlocksRun(items, { mode: "link", scenePoint: at, app, onPlaced }); } },
@@ -746,20 +748,20 @@ export function createActions({
       return null;
     }
     const cap = mindmap?.NODE_CAP ?? 500;
-    if (mode === "link" && list.length > cap) {
+    if (textMode && list.length > cap) {
       toaster.show(`Placing the first ${cap} of ${list.length}`);
       list = list.slice(0, cap);
     }
     const labels = list.map((p) => (p.kind === "page" ? p.title : (host.labelSource?.(p.uid)?.string ?? "")));
     let nodes;
-    if (mode === "link") {
+    if (textMode) {
       const texts = labels.map((l, i) => linkLabel(l) || (list[i].kind === "page" ? list[i].title : "Block"));
       if (ensureFonts) {
         try { await Promise.race([ensureFonts(texts, LINK_FONT), sleep(FONT_WAIT_MS)]); } catch (error) { console.warn("[plexus] font load failed", error); }
       }
       nodes = texts.map((t, i) => {
         const w = measure ? Math.ceil(measure(t, LINK_FONT)) : Math.ceil(t.length * LINK_FONT * 0.6);
-        return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), list[i].ref)] };
+        return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), mode === "label" ? null : list[i].ref)] };
       });
     } else {
       nodes = list.map((p, i) => ({ w: 360, h: 200, build: (x, y) => makeEmbedAnchor({ ref: p.ref, label: labels[i], x, y, width: 360, height: 200, idPrefix: "plexus-embed-" }) }));
@@ -779,7 +781,8 @@ export function createActions({
     const y0 = c.y - (rows * cellH - PLACE_GAP) / 2;
     const elements = nodes.flatMap((node, i) => node.build(x0 + (i % cols) * cellW, y0 + Math.floor(i / cols) * cellH));
     if (!insertGuarded(editor.app, editor.drawingUid, elements, "Place blocks")) return placeRefuse("Could not place: the drawing refused the write");
-    toaster.show(n === 1 ? `Placed 1 ${mode === "link" ? "link" : "block"}` : `Placed ${n} ${mode === "link" ? "links" : "blocks"}`);
+    const noun = mode === "link" ? "link" : mode === "label" ? "label" : "block";
+    toaster.show(n === 1 ? `Placed 1 ${noun}` : `Placed ${n} ${noun}s`);
     try { onPlaced?.(); } catch (error) { console.warn("[plexus] place callback failed", error); }
     return { count: n, ids: elements.filter((e) => !e.containerId).map((e) => e.id) };
   }
@@ -933,6 +936,20 @@ export function createActions({
     createPageAndEmbed: (title, scenePoint, opts) => createPageAndEmbedRun(title, scenePoint, opts),
 
     placeBlocks: (items, opts) => placeBlocksRun(items, opts),
+
+    async addOutlineBlock(rootUid) {
+      try {
+        if (!rootUid || !host.pullBlock(rootUid)) {
+          toaster.show("Could not add a block", { kind: "error" });
+          return null;
+        }
+        return await host.createBlock({ parentUid: rootUid, order: "last", string: "" });
+      } catch (error) {
+        console.warn("[plexus] add outline block failed", error);
+        toaster.show("Could not add a block", { kind: "error" });
+        return null;
+      }
+    },
 
     // Remembers an ordered list of blocks to place once a drawing is open (the full-screen editor hides the outline).
     armPlace(uids, { mode = "embed" } = {}) {
@@ -2623,7 +2640,7 @@ export function createActions({
 
   function findRenderedImage(blockUid, index = 0) {
     for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-      if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen")) continue;
+      if (!el.id.endsWith(blockUid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
       const img = el.querySelectorAll("img.rm-inline-img:not(.rm-inline-img--excalidraw)")[index];
       if (img) return img;
     }
@@ -2999,7 +3016,7 @@ export function createActions({
     };
     const findIcon = () => {
       for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
         const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen")
           ?? (placeholder ? el.querySelector(".excalidraw-container > div") : null);
         if (found && found.isConnected !== false) return found;
@@ -3080,7 +3097,7 @@ export function createActions({
     };
     const findIcon = () => {
       for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
-        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
+        if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) continue;
         const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
         if (found && found.isConnected !== false) return found;
       }

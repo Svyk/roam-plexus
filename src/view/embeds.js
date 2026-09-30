@@ -14,7 +14,7 @@ const QUIET_CAP_MS = 900;
 const FOCUS_WAIT_MS = 300;
 const REFOCUS_WINDOW_MS = 1200;
 // Popups Roam opens from a block editor. Measured only for the [[ autocomplete so far; extend after the live menu survey.
-export const ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open";
+export const ROAM_MENU_SELECTOR = ".rm-autocomplete__results, .bp3-popover, .bp3-menu, .bp3-overlay-open:not(.bp3-toast-container)";
 const POPUP_HOST_SELECTOR = ".bp3-portal";
 const MENU_KEYS = new Set(["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"]);
 const KEY_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut"];

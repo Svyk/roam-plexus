@@ -187,10 +187,10 @@ test("canvas items add embed picker, note card, kbd hints and the pending place 
   assert.equal(mac.find((i) => i.id === "embed-picker").kbd, "Shift+Option+E");
 });
 
-test("formatHotkey uses Excalidraw wording and HOTKEYS lists the six Alt+Shift keys", () => {
+test("formatHotkey uses Excalidraw wording and HOTKEYS lists the seven Alt+Shift keys", () => {
   assert.equal(formatHotkey("alt-shift-r"), "Shift+Alt+R");
   assert.equal(formatHotkey("alt-shift-r", { mac: true }), "Shift+Option+R");
-  assert.deepEqual(HOTKEYS.map((h) => h.spec), ["alt-shift-r", "alt-shift-i", "alt-shift-p", "alt-shift-m", "alt-shift-e", "alt-shift-n"]);
+  assert.deepEqual(HOTKEYS.map((h) => h.spec), ["alt-shift-r", "alt-shift-i", "alt-shift-p", "alt-shift-m", "alt-shift-e", "alt-shift-n", "alt-shift-o"]);
   assert.ok(HOTKEYS.every((h) => /^alt-shift-[a-z]$/.test(h.spec)));
 });
 

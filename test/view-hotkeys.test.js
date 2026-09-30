@@ -136,3 +136,13 @@ test("doc-level guard: listens on doc, takes a body-targeted key, ignores a Roam
   off();
   assert.equal(doc.listeners.length, 0);
 });
+
+test("hotkey guard maps Alt+Shift+O to the dock", () => {
+  const container = fakeContainer();
+  const ran = [];
+  installHotkeyGuard({ containerEl: container, run: (id) => ran.push(id) });
+  const e = key(container, { code: "KeyO" });
+  container.listeners.find((l) => l[0] === "keydown")[1](e);
+  assert.deepEqual(ran, ["dock"]);
+  assert.equal(e.prevented, true);
+});

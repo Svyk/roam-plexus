@@ -22,7 +22,7 @@ const mkApp = (state = {}) => {
 // Fake doc whose querySelector yields an editor that findApp can resolve to `app`.
 const mkDoc = (app) => {
   const listeners = {};
-  const el = { closest: (sel) => (sel === ".plexus-offscreen" ? null : { closest: () => null }), __reactFiber$x: { stateNode: { updateScene() {}, getSceneElementsIncludingDeleted() {}, actionManager: {} } } };
+  const el = { closest: (sel) => (sel === ".plexus-offscreen" || sel === ".plexus-dock" ? null : { closest: () => null }), __reactFiber$x: { stateNode: { updateScene() {}, getSceneElementsIncludingDeleted() {}, actionManager: {} } } };
   el.__reactFiber$x.stateNode = Object.assign(app, { getSceneElementsIncludingDeleted: () => [], actionManager: {} });
   return {
     listeners,

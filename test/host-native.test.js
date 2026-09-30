@@ -35,7 +35,7 @@ test("activeEditor resolves drawing uid from block-input id", () => {
   const app = makeApp();
   const block = { id: "block-input-u-body-outline-page00001-blk000001" };
   const outer = { closest: (s) => (s === '[id^="block-input-"]' ? block : null) };
-  const el = { "__reactFiber$q": { stateNode: app }, closest: (s) => (s === ".plexus-offscreen" ? null : outer) };
+  const el = { "__reactFiber$q": { stateNode: app }, closest: (s) => (s === ".plexus-offscreen" || s === ".plexus-dock" ? null : outer) };
   const doc = { querySelector: (s) => { assert.match(s, /full-screen/); return el; } };
   const ed = activeEditor(doc);
   assert.equal(ed.drawingUid, "blk000001");
@@ -248,7 +248,7 @@ test("addViaPaste returns live new ids by diff, skipping deleted copies", () => 
 });
 
 function docFor(app) {
-  const el = { closest: (sel) => (sel === ".plexus-offscreen" ? null : { closest: () => null }), "__reactFiber$x": { stateNode: app } };
+  const el = { closest: (sel) => (sel === ".plexus-offscreen" || sel === ".plexus-dock" ? null : { closest: () => null }), "__reactFiber$x": { stateNode: app } };
   return { querySelector: () => el };
 }
 
@@ -289,4 +289,10 @@ test("clipboardBusy is true from captureSelectionSvg entry until the capture has
   assert.equal(clipboardBusy(), true);
   await assert.rejects(failing);
   assert.equal(clipboardBusy(), false);
+});
+
+test("activeEditor ignores an editor rendered inside the outline dock", () => {
+  const app = makeApp();
+  const el = { "__reactFiber$q": { stateNode: app }, closest: (s) => (s === ".plexus-dock" ? {} : null) };
+  assert.equal(activeEditor({ querySelector: () => el }), null);
 });

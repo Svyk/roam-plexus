@@ -5,6 +5,7 @@ export const HOTKEY_CODES = Object.freeze({
   KeyM: "mindmap",
   KeyE: "embed",
   KeyN: "note",
+  KeyO: "dock",
 });
 
 const DEDUPE_MS = 300;

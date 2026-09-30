@@ -1,5 +1,5 @@
 import { createLifecycle } from "./lifecycle.js";
-import { HOTKEYS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
+import { HOTKEYS, SETTING_IDS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
@@ -34,6 +34,9 @@ import { openCommandList } from "./view/command-list.js";
 import { installRefPaste } from "./view/paste.js";
 import { installNoteTool } from "./view/note-tool.js";
 import { createHotkeyRunner, installHotkeyGuard } from "./view/hotkeys.js";
+import { createDock } from "./view/dock.js";
+import { installRoamDrop } from "./view/drop.js";
+import { installTextLinks } from "./view/text-links.js";
 import { parseEmbedRef } from "./model/embeds.js";
 import { viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
@@ -45,6 +48,7 @@ const THUMB_WIDTHS = [160, 480];
 const THUMB_WARM_DELAY_MS = 1500;
 const REFRESH_DEBOUNCE_MS = 300;
 const LAYER_REFRESH_MS = 200;
+const DOCK_SETTLE_MS = 150;
 
 function createEmitter() {
   const listeners = new Map();
@@ -94,6 +98,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let audit = null;
     let toggleLayer = null;
     let backCommand = null;
+    let showDockParent = null;
     let mountedApp = null;
     const hotkeyHandlers = {};
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
@@ -134,6 +139,12 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         canEditEmbed: () => actions.canEditEmbed(),
         onToggleRegions: () => toggleRegionsLayer(),
         regionsVisible: () => !!mounted?.layer?.visible(),
+        onToggleDock: () => toggleDock(),
+        dockOpen: () => !!mounted?.dock?.isOpen(),
+        dockInset: () => {
+          const dock = mounted?.dock;
+          return dock?.isOpen() && dock.mode() === "overlay" ? dock.el.getBoundingClientRect().width : 0;
+        },
         onBack: () => goBack(),
         canBack: () => (mounted?.history?.size() ?? 0) > 0,
       });
@@ -157,6 +168,41 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         if (layer) { if (layerOn) layer.show(); else layer.hide(); }
         toolbar.refresh();
         return layerOn;
+      };
+      // The dock is remembered like layerOn: a new mount reopens it, the close button clears it, unmount keeps it.
+      let dockOn = false;
+      const placeToolbar = () => { toolbar.refresh(); toolbar.place(); later(() => toolbar.place(), DOCK_SETTLE_MS); };
+      const openDock = () => {
+        const current = mounted;
+        if (!current?.uid || !current.outer || current.dock?.isOpen()) return null;
+        const dock = createDock({
+          doc, api, app: current.app, containerEl: current.el, outerEl: current.outer, drawingUid: current.uid, zIndex: current.z,
+          width: getSettings().dockWidth,
+          onWidth: (w) => { writeSetting(extensionAPI, SETTING_IDS.dockWidth, String(w)); placeToolbar(); },
+          onClose: () => {
+            if (current.dock === dock) current.dock = null;
+            dockOn = false;
+            placeToolbar();
+          },
+          parentOf: (uid) => host.parentOf(uid),
+          onNavigate: ({ target, sidebar } = {}) => {
+            if (!navigateToTarget({ api, containerEl: current.el, target, sidebar: !!sidebar })) return;
+            if (!sidebar) navigatedAt = Date.now();
+            hover.hide();
+            if (sidebar) toaster.show("Opened in sidebar");
+          },
+          addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
+          toast: (message) => toaster.show(message, { kind: "error" }),
+        });
+        current.dock = dock;
+        dockOn = true;
+        placeToolbar();
+        return dock;
+      };
+      const toggleDock = () => {
+        const dock = mounted?.dock;
+        if (dock?.isOpen()) { dock.close(); return false; }
+        return !!openDock();
       };
       const goBack = async () => {
         const current = mounted;
@@ -265,6 +311,17 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         ? actions.startMindMap()
         : actions.mindMapFromOutline(api.ui?.getFocusedBlock?.()?.["block-uid"]));
       hotkeyHandlers.embed = () => openPicker();
+      hotkeyHandlers.dock = () => {
+        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        toggleDock();
+      };
+      showDockParent = () => {
+        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        const parent = host.parentOf(mounted.uid);
+        if (!parent || parent.isPage) return void toaster.show("This drawing sits directly on its page", { kind: "error" });
+        const dock = mounted.dock?.isOpen() ? mounted.dock : openDock();
+        void Promise.resolve(dock?.setRoot("parent")).catch((error) => console.warn("[plexus] dock parent failed", error));
+      };
       hotkeyHandlers.note = () => {
         if (!mounted?.noteTool) return void toaster.show("Open a drawing first", { kind: "error" });
         mounted.noteTool.arm();
@@ -332,6 +389,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           try {
             resetThemeMemo();
             const now = isHostDark(doc);
+            if (mounted?.dock?.isOpen()) mounted.dock.refreshTheme();
             if (now !== wasDark) { wasDark = now; scheduleRefresh(); }
           } catch (error) { console.warn("[plexus] theme observer failed", error); }
         });
@@ -422,7 +480,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           let mountHash = "";
           try { mountHash = (mountUid && host.drawing(mountUid)?.hash) || ""; } catch (error) { console.warn("[plexus] mount hash failed", error); }
           const history = camera.createViewHistory({ onChange: () => toolbar.refresh() });
-          mounted = { uid: mountUid, app, disposers: [], overlay: null, hash: mountHash, history, layer: null };
+          const mountZ = outer ? baseZIndex(doc, outer) : 1000;
+          mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -492,6 +551,41 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             };
             emitter.on("change", onChange);
             mounted.disposers.push(() => { emitter.off("change", onChange); if (layerTimer != null) clearTimeout(layerTimer); layerTimer = null; });
+          }
+          mounted.disposers.push(installRoamDrop({
+            doc, containerEl: el, app, zIndex: mountZ,
+            exclude: mountUid,
+            resolve: (uid) => {
+              const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
+              if (raw?.[":node/title"] != null) return { kind: "page", title: raw[":node/title"] };
+              return raw?.[":block/string"] != null ? { kind: "block" } : null;
+            },
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            onDrop: ({ items, mode, scenePoint }) => {
+              Promise.resolve(actions.placeBlocks(items, { mode, scenePoint, app }))
+                .catch((error) => console.warn("[plexus] drop failed", error));
+            },
+          }));
+          mounted.disposers.push(installTextLinks({
+            doc, api, app, containerEl: el, zIndex: mountZ,
+            toast: (message) => toaster.show(message, { kind: "error" }),
+            navigate: ({ target, sidebar } = {}) => {
+              if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
+              if (!sidebar) navigatedAt = Date.now();
+              hover.hide();
+              if (sidebar) toaster.show("Opened in sidebar");
+            },
+          }));
+          // unmountEditor nulls `mounted` before it runs the disposers, so close over this mount's own record.
+          const own = mounted;
+          mounted.disposers.push(() => {
+            const dock = own.dock;
+            if (!dock) return undefined;
+            own.dock = null;
+            return dock.dispose();
+          });
+          if (dockOn && mountUid) {
+            try { openDock(); } catch (error) { console.warn("[plexus] dock open failed", error); }
           }
           mounted.disposers.push(installCanvasMenu({
             doc, app, containerEl: el,
@@ -573,6 +667,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "present", label: "Present open drawing", hotkey: hk("present"), run: () => runHotkey("present") },
       { id: "back", label: "Back to previous view", run: guarded("back", () => backCommand && (() => backCommand())) },
       { id: "toggleLayer", label: "Toggle regions layer", run: guarded("toggleLayer", () => toggleLayer && (() => toggleLayer())) },
+      { id: "dock", label: "Toggle outline dock", hotkey: hk("dock"), run: () => runHotkey("dock") },
+      { id: "dockParent", label: "Outline dock: show parent", run: () => (showDockParent ? showDockParent() : unavailable("dockParent")) },
       { id: "refreshCrops", label: "Refresh crops for open drawing", run: run("refreshCropsForOpenDrawing") },
       { id: "clearCache", label: "Clear crop cache", run: run("clearCache") },
       { id: "auditPage", label: "Audit regions on this page", run: guarded("auditPage", () => audit && (() => audit("page"))) },

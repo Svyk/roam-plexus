@@ -182,3 +182,56 @@ test("Edit embed button sits between Embed block and Present, exists only with o
   assert.equal(gated.buttons.find((x) => /Edit embed/.test(x.textContent)).disabled, true);
   gated.tb.hide();
 });
+
+test("Outline button follows dockOpen, toggles the dock, and place() centres on the canvas minus the dock inset", async () => {
+  const buttons = [];
+  const { doc, bar } = fakeDoc(36);
+  const create = doc.createElement;
+  doc.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === "button") {
+      el.attrs = {};
+      el.handlers = {};
+      el.setAttribute = (k, v) => { el.attrs[k] = v; };
+      el.addEventListener = (t, f) => { el.handlers[t] = f; };
+      buttons.push(el);
+    }
+    return el;
+  };
+  let open = false;
+  let inset = 0;
+  let toggled = 0;
+  const tb = createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {}, onToggleDock() { toggled++; open = !open; }, dockOpen: () => open, dockInset: () => inset });
+  tb.show(outerEl);
+  const ob = buttons.find((b) => b.textContent === "Outline");
+  assert.ok(ob, "outline button exists");
+  assert.equal(ob.attrs["aria-pressed"], "false");
+  assert.match(ob.title, /Shift\+.*O/);
+  ob.handlers.click({ stopPropagation() {} });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(toggled, 1);
+  assert.equal(ob.attrs["aria-pressed"], "true");
+  inset = 320;
+  tb.place();
+  assert.equal(bar.style.left, "340px");
+  inset = 0;
+  tb.place();
+  assert.equal(bar.style.left, "500px");
+  tb.hide();
+});
+
+test("place() caps the bar at the visible canvas width minus 24px, dock inset included", () => {
+  const { doc, bar } = fakeDoc(36);
+  let inset = 0;
+  const tb = createEditorToolbar({ doc, onAreaRegion() {}, onImageRegion() {}, dockInset: () => inset });
+  tb.show(outerEl);
+  const width = outerEl.getBoundingClientRect().width;
+  assert.equal(bar.style.maxWidth, `${width - 24}px`);
+  inset = 320;
+  tb.place();
+  assert.equal(bar.style.maxWidth, `${width - 320 - 24}px`);
+  inset = 5000;
+  tb.place();
+  assert.equal(bar.style.maxWidth, "0px");
+  tb.hide();
+});

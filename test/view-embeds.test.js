@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createEmbedOverlay, embedPlacement, installEmbedF2 } from "../src/view/embeds.js";
+import { createEmbedOverlay, embedPlacement, installEmbedF2, ROAM_MENU_SELECTOR } from "../src/view/embeds.js";
 
 function fakeEl() {
   const el = {
@@ -380,6 +380,36 @@ test("edit mode: menu-navigation keys reach the document only while a Roam menu 
   for (const k of ["Escape", "ArrowDown", "Enter", "e"]) bubble(ta, "keydown", { key: k });
   assert.deepEqual(seen, []);
   await t.overlay.dispose();
+});
+
+// Just enough selector evaluation for the menu selector: comma lists of `.a` / `.a:not(.b)` compounds.
+const matchesMenuSel = (sel, classes) => sel.split(",").some((part) => {
+  const not = [...part.matchAll(/:not\(\.([\w-]+)\)/g)].map((m) => m[1]);
+  const need = [...part.replace(/:not\([^)]*\)/g, "").matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+  return need.every((c) => classes.includes(c)) && !not.some((c) => classes.includes(c));
+});
+
+test("Esc: Roam's permanent empty toast container is not a menu, a real overlay still is", async () => {
+  const t = editSetup();
+  await entered(t);
+  const ta = t.doc.activeElement;
+  let present = ["bp3-overlay", "bp3-overlay-open", "bp3-toast-container"];
+  t.doc.querySelector = (sel) => (matchesMenuSel(sel, present) ? {} : null);
+  assert.match(ROAM_MENU_SELECTOR, /\.bp3-overlay-open:not\(\.bp3-toast-container\)/);
+  const swallowed = t.key(ta, "Escape");
+  assert.equal(swallowed.stopped, true, "Esc leaves although the toast container is in the DOM");
+  await t.overlay.leave();
+  assert.equal(t.overlay.editState(), "idle");
+  await t.overlay.dispose();
+  const t2 = editSetup();
+  await entered(t2);
+  const ta2 = t2.doc.activeElement;
+  present = ["bp3-overlay", "bp3-overlay-open"];
+  t2.doc.querySelector = (sel) => (matchesMenuSel(sel, present) ? {} : null);
+  const passed = t2.key(ta2, "Escape");
+  assert.ok(!passed.stopped);
+  assert.equal(t2.overlay.editState(), "active");
+  await t2.overlay.dispose();
 });
 
 test("Esc: with a menu open the key passes through, without one it leaves once", async () => {

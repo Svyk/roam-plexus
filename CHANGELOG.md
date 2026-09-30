@@ -4,6 +4,18 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.10.0]
+
+- Outline dock (NAV-7): a toolbar "Outline" toggle, Alt+Shift+O, and command-list rows "Toggle outline dock" and "Outline dock: show parent". The dock lists the drawing block's direct children (or its parent's), each in its own Roam editor, beside the full-screen canvas, which is narrowed by the dock width. Width is dragged from the left edge and kept in the `dock-width` setting (240-640, not in the settings dialog). Open state is remembered like the regions layer: a new mount reopens it, the close button clears it. Esc leaves editing, keeps the canvas selection, and leaves no Roam block selection. A footer "+ Add a block" adds a child.
+- Drops onto the canvas (AUTH-2): drag a bullet from the main outline, the dock or (once the editor is closed) the sidebar onto the drawing. No modifier places embeds, Alt links, Shift plain labels ("Placed n labels"); a chip near the pointer names the mode. The dock header drags its page or block ref. Dropping the open drawing on itself is refused. File and library drops are untouched. One undo step, same caps as "Place on drawing".
+- Clickable tokens in canvas text (NAV-1): Cmd-click (Ctrl-click off macOS) on `[[page]]`, `#tag`, `((block))` or `[label]([[Page]])` opens it; Shift opens it in the sidebar. Text with one link opens it, with several offers a chooser. Element links win over tokens; code, URLs and `{{...}}` are not scanned. Missing pages or blocks toast instead of navigating.
+- Dock behaviour, measured live: a top-level dock block cannot be outdented with Shift+Tab (each top-level bullet is its own Roam render root, like a zoomed page). Esc with a Roam menu open ends editing, as Roam does elsewhere. Plain or Shift clicks on links inside the dock navigate like canvas links (minimize first; Shift opens the sidebar) instead of Roam's raw navigation, which would destroy the editor; Cmd/Ctrl/Alt clicks are left alone. Roam undo and redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y off macOS) work in dock blocks. With the dock open the toolbar wraps to two rows instead of running past the canvas.
+- Tag grammar follows Roam: `word#tag` is a tag, and a trailing dot stays in the tag name (`#tag.` is the page `tag.`).
+- No new command-palette entries.
+- Not supported: Backspace/Delete on blocks selected in the dock does nothing (the dock swallows keys while it owns a selection, so blocks and canvas elements are never deleted together). Dragging from the right sidebar onto the canvas is not possible while drawing full-screen, because the editor covers the sidebar; the dock is the drag source. The label drag in the dock header may be blocked by its `mousedown` preventDefault in Chrome (unverified).
+- Moved to Later: token hover preview.
+- Unverified live: the N6 corpus comparison of `findTokens` against Roam's `renderString`; the real-Roam measurements and X5 checks for tokens; which Escape target (`window` or `document`) clears a dock selection (`dock.escapeVia()`) and whether the dock fell back to overlay mode (`dock.mode()`), both still to record in spec section 13.
+
 ## [0.9.0]
 
 - New drawings where you are: `Plexus: New drawing here / below` (block menu), `Plexus: New drawing on this page` (page menu), and the slash command `/Sketch here`. The drawing opens at once. On a daily page it is a plain top-level child after the block's top-level ancestor. Locked against a double invoke. Setting "New drawing page name" (`{date}`, `{page}`, `{n}`).

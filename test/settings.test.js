@@ -145,3 +145,13 @@ test("P8 settings: defaults, normalization, panel", () => {
   assert.equal(SETTING_IDS.animation, "animation");
   assert.equal(SETTING_IDS.regionLanding, "region-landing");
 });
+
+test("dock-width defaults to 320, clamps to 240-640 and is not in the settings panel", () => {
+  const api = (init = {}) => ({ settings: { get: (id) => init[id] } });
+  assert.equal(readSettings(api()).dockWidth, 320);
+  assert.equal(readSettings(api({ "dock-width": "100" })).dockWidth, 240);
+  assert.equal(readSettings(api({ "dock-width": 900 })).dockWidth, 640);
+  assert.equal(readSettings(api({ "dock-width": "abc" })).dockWidth, 320);
+  assert.equal(readSettings(api({ "dock-width": "400" })).dockWidth, 400);
+  assert.equal(createSettingsPanel().settings.some((s) => s.id === "dock-width"), false);
+});

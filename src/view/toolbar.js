@@ -9,7 +9,7 @@ export function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onBack, canBack }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
   const view = doc.defaultView;
   const mac = /mac|iphone|ipad/i.test(String(view?.navigator?.platform ?? ""));
   const withKey = (name, id) => {
@@ -44,7 +44,11 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
   const place = () => {
     if (!bar || !outer) return;
     const rect = outer.getBoundingClientRect();
-    bar.style.left = `${rect.left + rect.width / 2}px`;
+    let inset = 0;
+    try { inset = Math.max(0, Number(dockInset?.()) || 0); } catch { inset = 0; }
+    const visible = Math.max(0, rect.width - inset);
+    bar.style.maxWidth = `${Math.max(0, visible - 24)}px`;
+    bar.style.left = `${rect.left + visible / 2}px`;
     const height = bar.getBoundingClientRect().height || 40;
     bar.style.top = `${rect.bottom - 16 - height}px`;
   };
@@ -109,6 +113,14 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
         pressed.push([regionsButton, regionsVisible]);
         controls.push(regionsButton);
       }
+      if (onToggleDock) {
+        const dockButton = button("Outline", async () => {
+          await onToggleDock();
+          refresh();
+        }, "dock");
+        pressed.push([dockButton, dockOpen]);
+        controls.push(dockButton);
+      }
       if (onBack) {
         const backButton = button("Back", async () => {
           await onBack();
@@ -127,6 +139,7 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       view?.addEventListener("resize", place);
     },
     refresh: scheduleRefresh,
+    place,
     hide,
     dispose: hide,
   };

@@ -289,6 +289,18 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     };
   }
 
+  // The parent of a block: { uid, isPage, title, pageTitle }. Null for a page uid or a missing block.
+  function parentOf(uid) {
+    const info = blockInfo(uid);
+    if (!info || !info.parentUid) return null;
+    return {
+      uid: info.parentUid,
+      isPage: info.parentIsPage,
+      title: info.parentIsPage ? info.pageTitle : info.parentString,
+      pageTitle: info.pageTitle,
+    };
+  }
+
   // The top-level block above (or equal to) uid: { uid, order, pageUid }. Null when the chain cannot be read.
   function topAncestor(uid) {
     let cur = uid;
@@ -491,6 +503,7 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     pageUidByTitle,
     pageTitleOf,
     blockInfo,
+    parentOf,
     topAncestor,
     blockPaths,
     createBlock,

@@ -123,3 +123,23 @@ test("classifyAddedNode skips output inside .plexus-root", () => {
   const own = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-root": 1 } });
   assert.deepEqual(classifyAddedNode(own), { regionButtons: [], editors: [], aliases: [] });
 });
+
+test("an editor rendered inside the outline dock is not an editor mount", () => {
+  const inDock = fakeNode({ classes: ["excalidraw"], closest: { "full-screen": 1, "plexus-dock": 1 } });
+  const wrapper = fakeNode({ children: [{ classes: ["excalidraw"], node: inDock }] });
+  assert.deepEqual(classifyAddedNode(inDock).editors, []);
+  assert.deepEqual(classifyAddedNode(wrapper).editors, []);
+  const alias = fakeNode({ classes: ["rm-alias--block"], closest: { "plexus-dock": 1 } });
+  assert.deepEqual(classifyAddedNode(alias).aliases, [alias]);
+  const button = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-dock": 1 } });
+  assert.deepEqual(classifyAddedNode(button).regionButtons, [button]);
+});
+
+test("scanExisting skips an editor rendered inside the outline dock", () => {
+  const inDock = fakeNode({ classes: ["excalidraw"], closest: { "full-screen": 1, "plexus-dock": 1 } });
+  const root = { querySelectorAll: (sel) => (sel.includes("excalidraw-outer-container.full-screen") ? [inDock] : []) };
+  class FakeMO { observe() {} disconnect() {} }
+  const mounts = [];
+  createDiscovery({ root, onEditorMount: (e) => mounts.push(e), MutationObserverImpl: FakeMO }).scanExisting();
+  assert.deepEqual(mounts, []);
+});

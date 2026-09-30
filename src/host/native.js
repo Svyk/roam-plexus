@@ -17,7 +17,7 @@ export function findApp(excalidrawEl) {
 
 export function activeEditor(doc = globalThis.document) {
   const el = doc?.querySelector?.(".excalidraw-outer-container.full-screen .excalidraw");
-  if (!el || el.closest?.(".plexus-offscreen")) return null;
+  if (!el || el.closest?.(".plexus-offscreen") || el.closest?.(".plexus-dock")) return null;
   const outer = el.closest(".excalidraw-outer-container");
   const app = findApp(el);
   if (!app) return null;

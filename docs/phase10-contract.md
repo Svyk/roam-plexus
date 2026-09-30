@@ -417,3 +417,13 @@ These amendments override the body wherever the two conflict. Code references po
 - **G2.** Roam leaves `effectAllowed` uninitialized; `dropEffect = "copy"` is accepted.
 - **G4.** Modifiers arrive on dragover and drop (CDP). The chip follows dragover; the mode comes from drop.
 - **D3, D11, D12 confirmed.** Menu keys must pass while a Roam menu is open (Esc did not close the autocomplete under a plain stop). The bullet context menu (`body > .bp3-portal`, z 20) is hidden behind the editor unless raised. A plain bullet click blanks the dock's render root: swallow it.
+
+## Live amendments (acceptance, binding)
+
+1. `leaveEditing` always runs `clearSelection({ refocus })`, and `clearSelection` refocuses `containerEl` when focus sits on `body`: Roam's window-capture listener turns a trusted Esc into a block selection about 50 ms later, before the dock sees the key.
+2. Menu selectors exclude Roam's permanent empty toast container: `.bp3-overlay-open:not(.bp3-toast-container)` in `DOCK_MENU_SELECTOR` (`dock.js`) and `ROAM_MENU_SELECTOR` (`embeds.js`).
+3. Esc with a Roam menu open passes through (canvas selection snapshot/restore as before); after `MENU_ESC_SETTLE_MS` (150 ms) with no dock textarea, the dock finishes the leave (`editing = false`, `clearSelection({ refocus: true })`), because Roam closes the menu and leaves editing.
+4. Plain or Shift clicks on Roam refs in the dock (capture `mousedown` + `click`) are swallowed and call `createDock`'s `onNavigate({ target, sidebar })` (page or block target; Shift = sidebar); Cmd/Ctrl/Alt clicks pass. `extension.js` wires it to the NAV-1 navigate body.
+5. Roam undo in the dock (D8): Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z and Ctrl+Y (non-mac) bubble from a dock `TEXTAREA`; every other chord stays stopped.
+6. Toolbar overflow: `place()` sets `bar.style.maxWidth` to the visible canvas width (outer width minus the dock inset) minus 24 px, and `.plexus-toolbar` wraps (`flex-wrap`, centred, `row-gap: 4px`).
+7. Token grammar per Roam (N6 corpus): a tag may follow a word character (`word#notag` is `notag`) and a trailing dot stays in the tag (`#tag.` is `tag.`); a trailing colon is still excluded.

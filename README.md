@@ -40,7 +40,13 @@ The command palette holds two Plexus entries:
 
 The list exists because each palette entry costs every keystroke you type in Roam: Roam's key handler walks all registered commands, about 0.055 ms each, so 23 entries added about 1.3 ms per key.
 
-Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E (embed) and N (note card). R, I, P, E and N work while a drawing is open; M works everywhere and can be changed in Roam Settings > Hotkeys.
+Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E (embed), N (note card) and O (outline dock). R, I, P, E, N and O work while a drawing is open; M works everywhere and can be changed in Roam Settings > Hotkeys.
+
+## Outline dock, drops and links in text
+
+- Outline dock: the toolbar "Outline" button, Alt+Shift+O, or "Toggle outline dock" in the command list docks the drawing block's children beside the full-screen canvas, so you can type bullets while drawing. "Outline dock: show parent" (command list) shows the parent block's children instead. The dock width is dragged from its left edge and remembered.
+- Drag a bullet from the dock onto the canvas to place it: no modifier embeds it, Alt links it, Shift places a plain label. Dragging the dock header places the page or block itself.
+- Cmd-click (Ctrl-click off macOS) a `[[page]]`, `#tag` or `((block))` written in canvas text to open it; add Shift for the sidebar. Text with several links offers a chooser.
 
 ## Development
 
