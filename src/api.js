@@ -1,7 +1,8 @@
+import { drawingTitleOf, imageAltAt, isImageKind, regionLabel } from "./model/label.js";
 import { parseRegion } from "./model/region.js";
 import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport } from "./model/scene.js";
 
-export const API_VERSION = 2;
+export const API_VERSION = 3;
 
 const GONE = "Scene is no longer open";
 const FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
@@ -253,7 +254,22 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
     },
     thumbnail(uid, opts) { return actions.thumbnail(uid, opts || {}); },
     regionsOf(uid) {
-      return host.regionsOf(uid).map(({ uid: regionUid, region }) => ({ uid: regionUid, kind: region.kind, caption: region.caption ?? "" }));
+      const entries = host.regionsOf(uid);
+      let src = { string: "", pageTitle: null };
+      try { src = host.labelSource?.(uid) ?? src; } catch (error) { console.warn("[plexus] labelSource failed", error); }
+      return entries.map(({ uid: regionUid, region }) => {
+        let label = "Region";
+        try {
+          label = regionLabel({
+            kind: region.kind,
+            caption: region.caption ?? "",
+            drawingTitle: drawingTitleOf(src.string, src.pageTitle),
+            imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
+            resolveBlock: (u) => host.pullBlock?.(u)?.string,
+          });
+        } catch (error) { console.warn("[plexus] region label failed", error); }
+        return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
+      });
     },
     drawingsOn(pageUid) { return host.drawingsOn(pageUid); },
     scene(uid) { return scenes?.sceneOf?.(uid) ?? null; },

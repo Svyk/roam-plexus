@@ -25,11 +25,11 @@ function build() {
 test("public api is frozen and delegates", async () => {
   const { api, calls } = build();
   assert.ok(Object.isFrozen(api));
-  assert.equal(api.apiVersion, 2);
+  assert.equal(api.apiVersion, 3);
   assert.equal(api.version, "0.2.0");
   assert.equal(api.isAvailable(), true);
   assert.deepEqual(await api.create({ title: "T" }), { uid: "u", pageUid: "p" });
-  assert.deepEqual(api.regionsOf("d"), [{ uid: "r1", kind: "area", caption: "cap" }]);
+  assert.deepEqual(api.regionsOf("d"), [{ uid: "r1", kind: "area", caption: "cap", label: "cap" }]);
   assert.deepEqual(api.drawingsOn("p"), ["d1"]);
   await api.open("r1", { sidebar: true });
   await api.open("d");
@@ -75,7 +75,7 @@ test("install dispatches ready; uninstall dispatches unload and deletes only whe
   assert.equal(uninstallPublicApi(api, { win, CustomEventCtor: CE }), false);
   assert.equal(win.RoamPlexus, foreign);
   assert.deepEqual(events.map((e) => e[0]), ["roam-plexus:ready", "roam-plexus:unload", "roam-plexus:unload"]);
-  assert.deepEqual(events[0][1], { apiVersion: 2 });
+  assert.deepEqual(events[0][1], { apiVersion: 3 });
 });
 
 import { createSceneRegistry } from "../src/api.js";
@@ -185,7 +185,7 @@ test("whenOpen validates, shares in-flight promise, and rejects on dispose", asy
   const host = { pullBlock: (u) => ({ string: u === "bad" ? "hello" : "{{[[excalidraw]]}}" }) };
   const opened = [];
   const api = createPublicApi({ host, actions: {}, emitter: null, version: "x", scenes: reg, openDrawing: async (u) => { opened.push(u); return { app, drawingUid: u }; } });
-  assert.equal(api.apiVersion, 2);
+  assert.equal(api.apiVersion, 3);
   assert.equal(api.scene("d1"), null);
   await assert.rejects(api.whenOpen("bad"), /Not a drawing/);
   await assert.rejects(api.whenOpen("d1"), /Another drawing is open/);
@@ -233,4 +233,23 @@ test("update: a partial customData.plexus patch keeps sibling plexus keys", () =
   const s = reg.sceneFor(app, "d1");
   const out = s.update("a", { customData: { plexus: { order: 2 } } });
   assert.deepEqual(out.customData, { k: 1, plexus: { embed: "((abcdefghi))", migratedFrom: "XYZ123456", order: 2 } });
+});
+
+test("regionsOf labels: caption, derived from labelSource, and Region on failure", () => {
+  const regions = [
+    { uid: "a", region: { kind: "area", caption: "" } },
+    { uid: "b", region: { kind: "imgrect", caption: "", i: 1 } },
+    { uid: "c", region: { kind: "poly", caption: "" } },
+  ];
+  const src = { string: "{{[[excalidraw]]}}", pageTitle: "Wing" };
+  const mk = (labelSource) => createPublicApi({ host: { regionsOf: () => regions, labelSource, pullBlock: () => null }, actions: {}, emitter: null, version: "x" });
+  const withSrc = mk(() => src).regionsOf("d");
+  assert.deepEqual(withSrc.map((r) => r.label), ["Wing · area", "Wing · image area", "Wing · lasso"]);
+  assert.deepEqual(Object.keys(withSrc[0]), ["uid", "kind", "caption", "label"]);
+  const noSrc = mk(undefined).regionsOf("d");
+  assert.deepEqual(noSrc.map((r) => r.label), ["Image · area", "Image · image area", "Image · lasso"]);
+  const throws = mk(() => { throw new Error("x"); }).regionsOf("d");
+  assert.equal(throws[0].label, "Image · area");
+  const bad = createPublicApi({ host: { regionsOf: () => [{ uid: "z", region: { kind: "nope", caption: "" } }], labelSource: () => src }, actions: {}, emitter: null, version: "x" }).regionsOf("d");
+  assert.equal(bad[0].label, "Wing · region");
 });

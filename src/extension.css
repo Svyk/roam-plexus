@@ -605,3 +605,49 @@ dialog.plexus-portal.plexus-settings::backdrop {
   justify-content: flex-end;
   margin-top: 12px;
 }
+
+/* == p7:view == */
+span.rm-block-ref.plexus-ref-card.plexus-caption-hidden,
+span.rm-block-ref.plexus-ref-card.plexus-caption-hidden:hover {
+  font-size: 0;
+}
+
+.plexus-caption-hidden .plexus-root {
+  font-size: 14px;
+}
+
+.plexus-caption-hidden .rm-page-ref,
+.plexus-caption-hidden .rm-block-ref,
+.plexus-caption-hidden .rm-page-ref--tag,
+.plexus-caption-hidden .rm-reference-footnote,
+.plexus-caption-hidden sup {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+}
+
+.plexus-caption-hidden img:not(.plexus-crop) {
+  display: none;
+}
+
+.plexus-root.plexus-caption-derived {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
+.plexus-root.plexus-ref-label {
+  display: inline;
+}
+
+.plexus-root.plexus-regionref:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* == p7:prompt == */
+input.plexus-portal.plexus-mm-input.plexus-caption-prompt {
+  font-size: 14px;
+  text-align: left;
+}

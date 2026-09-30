@@ -6,10 +6,12 @@ import { cropKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
 import { cropToBlob, loadImageBitmap } from "../host/image-source.js";
 import { hostDarkMarker, isHostDark } from "../host/theme.js";
-import { overrideKey, refContext, resolveDisplay } from "../model/refdisplay.js";
+import { overrideKey, refContext, resolveCaption, resolveDisplay } from "../model/refdisplay.js";
+import { drawingTitleOf, imageAltAt, regionLabel } from "../model/label.js";
 import { createCropPopover } from "./crop-popover.js";
 
 const CLAIMED = "data-plexus-claimed";
+const ALIAS_CLAIMED = "data-plexus-alias";
 const FAIL_TTL_MS = 60000;
 const PRUNE_FLOOR = 64;
 export const IMAGE_SETTLE_MS = 1200;
@@ -120,6 +122,8 @@ const overlaps = (bbox, el) => el.x < bbox[2] && el.x + el.width > bbox[0] && el
 
 export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
   const roots = new Map();
+  const aliases = new Map();
+  const notRegions = new WeakSet();
   const hostRefs = new Map();
   const failed = new Map();
   let pruneAt = PRUNE_FLOOR;
@@ -132,6 +136,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       figureHeight: num(s.figureHeight, 280),
       thumbHeight: num(s.thumbHeight, 72),
       inlineDisplay: s.inlineDisplay === "link" ? "link" : "thumbnail",
+      captionDisplay: s.captionDisplay === "always" || s.captionDisplay === "never" ? s.captionDisplay : "written",
       refOverrides: s.refOverrides && typeof s.refOverrides === "object" ? s.refOverrides : {},
       darkCrops: s.darkCrops !== false,
       openInSidebar: s.openInSidebar,
@@ -139,9 +144,10 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   };
 
   const prune = () => {
-    if (roots.size < pruneAt) return;
+    if (roots.size + aliases.size < pruneAt) return;
     for (const [root, info] of [...roots]) if (!root.isConnected) { dropInfo(info); roots.delete(root); }
-    pruneAt = Math.max(PRUNE_FLOOR, roots.size * 2);
+    for (const [anchor, info] of [...aliases]) if (anchor.isConnected === false) unalias(anchor, info);
+    pruneAt = Math.max(PRUNE_FLOOR, (roots.size + aliases.size) * 2);
   };
 
   function dropInfo(info) {
@@ -188,7 +194,8 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   const unclaim = (root, info) => {
     dropInfo(info);
     releaseHosts(info);
-    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail"]) info.refEl?.classList?.remove(c);
+    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden"]) info.refEl?.classList?.remove(c);
+    for (const el of info.extras.splice(0)) el.remove?.();
     info.btn.classList.remove("plexus-hidden");
     info.btn.removeAttribute(CLAIMED);
     root.remove();
@@ -196,6 +203,9 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   };
 
   const chip = (root, text) => {
+    root.removeAttribute?.("role");
+    root.removeAttribute?.("aria-label");
+    root.removeAttribute?.("tabindex");
     root.className = "plexus-root plexus-regionref plexus-chip";
     root.textContent = text;
   };
@@ -205,6 +215,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     const s = settings();
     const img = doc.createElement("img");
     img.draggable = false;
+    if (info.label) img.alt = info.label;
     img.className = `plexus-crop${invertible(region, target, s) ? " plexus-crop--invertible" : ""}`;
     if (invertible(region, target, s) && isHostDark(doc) && !hostDarkMarker(doc)) img.classList.add("plexus-crop--invert");
     img.onerror = () => {
@@ -271,6 +282,16 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     return { entry, entryKey };
   }
 
+  async function hoverEntryOf(region, target, keys) {
+    const hot = (keys.svg && cache.peek(keys.svg)) || cache.peek(keys.png);
+    let entry = hot;
+    if (!entry) {
+      const res = await fetchEntry(region, target, keys, () => true);
+      entry = res.entry;
+    }
+    return entry ? { url: entry.url, w: entry.w, h: entry.h, invertible: invertible(region, target, settings()) } : null;
+  }
+
   const contextOf = (btn, uid) => {
     const refEl = btn.closest?.(".rm-block-ref[data-uid]") || null;
     if (!refEl) return { refEl: null, blockUid: null, outerUid: null, context: "home" };
@@ -280,12 +301,61 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     return { refEl, blockUid, outerUid, context };
   };
 
-  const modeFor = (btn, ctx, uid, s) => {
-    const overrides = s.refOverrides;
-    const override = ctx.blockUid ? overrides[overrideKey(ctx.blockUid, uid)] ?? (ctx.outerUid ? overrides[overrideKey(ctx.outerUid, uid)] : undefined) : undefined;
-    let mode = resolveDisplay({ context: ctx.context, override, inlineDisplay: s.inlineDisplay });
+  // Each field (mode, caption) comes from the first of the block and outer-block entries that has it.
+  const overrideOf = (ctx, uid, s) => {
+    if (!ctx.blockUid) return {};
+    const entries = [ctx.blockUid, ctx.outerUid]
+      .filter(Boolean)
+      .map((b) => s.refOverrides[overrideKey(b, uid)])
+      .map((e) => (typeof e === "string" ? { mode: e } : e))
+      .filter((e) => e && typeof e === "object");
+    const pick = (field) => entries.find((e) => e[field] != null)?.[field];
+    return { mode: pick("mode"), caption: pick("caption") };
+  };
+
+  const captionOf = (ctx, override, s) => resolveCaption({ captionDisplay: s.captionDisplay, override: { caption: override.caption }, context: ctx.context });
+
+  const modeFor = (btn, ctx, override, s) => {
+    let mode = resolveDisplay({ context: ctx.context, override: override.mode, inlineDisplay: s.inlineDisplay });
     if (mode === "image" && btn.closest?.(".plexus-portal.plexus-embed")) mode = "thumbnail";
     return mode;
+  };
+
+  const labelOf = (region) => {
+    try {
+      const src = host.labelSource?.(region.drawingUid) ?? { string: "", pageTitle: null };
+      return regionLabel({
+        kind: region.kind,
+        caption: region.caption,
+        drawingTitle: drawingTitleOf(src.string, src.pageTitle),
+        imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
+        resolveBlock: (u) => host.pullBlock(u)?.string,
+      });
+    } catch {
+      return "Region";
+    }
+  };
+
+  const addSpan = (root, info, className, text) => {
+    const span = doc.createElement("span");
+    span.className = className;
+    span.textContent = text;
+    root.parentNode?.insertBefore(span, root.nextSibling);
+    info.extras.push(span);
+  };
+
+  const hasTail = (region) => !!String(region.caption ?? "").trim();
+
+  // Image and thumbnail cards: hide the written text, or show the derived label when there is no tail.
+  const applyCaption = (root, region, ctx, info, state) => {
+    if (!ctx.refEl || ctx.context === "home") return;
+    if (state === "hide") {
+      const size = ctx.refEl.ownerDocument?.defaultView?.getComputedStyle?.(ctx.refEl)?.fontSize || doc.defaultView?.getComputedStyle?.(ctx.refEl)?.fontSize;
+      if (size) root.style.fontSize = size;
+      ctx.refEl.classList.add("plexus-caption-hidden");
+    } else if (state === "show" && !hasTail(region)) {
+      addSpan(root, info, "plexus-root plexus-caption-derived", info.label);
+    }
   };
 
   const claim = (btn) => {
@@ -301,16 +371,19 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
       const s = settings();
       const ctx = contextOf(btn, uid);
-      const mode = modeFor(btn, ctx, uid, s);
+      const override = overrideOf(ctx, uid, s);
+      const mode = modeFor(btn, ctx, override, s);
+      const capState = captionOf(ctx, override, s);
+      const label = labelOf(region);
 
       btn.setAttribute(CLAIMED, "1");
       btn.classList.add("plexus-hidden");
       const root = doc.createElement("span");
       root.className = `plexus-root plexus-regionref plexus-regionref--${mode}`;
-      if (region.caption) root.title = region.caption;
+      root.title = label;
       btn.parentNode.insertBefore(root, btn.nextSibling);
       prune();
-      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, disposers: [], hosts: [] };
+      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, disposers: [], hosts: [], extras: [] };
       roots.set(root, info);
       if (ctx.refEl && mode !== "link") {
         ctx.refEl.classList.add("plexus-ref-card");
@@ -323,6 +396,22 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         return;
       }
 
+      root.setAttribute("role", "img");
+      root.setAttribute("aria-label", label);
+      root.setAttribute("tabindex", "0");
+      if (mode !== "link") applyCaption(root, region, ctx, info, capState);
+
+      root.addEventListener("keydown", (e) => {
+        try {
+          if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          e.stopPropagation();
+          onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+        } catch (error) {
+          console.warn("[plexus] open failed", error);
+        }
+      });
       root.addEventListener("mousedown", (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -341,19 +430,12 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       if (target.error) return chip(root, target.error);
       const keys = keysFor(uid, region, target);
 
-      const hoverEntry = async () => {
-        const hot = (keys.svg && cache.peek(keys.svg)) || cache.peek(keys.png);
-        let entry = hot;
-        if (!entry) {
-          const res = await fetchEntry(region, target, keys, () => true);
-          entry = res.entry;
-        }
-        return entry ? { url: entry.url, w: entry.w, h: entry.h, invertible: invertible(region, target, settings()) } : null;
-      };
+      const hoverEntry = () => hoverEntryOf(region, target, keys);
 
       if (mode === "link") {
         root.className = "plexus-root plexus-regionref plexus-regionref--link plexus-ref-glyph";
         root.innerHTML = GLYPH;
+        if (ctx.context !== "home" && !hasTail(region)) addSpan(root, info, "plexus-root plexus-ref-label", label);
         const anchor = ctx.refEl || root;
         info.disposers.push(getPopover().hoverOn(anchor, hoverEntry));
         stopHover(anchor, info);
@@ -400,6 +482,86 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     }
   };
 
+  function unalias(anchor, info) {
+    dropInfo(info);
+    anchor.removeAttribute?.(ALIAS_CLAIMED);
+    aliases.delete(anchor);
+  }
+
+  const regionOf = (uid) => {
+    const block = host.pullBlock(uid);
+    const region = block ? parseRegion(block.string) : null;
+    return region?.supported ? region : null;
+  };
+
+  // [text](((regionUid))) alias: crop hover, plain click opens the region, modified clicks stay Roam's.
+  const claimAlias = (anchor) => {
+    try {
+      if (!anchor || anchor.isConnected === false) return;
+      if (anchor.closest?.(".plexus-offscreen, .plexus-root")) return;
+      if (anchor.classList?.contains("rm-alias--page") || !anchor.classList?.contains("rm-alias--block")) return;
+      if (anchor.getAttribute?.(ALIAS_CLAIMED) || notRegions.has(anchor)) return;
+      const uid = anchor.dataset?.linkUid ?? anchor.getAttribute?.("data-link-uid");
+      if (!uid) return;
+      if (!regionOf(uid)) { notRegions.add(anchor); return; }
+
+      anchor.setAttribute(ALIAS_CLAIMED, "1");
+      const info = { uid, disposers: [] };
+      aliases.set(anchor, info);
+      prune();
+
+      const currentUid = () => anchor.dataset?.linkUid ?? anchor.getAttribute?.("data-link-uid");
+      const hoverEntry = async () => {
+        const u = currentUid();
+        const region = u ? regionOf(u) : null;
+        if (!region) return null;
+        info.uid = u;
+        const target = resolveRegionTarget(host, region);
+        if (target.error) return null;
+        return hoverEntryOf(region, target, keysFor(u, region, target));
+      };
+      info.disposers.push(getPopover().hoverOn(anchor, hoverEntry));
+      stopHover(anchor, info);
+
+      const plain = (e) => (e.button ?? 0) === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const capture = (open) => (e) => {
+        try {
+          const u = currentUid();
+          if (!plain(e) || !u || !regionOf(u)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          info.uid = u;
+          if (open) onOpen(u, { sidebar: !!getSettings().openInSidebar });
+        } catch (error) {
+          console.warn("[plexus] alias open failed", error);
+        }
+      };
+      const onDown = capture(false);
+      const onClick = capture(true);
+      anchor.addEventListener("mousedown", onDown, true);
+      anchor.addEventListener("click", onClick, true);
+      info.disposers.push(() => {
+        anchor.removeEventListener?.("mousedown", onDown, true);
+        anchor.removeEventListener?.("click", onClick, true);
+      });
+    } catch (error) {
+      console.warn("[plexus] alias claim failed", error);
+    }
+  };
+
+  const reclaimAliases = (match) => {
+    for (const [anchor, info] of [...aliases]) {
+      try {
+        if (anchor.isConnected === false) { unalias(anchor, info); continue; }
+        if (!match(info)) continue;
+        unalias(anchor, info);
+        claimAlias(anchor);
+      } catch (error) {
+        console.warn("[plexus] alias refresh failed", error);
+      }
+    }
+  };
+
   function finishChip(root, region) {
     root.style.height = "";
     root.style.width = "";
@@ -424,8 +586,10 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
   return {
     claim,
+    claimAlias,
     refreshAll() {
       reclaim(() => true);
+      reclaimAliases(() => true);
     },
     refreshBlock(blockUid) {
       reclaim((info) => info.blockUid === blockUid || info.outerUid === blockUid);
@@ -445,6 +609,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
           }
         }
         reclaim((info) => info.refUid === regionUid);
+        reclaimAliases((info) => info.uid === regionUid);
       } catch (error) {
         console.warn("[plexus] refreshRegion failed", error);
       }
@@ -463,9 +628,25 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         return "thumbnail";
       }
     },
+    captionStateOf({ blockUid, refUid }) {
+      try {
+        for (const [root, info] of roots) {
+          if (root.isConnected && info.refUid === refUid && (info.blockUid === blockUid || info.outerUid === blockUid)) return info.capState;
+        }
+        const s = settings();
+        const context = blockUid ? refContext(host.pullBlock(blockUid)?.string ?? "", refUid) : "inline";
+        const override = overrideOf({ blockUid, outerUid: null }, refUid, s);
+        return captionOf({ context }, override, s);
+      } catch (error) {
+        console.warn("[plexus] captionStateOf failed", error);
+        return "written";
+      }
+    },
     releaseAll() {
       for (const [root, info] of [...roots]) unclaim(root, info);
       roots.clear();
+      for (const [anchor, info] of [...aliases]) unalias(anchor, info);
+      aliases.clear();
       failed.clear();
       popover?.dispose();
       popover = null;

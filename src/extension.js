@@ -22,6 +22,7 @@ import { createActions } from "./actions.js";
 import { clearImageMemo } from "./host/image-source.js";
 import { createLinkSuggest, installSuggestAutoAttach } from "./view/link-suggest.js";
 import { installCanvasMenu, installRoamMenus } from "./view/context-menus.js";
+import { openCaptionPrompt } from "./view/caption-prompt.js";
 import { openSettingsDialog } from "./view/settings-dialog.js";
 import { isHostDark, resetThemeMemo } from "./host/theme.js";
 
@@ -138,6 +139,7 @@ export async function onload({ extensionAPI, extension }) {
         api,
         emit: (detail) => emitter.emit(detail),
         clipboard: globalThis.navigator?.clipboard,
+        openPrompt: openCaptionPrompt,
         presenter,
         mindmap,
         getEmbedOverlay: () => mounted?.overlay ?? null,
@@ -187,8 +189,11 @@ export async function onload({ extensionAPI, extension }) {
         actions,
         regionref,
         getSettings,
-        setRefOverride: (blockUid, refUid, mode) => setRefOverride(extensionAPI, blockUid, refUid, mode),
+        setRefOverride: (blockUid, refUid, patch) => setRefOverride(extensionAPI, blockUid, refUid, patch),
         openSettings,
+        openPrompt: openCaptionPrompt,
+        isEncrypted: () => host.isEncrypted(),
+        doc,
       }));
       const suggest = createLinkSuggest({ doc, api, zIndexFor });
       lifecycle.add(() => suggest.dispose());
@@ -213,7 +218,7 @@ export async function onload({ extensionAPI, extension }) {
       };
       // Link interception and hover preview live only while an editor is mounted.
       let navigatedAt = -Infinity;
-      const unmountEditor = () => {
+      const unmountEditor = ({ unloading = false } = {}) => {
         const current = mounted;
         mounted = null;
         if (!current) return Promise.resolve();
@@ -230,20 +235,27 @@ export async function onload({ extensionAPI, extension }) {
         if (current.uid) {
           emitter.emit({ uid: current.uid, kind: "drawing" });
           warmThumbnails(current.uid);
+          if (!unloading) {
+            Promise.resolve(actions.refreshAfterClose(current.uid, current.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+          }
         }
         return Promise.all(pending).then(() => undefined);
       };
-      lifecycle.add(unmountEditor);
+      lifecycle.add(() => unmountEditor({ unloading: true }));
       const discovery = createDiscovery({
         root: doc.body,
         onRegionButton: (btn) => regionref.claim(btn),
+        onAlias: (a) => regionref.claimAlias(a),
         onEditorMount: (el) => {
           const outer = el.closest(".excalidraw-outer-container");
           if (outer) toolbar.show(outer);
           unmountEditor();
           const app = native.findApp(el);
           if (!app) return;
-          mounted = { uid: host.blockUidFromNode(el), app, disposers: [], overlay: null };
+          const mountUid = host.blockUidFromNode(el);
+          let mountHash = "";
+          try { mountHash = (mountUid && host.drawing(mountUid)?.hash) || ""; } catch (error) { console.warn("[plexus] mount hash failed", error); }
+          mounted = { uid: mountUid, app, disposers: [], overlay: null, hash: mountHash };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -315,6 +327,8 @@ export async function onload({ extensionAPI, extension }) {
       ["Plexus: Refresh crops for open drawing", "refreshCropsForOpenDrawing"],
       ["Plexus: Clear crop cache", "clearCache"],
       ["Plexus: Legacy drawings (dry run)", "legacyDryRun"],
+      ["Plexus: Clear placeholder captions (dry run)", "captionCleanupDryRun"],
+      ["Plexus: Undo caption cleanup", "undoCaptionCleanup"],
     ];
     for (const [label, name] of commands) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });

@@ -1,11 +1,12 @@
-import { DEFAULT_PAD, geometryKey, isId, parseRegion, serializeRegion } from "./model/region.js";
-import { commonBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
+import { DEFAULT_PAD, geometryKey, isContainerString, isId, normalizeFrac, normalizePoly, parseRegion, serializeRegion } from "./model/region.js";
+import { commonBounds, elementBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
 import { embedAnchors, embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
 import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
 import { orderFrames } from "./model/slides.js";
 import { captionRefsFromElements, captionRefsInfo } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { isExcludedString } from "./model/mindmap.js";
+import { drawingTitleOf, imageAltAt, isPlaceholderCaption, plainCaption, regionLabel } from "./model/label.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
 import { lockName, withLock } from "./host/locks.js";
@@ -13,9 +14,44 @@ import { cropCanvasToBlob } from "./host/cold-render.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
 import { createLegacyDialog } from "./view/legacy-dialog.js";
+import { createCleanupDialog } from "./view/cleanup-dialog.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const noop = () => {};
+
+const CAPTION_MODES = ["auto", "ask", "none"];
+const PIN_SIZES = [4, 8, 12];
+const WHOLE_IMAGE_AREA = 0.98;
+const SVG_HREF_RE = /(?:xlink:)?href\s*=\s*["']([^"']*)["']/gi;
+const REFS_RE = /\(\([\w-]+\)\)|\[\[[^\]]+\]\]/g;
+const refTokens = (text) => new Set(String(text ?? "").match(REFS_RE) || []);
+const REGION_HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:[^}]*\}\}/;
+
+// The exact current head plus " " + tail (or the bare head): the string is never re-serialized, so token order and
+// extras survive. Null when the result is not the same region with exactly that caption.
+export function headPreservingString(before, tail) {
+  const head = REGION_HEAD_RE.exec(before)?.[0];
+  if (!head) return null;
+  const text = String(tail ?? "").replace(/\s+/g, " ").trim();
+  const next = text ? `${head} ${text}` : head;
+  const a = parseRegion(before);
+  const b = parseRegion(next);
+  if (!a?.supported || !b?.supported || geometryKey(a) !== geometryKey(b) || b.caption !== text) return null;
+  return next;
+}
+
+const isFrameEl = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
+
+// A pin: a square whose side is pct% of the shorter displayed side, centred on (x, y) and shifted (not shrunk) to stay inside.
+export function pinFraction({ x, y, width, height, pct }) {
+  const side = (pct / 100) * Math.min(width, height);
+  const fw = Math.min(1, side / width);
+  const fh = Math.min(1, side / height);
+  const left = Math.min(1 - fw, Math.max(0, x - fw / 2));
+  const top = Math.min(1 - fh, Math.max(0, y - fh / 2));
+  return [left, top, fw, fh];
+}
 
 const DRAWING_BLOCK_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const NOT_EDITABLE_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw|\[\[roam\/render\]\]|roam\/render)/;
@@ -117,6 +153,15 @@ export function createActions({
   getEmbedOverlay = () => null,
   refreshRegion = null,
   createDialog = createLegacyDialog,
+  createCleanup = createCleanupDialog,
+  openPrompt = null,
+  ClipboardItemCtor = globalThis.ClipboardItem,
+  rasterize = null,
+  urls = globalThis.URL,
+  upload = null,
+  closePollMs = 150,
+  closeWindowMs = 3000,
+  revokeDelayMs = 1000,
   confirm = (message) => globalThis.confirm?.(message),
   withLockFn = withLock,
   frame = () => new Promise((resolve) => (typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(() => resolve()) : setTimeout(resolve, 16))),
@@ -132,7 +177,14 @@ export function createActions({
   const thumbPending = new Map();
   const aborted = () => disposed;
   let legacyDialog = null;
+  let cleanupDialog = null;
   let migrating = false;
+  let activePrompt = null;
+  let activePromptIsDrawing = false;
+  let cleanupReport = null;
+  let undoSlot = null;
+  const closePolls = new Map();
+  const revokers = new Set();
 
   async function once(name, fn) {
     if (busy.has(name)) return null;
@@ -160,6 +212,8 @@ export function createActions({
 
   async function finishWith(region, cachePut) {
     let uid;
+    if (Array.isArray(region.f)) region.f = normalizeFrac(region.f);
+    if (Array.isArray(region.p)) region.p = normalizePoly(region.p);
     try {
       uid = await host.createRegion(region.drawingUid, serializeRegion(region));
     } catch (error) {
@@ -253,9 +307,12 @@ export function createActions({
       if (!region || !region.supported || !RELINK_KINDS.has(region.kind)) return null;
       const elements = host.drawing(region.drawingUid)?.elements;
       if (!Array.isArray(elements)) return null;
-      const { caption, hasRef } = captionRefsInfo(elements, captionIds(region, elements));
+      const frameEl = region.kind === "frame" || region.kind === "cframe" ? elements.find((e) => e && e.id === region.frameId && !e.isDeleted) : null;
+      const { caption, hasRef } = captionRefsInfo(elements, captionIds(region, elements), frameEl?.name ? { frameName: frameEl.name } : undefined);
       if (!hasRef || !caption) return null;
-      return { region, caption, current: region.caption, block };
+      const have = refTokens(region.caption);
+      const missing = [...refTokens(caption)].some((token) => !have.has(token));
+      return { region, caption, current: region.caption, block, missing };
     } catch (error) {
       console.warn("[plexus] caption plan failed", error);
       return null;
@@ -269,6 +326,87 @@ export function createActions({
     return el && el.type === "image" && validCrop(el.crop) ? el : null;
   };
 
+  const settingsNow = () => {
+    try { return getSettings?.() || {}; } catch { return {}; }
+  };
+  const captionMode = () => {
+    const m = settingsNow().captionMode;
+    return CAPTION_MODES.includes(m) ? m : "auto";
+  };
+  const pinPct = () => {
+    const n = Number(settingsNow().pinSize);
+    return PIN_SIZES.includes(n) ? n : 8;
+  };
+  const safe = (fn) => {
+    try { return fn(); } catch { return undefined; }
+  };
+  const resolveBlock = (uid) => host.pullBlock?.(uid)?.string;
+
+  // Words and refs a drawing region's auto caption would carry. frameName only for frame kinds.
+  const drawingCaptions = (elements, ids, frameName) => ({
+    auto: captionRefsFromElements(elements, ids, frameName ? { frameName } : undefined),
+    refs: captionRefsFromElements(elements, ids, { words: false }),
+  });
+
+  // Ask-mode prompt anchor: the selection's viewport rect, or null (the prompt then centres at the top).
+  const anchorRect = (app, bbox) => safe(() => (bbox ? native.viewportRectOf?.(app, bbox) : null)) ?? null;
+
+  // The prompt is held like activeTool: cancelDrawingTool() and dispose() cancel it with no write. null = create nothing.
+  async function askCaption({ initial, select, escape, rect, drawing }) {
+    if (typeof openPrompt !== "function") return initial;
+    let prompt;
+    try {
+      prompt = openPrompt({ doc, rect, initial, select, escape });
+    } catch (error) {
+      console.warn("[plexus] caption prompt failed", error);
+      return null;
+    }
+    activePrompt = prompt;
+    activePromptIsDrawing = drawing;
+    try {
+      const value = await prompt;
+      return typeof value === "string" && !disposed ? value : null;
+    } catch (error) {
+      console.warn("[plexus] caption prompt failed", error);
+      return null;
+    } finally {
+      if (activePrompt === prompt) activePrompt = null;
+    }
+  }
+
+  // Caption by mode: auto writes the auto text, ask prompts with it selected, none keeps source refs only.
+  async function chooseCaption({ auto, refs, rect, drawing }) {
+    const mode = captionMode();
+    if (mode === "none") return refs;
+    if (mode === "ask") return askCaption({ initial: auto, select: true, escape: "empty", rect, drawing });
+    return auto;
+  }
+
+  function labelOf(region, caption = region.caption) {
+    try {
+      const src = host.labelSource?.(region.drawingUid) ?? { string: "", pageTitle: null };
+      return regionLabel({
+        kind: region.kind,
+        caption,
+        drawingTitle: drawingTitleOf(src.string, src.pageTitle),
+        imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
+        resolveBlock,
+      });
+    } catch {
+      return "Region";
+    }
+  }
+
+  // 1 + the largest leading integer among captions of regions on the same image.
+  function nextPinNumber(regions) {
+    let max = 0;
+    for (const { region } of regions) {
+      const m = /^\s*(\d+)\b/.exec(plainCaption(region.caption, resolveBlock));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return max + 1;
+  }
+
   const badTarget = (drawingUid, ids) => {
     if (isId(drawingUid) && ids.length && ids.every(isId)) return false;
     toaster.show("Could not identify this drawing", { kind: "error" });
@@ -280,15 +418,22 @@ export function createActions({
       disposed = true;
       activeTool?.cancel?.();
       activeTool = null;
+      activePrompt?.cancel?.();
+      activePrompt = null;
       stopSpotlight?.();
       stopSpotlight = null;
       legacyDialog?.dispose();
       legacyDialog = null;
+      cleanupDialog?.dispose();
+      cleanupDialog = null;
+      closePolls.clear();
+      for (const revoke of [...revokers]) revoke();
     },
 
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
     cancelDrawingTool() {
       if (activeToolIsDrawing) activeTool?.cancel?.();
+      if (activePromptIsDrawing) activePrompt?.cancel?.();
     },
 
     createAreaRegion: () => once("area", async () => {
@@ -307,23 +452,27 @@ export function createActions({
       const elements = sceneElements(app);
       const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
       let region;
+      let words;
       if (detected.kind === "cframe") {
         const { frame, children } = detected;
-        const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
-        region = { kind: "cframe", drawingUid, frameId: frame.id, caption };
+        words = drawingCaptions(elements, children.map((el) => el.id), frame.name);
+        region = { kind: "cframe", drawingUid, frameId: frame.id };
       } else if (detected.kind === "group") {
-        const caption = captionRefsFromElements(elements, detected.members.map((el) => el.id)) || "Region";
-        region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD, caption };
+        words = drawingCaptions(elements, detected.members.map((el) => el.id));
+        region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD };
       } else {
-        const caption = captionRefsFromElements(elements, ids) || "Region";
-        region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD, caption };
+        words = drawingCaptions(elements, ids);
+        region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD };
       }
+      const caption = await chooseCaption({ ...words, rect: anchorRect(app, commonBounds(elements.filter((e) => ids.includes(e.id)))), drawing: true });
+      if (caption == null || disposed) return null;
+      region.caption = caption;
       return finishCreate(region, await hotSvg(app, region));
     }),
 
     regionCaptionCandidate(regionUid) {
       const plan = relinkPlan(regionUid);
-      return plan && plan.caption !== plan.current ? plan.caption : null;
+      return plan && plan.missing ? plan.caption : null;
     },
 
     relinkRegionCaption: (regionUid) => once(`relink:${regionUid}`, async () => {
@@ -332,7 +481,7 @@ export function createActions({
         toaster.show("No source blocks to link", { kind: "error" });
         return { changed: false, caption: null };
       }
-      if (plan.caption === plan.region.caption) {
+      if (!plan.missing) {
         toaster.show("Caption already linked");
         return { changed: false, caption: plan.caption };
       }
@@ -360,6 +509,28 @@ export function createActions({
       return { changed: true, caption: plan.caption };
     }),
 
+    // Rewrites only the caption tail (head kept byte for byte). Resolves true when the block changed.
+    nameRegion: (regionUid, text) => once(`name:${regionUid}`, () => nameRegionOnce(regionUid, text)),
+
+    captionCleanupDryRun: () => once("cleanup-dry-run", cleanupDryRunOnce),
+
+    applyCaptionCleanup: (report) => once("cleanup-apply", () => applyCleanupOnce(report ?? cleanupReport)),
+
+    undoCaptionCleanup: () => once("cleanup-undo", undoCleanupOnce),
+
+    copyCropPng: (regionUid) => once(`copy-png:${regionUid}`, () => copyCropPngOnce(regionUid)),
+
+    copyCropSvg: (regionUid) => once(`copy-svg:${regionUid}`, () => copyCropSvgOnce(regionUid)),
+
+    downloadCrop: (regionUid) => once(`download:${regionUid}`, () => downloadCropOnce(regionUid)),
+
+    insertCropImage: (regionUid, blockUid) => once(`insert:${regionUid}`, () => insertCropImageOnce(regionUid, blockUid)),
+
+    copyAlias: (regionUid) => once(`alias:${regionUid}`, () => copyAliasOnce(regionUid)),
+
+    // After a full-screen editor closes: refresh crops only when the drawing's hash moved off the one seen at mount.
+    refreshAfterClose: (drawingUid, mountHash) => refreshAfterCloseOnce(drawingUid, mountHash),
+
     isFrameSelected() {
       const editor = native.activeEditor(doc);
       if (!editor) return false;
@@ -383,7 +554,9 @@ export function createActions({
       }
       if (badTarget(drawingUid, [detected.frame.id])) return null;
       const { frame, children } = detected;
-      const caption = captionRefsFromElements(elements, children.map((el) => el.id)) || frame.name || "Frame";
+      const words = drawingCaptions(elements, children.map((el) => el.id), frame.name);
+      const caption = await chooseCaption({ ...words, rect: anchorRect(app, [detected.frame.x, detected.frame.y, detected.frame.x + detected.frame.width, detected.frame.y + detected.frame.height]), drawing: true });
+      if (caption == null || disposed) return null;
       const region = { kind: "frame", drawingUid, frameId: frame.id, pad: DEFAULT_PAD, caption };
       return finishCreate(region, await hotSvg(app, region));
     }),
@@ -416,14 +589,27 @@ export function createActions({
         if (activeTool === tool) activeTool = null;
       }
       if (!picked || disposed) return null;
+      if (picked.kind === "pin") return pinInDrawing({ app, element, drawingUid, x: picked.x, y: picked.y });
+      const rect = anchorRect(app, elementBounds(element));
       let region;
-      picked = displayedToNatural(element, picked);
-      if (Array.isArray(picked)) {
-        region = { kind: "rect", drawingUid, el: element.id, f: picked, caption: "Image region" };
-      } else {
-        const p = simplifyPoly(picked.p);
+      if (picked.kind === "rect" && !picked.altKey && picked.f[2] * picked.f[3] >= WHOLE_IMAGE_AREA) {
+        // The whole drawing image picked as a whole: an area region of that element.
+        const words = drawingCaptions(sceneElements(app), [element.id]);
+        const caption = await chooseCaption({ ...words, rect, drawing: true });
+        if (caption == null || disposed) return null;
+        region = { kind: "area", drawingUid, ids: [element.id], pad: 0, caption };
+      } else if (picked.kind === "rect") {
+        const caption = await chooseCaption({ auto: "", refs: "", rect, drawing: true });
+        if (caption == null || disposed) return null;
+        region = { kind: "rect", drawingUid, el: element.id, f: displayedToNatural(element, picked.f), caption };
+      } else if (picked.kind === "lasso") {
+        const p = simplifyPoly(displayedToNatural(element, { p: picked.p }).p);
         if (!p || !polyBBox(p)) return null;
-        region = { kind: "poly", drawingUid, el: element.id, p, caption: "Image region" };
+        const caption = await chooseCaption({ auto: "", refs: "", rect, drawing: true });
+        if (caption == null || disposed) return null;
+        region = { kind: "poly", drawingUid, el: element.id, p, caption };
+      } else {
+        return null;
       }
       return finishCreate(region, await hotSvg(app, region));
     }),
@@ -455,7 +641,9 @@ export function createActions({
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
-      const region = { kind: "rect", drawingUid, el: element.id, f: cropToFraction(element.crop), caption: "Image crop" };
+      const caption = await chooseCaption({ auto: "", refs: "", rect: anchorRect(app, elementBounds(element)), drawing: true });
+      if (caption == null || disposed) return null;
+      const region = { kind: "rect", drawingUid, el: element.id, f: cropToFraction(element.crop), caption };
       return finishCreate(region, await hotSvg(app, region));
     }),
 
@@ -542,22 +730,41 @@ export function createActions({
         if (activeTool === tool) activeTool = null;
       }
       if (!picked || disposed) return null;
+      if (picked.kind === "pin") return pinInPlain({ blockUid, ref, imageRect, x: picked.x, y: picked.y });
+      const anchor = { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height };
+      if (picked.kind === "rect" && !picked.altKey && picked.f[2] * picked.f[3] >= WHOLE_IMAGE_AREA) {
+        // Nearly the whole image: no region, just the image block's ref. Alt while releasing forces a region.
+        try {
+          const write = () => clipboard.writeText(`((${blockUid}))`);
+          await (native.withClipboard ? native.withClipboard(write) : write());
+          toaster.show("Whole image: copied the image block ref. Hold Alt while releasing to make a region.");
+        } catch (error) {
+          console.warn("[plexus] clipboard failed", error);
+          toaster.show("Clipboard access was blocked", { kind: "error" });
+        }
+        return null;
+      }
       let region;
-      if (Array.isArray(picked)) {
-        region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked, caption: "Image region" };
-      } else {
+      if (picked.kind === "rect") {
+        const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
+        if (caption == null || disposed) return null;
+        region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked.f, caption };
+      } else if (picked.kind === "lasso") {
         const p = simplifyPoly(picked.p);
         if (!p || !polyBBox(p)) return null;
-        region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption: "Image region" };
+        const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
+        if (caption == null || disposed) return null;
+        region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption };
+      } else {
+        return null;
       }
-      return finishWith(region, async (uid) => {
-        const target = { url: ref.url, hash: fnv1a(ref.url) };
-        const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
-        if (rendered.error) return;
-        const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "png" });
-        await cache.put(key, rendered.blob, { w: rendered.w, h: rendered.h });
-      });
+      return finishWith(region, plainCachePut(region, ref));
     }),
+
+    // A pin: a small square region at a point, always prompting for its caption. Give { blockUid, index?, imageRect? } for
+    // an image block, else { element?, drawingUid? } for a drawing image in the open editor. Point is { x, y } as
+    // displayed-box fractions (or x and y directly).
+    createPinRegion: (opts = {}) => once("pin", () => pinRegionOnce(opts)),
 
     // Cache only unless render is set; never touches Excalidraw when render is false.
     thumbnail: (uid, { maxWidth = 480, render = false } = {}) => thumbnailOnce(uid, { maxWidth, render }),
@@ -627,6 +834,607 @@ export function createActions({
     },
   };
 
+  function plainCachePut(region, ref) {
+    return async (uid) => {
+      const target = { url: ref.url, hash: fnv1a(ref.url) };
+      const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+      if (rendered.error) return;
+      const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "png" });
+      await cache.put(key, rendered.blob, { w: rendered.w, h: rendered.h });
+    };
+  }
+
+  async function pinInDrawing({ app, element, drawingUid, x, y }) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const f = pinFraction({ x, y, width: element.width, height: element.height, pct: pinPct() });
+    const same = (safe(() => host.regionsOf?.(drawingUid)) || []).filter(({ region }) => region?.supported && (region.kind === "rect" || region.kind === "poly") && region.el === element.id);
+    const initial = settingsNow().numberPins ? String(nextPinNumber(same)) : "";
+    const rect = safe(() => native.viewportRectOf?.(app, [element.x + f[0] * element.width, element.y + f[1] * element.height, element.x + (f[0] + f[2]) * element.width, element.y + (f[1] + f[3]) * element.height]));
+    const caption = await askCaption({ initial, select: false, escape: "empty", rect, drawing: true });
+    if (caption == null || disposed) return null;
+    const region = { kind: "rect", drawingUid, el: element.id, f: displayedToNatural(element, f), caption };
+    return finishCreate(region, await hotSvg(app, region));
+  }
+
+  async function pinInPlain({ blockUid, ref, imageRect, x, y }) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const f = pinFraction({ x, y, width: imageRect.width, height: imageRect.height, pct: pinPct() });
+    const same = (safe(() => host.regionsOf?.(blockUid)) || []).filter(({ region }) => region?.supported && (region.kind === "imgrect" || region.kind === "imgpoly") && region.i === ref.index);
+    const initial = settingsNow().numberPins ? String(nextPinNumber(same)) : "";
+    const rect = { left: imageRect.left + f[0] * imageRect.width, top: imageRect.top + f[1] * imageRect.height, width: f[2] * imageRect.width, height: f[3] * imageRect.height };
+    const caption = await askCaption({ initial, select: false, escape: "empty", rect, drawing: false });
+    if (caption == null || disposed) return null;
+    const region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f, caption };
+    return finishWith(region, plainCachePut(region, ref));
+  }
+
+  async function pinRegionOnce(opts) {
+    const point = opts?.point ?? opts ?? {};
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (opts?.blockUid) {
+      const blockUid = opts.blockUid;
+      const block = isId(blockUid) ? host.pullBlock(blockUid) : null;
+      const refs = block ? parseImageRefs(block.string) : [];
+      const ref = refs.find((r) => r.index === (opts.index ?? refs[0]?.index));
+      if (!ref) {
+        toaster.show("No image in this block", { kind: "error" });
+        return null;
+      }
+      let imageRect = opts.imageRect;
+      if (!imageRect) {
+        const img = findRenderedImage(blockUid, refs.indexOf(ref));
+        if (!img) {
+          toaster.show("Show the image on screen first", { kind: "error" });
+          return null;
+        }
+        imageRect = contentRect(img, doc.defaultView);
+      }
+      return pinInPlain({ blockUid, ref, imageRect, x, y });
+    }
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const { app } = editor;
+    const ids = native.selectedElementIds(app);
+    const element = opts?.element ?? (ids.length === 1 ? sceneElements(app).find((el) => el.id === ids[0] && !el.isDeleted) : null);
+    if (!element || element.type !== "image") {
+      toaster.show("Select exactly one image", { kind: "error" });
+      return null;
+    }
+    if (element.angle) {
+      toaster.show("Rotated images are not supported", { kind: "error" });
+      return null;
+    }
+    const drawingUid = opts?.drawingUid ?? editor.drawingUid;
+    if (badTarget(drawingUid, [element.id])) return null;
+    return pinInDrawing({ app, element, drawingUid, x, y });
+  }
+
+  function emitChange(uid) {
+    try {
+      emit({ uid, kind: "region" });
+    } catch (error) {
+      console.warn("[plexus] change emit failed", error);
+    }
+  }
+
+  async function nameRegionOnce(regionUid, text) {
+    const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
+    const region = block ? parseRegion(block.string) : null;
+    if (!region?.supported) {
+      toaster.show("Region cannot be named", { kind: "error" });
+      return false;
+    }
+    const tail = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (tail === region.caption) return false;
+    const next = headPreservingString(block.string, tail);
+    if (next == null) {
+      console.warn("[plexus] name region round-trip mismatch", regionUid);
+      toaster.show("Could not name region", { kind: "error" });
+      return false;
+    }
+    try {
+      await host.updateRegionString(region.drawingUid, regionUid, next);
+    } catch (error) {
+      console.warn("[plexus] name region failed", error);
+      toaster.show("Could not name region, try again", { kind: "error" });
+      return false;
+    }
+    emitChange(regionUid);
+    try {
+      await refreshRegion?.(regionUid, { purge: false });
+    } catch (error) {
+      console.warn("[plexus] refresh after naming failed", error);
+    }
+    return true;
+  }
+
+  // Report of the placeholder captions that could be cleared. Reads only.
+  function cleanupScan() {
+    let rows;
+    try {
+      rows = host.allRegionBlocks?.() ?? [];
+    } catch (error) {
+      console.warn("[plexus] region scan failed", error);
+      toaster.show("Could not scan for regions", { kind: "error" });
+      return null;
+    }
+    const candidates = [];
+    const skipped = [];
+    let scanned = 0;
+    const drawings = new Map();
+    const elementsOf = (uid) => {
+      if (!drawings.has(uid)) drawings.set(uid, safe(() => host.drawing(uid)?.elements) ?? null);
+      return drawings.get(uid);
+    };
+    for (const row of rows) {
+      const region = parseRegion(row.string);
+      if (!region?.supported) continue;
+      scanned += 1;
+      if (!isPlaceholderCaption(region.caption, region.kind)) continue;
+      const caption = region.caption.trim();
+      const info = { uid: row.uid, kind: region.kind, drawingUid: region.drawingUid, caption };
+      const skip = (reason) => skipped.push({ ...info, reason });
+      if (RELINK_KINDS.has(region.kind)) {
+        const elements = elementsOf(region.drawingUid);
+        if (!Array.isArray(elements)) { skip("drawing not readable"); continue; }
+        const isFrameKind = region.kind === "frame" || region.kind === "cframe";
+        const frameEl = isFrameKind ? elements.find((e) => e && e.id === region.frameId && !e.isDeleted && isFrameEl(e)) : null;
+        if (isFrameKind && !frameEl) { skip("frame missing"); continue; }
+        const name = String(frameEl?.name ?? "").trim();
+        if (isFrameKind && name === caption) { skip(`frame is named "${name}"`); continue; }
+        if (isFrameKind && name && caption === "Frame") { skip("frame has a name"); continue; }
+        const auto = captionRefsFromElements(elements, captionIds(region, elements));
+        if (auto === caption) { skip("text in the drawing reads the same"); continue; }
+      }
+      const after = headPreservingString(row.string, "");
+      if (after == null) { skip("could not rewrite safely"); continue; }
+      candidates.push({ ...info, before: row.string, after });
+    }
+    return { graph: safe(() => host.graphName?.()) ?? null, scanned, candidates, skipped };
+  }
+
+  async function cleanupDryRunOnce() {
+    const report = cleanupScan();
+    if (!report) return null;
+    cleanupReport = report;
+    if (!cleanupDialog) {
+      cleanupDialog = createCleanup({
+        doc,
+        onApply: async (r) => {
+          if (busy.has("cleanup-apply")) return;
+          const n = r?.candidates?.length ?? 0;
+          let ok = false;
+          try { ok = confirm(`Clear ${n} placeholder caption${n === 1 ? "" : "s"} in graph "${safe(() => host.graphName?.()) ?? ""}"? "Plexus: Undo caption cleanup" restores them.`) === true; } catch { ok = false; }
+          if (!ok) return;
+          const result = await once("cleanup-apply", () => applyCleanupOnce(r));
+          if (result) cleanupDialog?.close();
+        },
+        onCopy: async (r) => {
+          const write = () => clipboard.writeText(JSON.stringify(r, null, 2));
+          try {
+            await (native.withClipboard ? native.withClipboard(write) : write());
+            toaster.show("Report copied");
+          } catch (error) {
+            console.warn("[plexus] clipboard failed", error);
+            toaster.show("Clipboard access was blocked", { kind: "error" });
+          }
+        },
+      });
+    }
+    cleanupDialog.show({ report });
+    return report;
+  }
+
+  async function applyCleanupOnce(report) {
+    const list = report?.candidates;
+    if (!Array.isArray(list)) {
+      toaster.show("Run the cleanup dry run first", { kind: "error" });
+      return null;
+    }
+    const changed = [];
+    const skipped = [];
+    const failed = [];
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (disposed) break;
+      const block = safe(() => host.pullBlock(c.uid));
+      if (!block || block.string !== c.before) {
+        skipped.push({ uid: c.uid, reason: "changed since the dry run" });
+        continue;
+      }
+      try {
+        await host.updateRegionString(c.drawingUid, c.uid, c.after);
+      } catch (error) {
+        console.warn("[plexus] caption cleanup write failed", c.uid, error);
+        failed.push({ uid: c.uid, error: String(error?.message ?? error) });
+        for (const rest of list.slice(i + 1)) skipped.push({ uid: rest.uid, reason: "not attempted" });
+        break;
+      }
+      changed.push({ uid: c.uid, before: c.before, after: c.after });
+      emitChange(c.uid);
+      try {
+        await refreshRegion?.(c.uid, { purge: false });
+      } catch (error) {
+        console.warn("[plexus] refresh after cleanup failed", error);
+      }
+    }
+    if (changed.length) undoSlot = { changes: changed };
+    const tail = `${skipped.length ? `, ${skipped.length} skipped` : ""}${failed.length ? `, ${failed.length} failed` : ""}`;
+    toaster.show(`Cleared ${changed.length} placeholder caption${changed.length === 1 ? "" : "s"}${tail}`, failed.length ? { kind: "error" } : undefined);
+    return { changed, skipped, failed };
+  }
+
+  async function undoCleanupOnce() {
+    if (!undoSlot) {
+      toaster.show("Nothing to undo");
+      return null;
+    }
+    const { changes } = undoSlot;
+    const restored = [];
+    const skipped = [];
+    const failed = [];
+    for (let i = changes.length - 1; i >= 0; i--) {
+      const c = changes[i];
+      if (disposed) { undoSlot = { changes: changes.slice(0, i + 1) }; break; }
+      const block = safe(() => host.pullBlock(c.uid));
+      const region = block ? parseRegion(block.string) : null;
+      if (!block || block.string !== c.after || !region?.supported) {
+        skipped.push({ uid: c.uid, reason: "changed since the cleanup" });
+        continue;
+      }
+      try {
+        await host.updateRegionString(region.drawingUid, c.uid, c.before);
+      } catch (error) {
+        console.warn("[plexus] caption cleanup undo failed", c.uid, error);
+        failed.push({ uid: c.uid, error: String(error?.message ?? error) });
+        undoSlot = { changes: changes.slice(0, i + 1) };
+        break;
+      }
+      restored.push(c.uid);
+      emitChange(c.uid);
+      try {
+        await refreshRegion?.(c.uid, { purge: false });
+      } catch (error) {
+        console.warn("[plexus] refresh after undo failed", error);
+      }
+    }
+    if (!failed.length && !disposed) undoSlot = null;
+    toaster.show(`Restored ${restored.length} caption${restored.length === 1 ? "" : "s"}${skipped.length ? `, ${skipped.length} skipped` : ""}${failed.length ? `, ${failed.length} failed` : ""}`, failed.length ? { kind: "error" } : undefined);
+    return { restored, skipped, failed };
+  }
+
+  // Everything synchronous a crop export needs: the region, where its pixels live, and the cache keys (regionref's keysFor).
+  function cropPrep(regionUid) {
+    const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
+    const region = block ? parseRegion(block.string) : null;
+    if (!region?.supported) {
+      toaster.show("Region cannot be copied", { kind: "error" });
+      return null;
+    }
+    const target = resolveRegionTarget(host, region);
+    if (target.error) {
+      toaster.show(target.error, { kind: "error" });
+      return null;
+    }
+    const gk = geometryKey(region);
+    return {
+      uid: regionUid,
+      region,
+      target,
+      keys: {
+        png: cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
+        svg: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+      },
+    };
+  }
+
+  // Starts reading a cache entry at once: the LRU may revoke its URL. Never rejects.
+  function readEntry(entry) {
+    if (!entry?.url) return null;
+    let p;
+    try { p = Promise.resolve(fetchBlob(entry.url)); } catch { return null; }
+    const safeP = p.catch(() => null);
+    return safeP;
+  }
+
+  function hasExternalHref(svg) {
+    const s = String(svg).replace(/<a\b[^>]*>/gi, "<a>");
+    for (const m of s.matchAll(SVG_HREF_RE)) if (!/^(data:|#)/i.test(m[1].trim())) return true;
+    return false;
+  }
+
+  async function rasterizeSvg(svg) {
+    if (rasterize) return rasterize(svg, { scale: 2 });
+    const { w, h } = svgSize(svg);
+    if (!(w > 0) || !(h > 0)) throw new Error("[plexus] svg has no size");
+    const url = urls.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    try {
+      const View = doc.defaultView;
+      const img = new (View?.Image ?? globalThis.Image)();
+      img.src = url;
+      await img.decode();
+      const canvas = doc.createElement("canvas");
+      canvas.width = w * 2;
+      canvas.height = h * 2;
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      return await new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("[plexus] toBlob failed"))), "image/png"));
+    } finally {
+      urls.revokeObjectURL(url);
+    }
+  }
+
+  function asPng(blob) {
+    return blob.type === "image/png" ? blob : new Blob([blob], { type: "image/png" });
+  }
+
+  // PNG bytes for a region, best source first. The producer starts synchronously (its memory reads begin before the
+  // first await) so callers can hand `promise` straight to a ClipboardItem inside the user gesture.
+  function startPng(regionUid) {
+    const prep = cropPrep(regionUid);
+    if (!prep) return null;
+    const { region, target, keys } = prep;
+    const memSvg = keys.svg ? readEntry(cache.peek?.(keys.svg)) : null;
+    const memPng = readEntry(cache.peek?.(keys.png));
+    const job = { region, lowRes: false, promise: null };
+    const fromSvg = async (blobP) => {
+      try {
+        const blob = await blobP;
+        if (!blob) return null;
+        const text = await blob.text();
+        if (hasExternalHref(text)) return null;
+        return asPng(await rasterizeSvg(text));
+      } catch {
+        return null;
+      }
+    };
+    job.promise = (async () => {
+      let png = await fromSvg(memSvg);
+      if (png) return png;
+      const pngBlob = await (memPng || readEntry(await cache.get(keys.png)));
+      if (pngBlob) return asPng(pngBlob);
+      if (keys.svg) {
+        png = await fromSvg(readEntry(await cache.get(keys.svg)));
+        if (png) return png;
+      }
+      const rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+      if (rendered.error) throw new Error(`[plexus] ${rendered.error}`);
+      if (!isImageKind(region.kind)) job.lowRes = true;
+      return asPng(rendered.blob);
+    })();
+    job.promise.catch(noop);
+    return job;
+  }
+
+  function clipboardWritable() {
+    if (typeof ClipboardItemCtor !== "function" || typeof clipboard?.write !== "function") {
+      toaster.show("Copying images is not supported here", { kind: "error" });
+      return false;
+    }
+    return true;
+  }
+
+  async function copyCropPngOnce(regionUid) {
+    if (native.clipboardBusy?.()) {
+      toaster.show("Busy capturing a crop, try again", { kind: "error" });
+      return false;
+    }
+    if (!clipboardWritable()) return false;
+    const job = startPng(regionUid);
+    if (!job) return false;
+    try {
+      await clipboard.write([new ClipboardItemCtor({ "image/png": job.promise })]);
+    } catch (error) {
+      console.warn("[plexus] copy crop failed", error);
+      toaster.show("Could not copy the crop", { kind: "error" });
+      return false;
+    }
+    toaster.show(job.lowRes ? "Copied at 1×; open the drawing for a sharper copy" : "Crop copied as PNG");
+    return true;
+  }
+
+  async function copyCropSvgOnce(regionUid) {
+    if (native.clipboardBusy?.()) {
+      toaster.show("Busy capturing a crop, try again", { kind: "error" });
+      return false;
+    }
+    if (!clipboardWritable()) return false;
+    const prep = cropPrep(regionUid);
+    if (!prep) return false;
+    if (!prep.keys.svg) {
+      toaster.show("SVG copy is for drawing regions", { kind: "error" });
+      return false;
+    }
+    const mem = readEntry(cache.peek?.(prep.keys.svg));
+    const text = (async () => {
+      let blob = await mem;
+      if (!blob) blob = await readEntry(await cache.get(prep.keys.svg));
+      if (!blob) throw Object.assign(new Error("[plexus] no svg"), { noSvg: true });
+      return blob.text();
+    })();
+    text.catch(noop);
+    const data = { "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) };
+    if (ClipboardItemCtor.supports?.("image/svg+xml")) data["image/svg+xml"] = text.then((t) => new Blob([t], { type: "image/svg+xml" }));
+    for (const v of Object.values(data)) v.catch(noop);
+    try {
+      await clipboard.write([new ClipboardItemCtor(data)]);
+    } catch (error) {
+      const missing = await text.then(() => false, (e) => !!e?.noSvg);
+      if (missing) {
+        toaster.show("Open the drawing to copy as SVG", { kind: "error" });
+        return false;
+      }
+      console.warn("[plexus] copy svg failed", error);
+      toaster.show("Could not copy the crop", { kind: "error" });
+      return false;
+    }
+    toaster.show("Crop copied as SVG");
+    return true;
+  }
+
+  function stripBrackets(text) {
+    return String(text).replace(/[\[\]()]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function fileNameOf(label) {
+    return `${String(label).replace(/[^\w .-]/g, "").trim().slice(0, 60).trim() || "plexus-crop"}.png`;
+  }
+
+  async function downloadCropOnce(regionUid) {
+    const job = startPng(regionUid);
+    if (!job) return false;
+    let blob;
+    try {
+      blob = await job.promise;
+    } catch (error) {
+      console.warn("[plexus] download crop failed", error);
+      toaster.show("Could not render the crop", { kind: "error" });
+      return false;
+    }
+    if (disposed) return false;
+    const url = urls.createObjectURL(blob);
+    try {
+      const a = doc.createElement("a");
+      a.href = url;
+      a.download = fileNameOf(labelOf(job.region));
+      if (a.style) a.style.display = "none";
+      doc.body?.append?.(a);
+      a.click();
+      a.remove?.();
+    } catch (error) {
+      console.warn("[plexus] download crop failed", error);
+      urls.revokeObjectURL(url);
+      toaster.show("Could not download the crop", { kind: "error" });
+      return false;
+    }
+    const revoke = () => {
+      if (!revokers.delete(revoke)) return;
+      clearTimeout(timer);
+      urls.revokeObjectURL(url);
+    };
+    const timer = setTimeout(revoke, revokeDelayMs);
+    timer.unref?.();
+    revokers.add(revoke);
+    toaster.show(job.lowRes ? "Downloaded at 1×; open the drawing for a sharper copy" : "Crop downloaded");
+    return true;
+  }
+
+  async function insertCropImageOnce(regionUid, blockUid) {
+    if (host.isEncrypted?.()) {
+      toaster.show("Insert crop is not available on encrypted graphs yet", { kind: "error" });
+      return null;
+    }
+    const target = isId(blockUid) ? host.pullBlock(blockUid) : null;
+    if (!target) {
+      toaster.show("Could not find the block to insert after", { kind: "error" });
+      return null;
+    }
+    let at;
+    try {
+      at = api.data.pull("[:block/order {:block/_children [:block/uid :block/string]}]", [":block/uid", blockUid]);
+    } catch (error) {
+      console.warn("[plexus] parent pull failed", error);
+    }
+    const parent = [at?.[":block/_children"]].flat()[0];
+    const parentUid = parent?.[":block/uid"];
+    if (!parentUid) {
+      toaster.show("Could not find the block to insert after", { kind: "error" });
+      return null;
+    }
+    if (isContainerString(target.string) || isContainerString(parent[":block/string"])) {
+      toaster.show("Pick a block outside the regions container", { kind: "error" });
+      return null;
+    }
+    const job = startPng(regionUid);
+    if (!job) return null;
+    let markdown;
+    try {
+      const png = await job.promise;
+      const label = stripBrackets(labelOf(job.region)) || "Region";
+      const file = new File([png], fileNameOf(labelOf(job.region)), { type: "image/png" });
+      const res = await (upload ? upload(file) : api.file.upload({ file }));
+      const text = typeof res === "string" ? res : res?.url ?? "";
+      const md = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(text.trim());
+      const url = md ? md[1] : text.trim();
+      if (!url) throw new Error("[plexus] upload returned nothing");
+      markdown = `![${label}](${url})`;
+    } catch (error) {
+      console.warn("[plexus] insert crop upload failed", error);
+      toaster.show("Could not upload the crop", { kind: "error" });
+      return null;
+    }
+    if (disposed) return null;
+    try {
+      const uid = api.util.generateUID();
+      await api.data.block.create({
+        location: { "parent-uid": parentUid, order: (at[":block/order"] ?? 0) + 1 },
+        block: { uid, string: markdown },
+      });
+      toaster.show("Crop inserted as an image block");
+      return uid;
+    } catch (error) {
+      console.warn("[plexus] insert crop failed", error);
+      toaster.show("Could not insert the crop", { kind: "error" });
+      return null;
+    }
+  }
+
+  async function copyAliasOnce(regionUid) {
+    const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
+    const region = block ? parseRegion(block.string) : null;
+    if (!region?.supported) {
+      toaster.show("Region cannot be copied", { kind: "error" });
+      return false;
+    }
+    const label = stripBrackets(labelOf(region)) || "Region";
+    try {
+      const write = () => clipboard.writeText(`[${label}](((${regionUid})))`);
+      await (native.withClipboard ? native.withClipboard(write) : write());
+    } catch (error) {
+      console.warn("[plexus] clipboard failed", error);
+      toaster.show("Clipboard access was blocked", { kind: "error" });
+      return false;
+    }
+    toaster.show("Alias copied");
+    return true;
+  }
+
+  async function refreshAfterCloseOnce(drawingUid, mountHash) {
+    if (!isId(drawingUid) || disposed) return 0;
+    const token = {};
+    closePolls.set(drawingUid, token);
+    const live = () => !disposed && closePolls.get(drawingUid) === token;
+    const end = Date.now() + closeWindowMs;
+    let last = mountHash ?? "";
+    let count = 0;
+    try {
+      for (;;) {
+        if (!live()) return count;
+        if (native.activeEditor(doc)?.drawingUid === drawingUid) return count;
+        const hash = safe(() => host.drawing(drawingUid)?.hash) ?? "";
+        if (hash !== last) {
+          last = hash;
+          for (const { uid } of safe(() => host.regionsOf(drawingUid)) || []) {
+            if (!live()) break;
+            try {
+              await refreshRegion?.(uid, { purge: false });
+              count += 1;
+            } catch (error) {
+              console.warn("[plexus] refresh after close failed", uid, error);
+            }
+          }
+        }
+        if (Date.now() >= end) return count;
+        await sleep(closePollMs);
+      }
+    } finally {
+      if (closePolls.get(drawingUid) === token) closePolls.delete(drawingUid);
+    }
+  }
+
   async function refreshCrops(uid) {
     const editor = native.activeEditor(doc);
     const hot = !!editor && editor.drawingUid === uid;
@@ -674,7 +1482,7 @@ export function createActions({
     // Mounted slides are captured from the live scene, so key them on the live scene, not the last saved hash.
     const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
     const slides = frames.map((frame) => {
-      const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "Frame" };
+      const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "" };
       const gk = geometryKey(region);
       return {
         frame,

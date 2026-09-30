@@ -1,6 +1,7 @@
 import { REGION_BUTTON_CLASS } from "../model/region.js";
 
 const SKIP_SELECTOR = ".plexus-offscreen, .plexus-root";
+const ALIAS_CLASS = "rm-alias--block";
 const EDITOR_OUTER = ".excalidraw-outer-container.full-screen";
 
 function skipped(node) {
@@ -13,12 +14,16 @@ function underFullScreen(el) {
 
 // Cheap per-added-node classification: class checks only, no layout reads.
 export function classifyAddedNode(node) {
-  const out = { regionButtons: [], editors: [] };
+  const out = { regionButtons: [], editors: [], aliases: [] };
   if (!node || node.nodeType !== 1 || skipped(node)) return out;
 
   if (node.classList?.contains(REGION_BUTTON_CLASS)) out.regionButtons.push(node);
   const buttons = node.getElementsByClassName?.(REGION_BUTTON_CLASS);
   if (buttons) for (let i = 0; i < buttons.length; i++) out.regionButtons.push(buttons[i]);
+
+  if (node.classList?.contains(ALIAS_CLASS)) out.aliases.push(node);
+  const aliases = node.getElementsByClassName?.(ALIAS_CLASS);
+  if (aliases) for (let i = 0; i < aliases.length; i++) out.aliases.push(aliases[i]);
 
   if (node.classList?.contains("excalidraw")) {
     if (underFullScreen(node)) out.editors.push(node);
@@ -33,7 +38,7 @@ export function classifyAddedNode(node) {
   return out;
 }
 
-export function createDiscovery({ root, onRegionButton, onEditorMount, onEditorUnmount, MutationObserverImpl = globalThis.MutationObserver }) {
+export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEditorUnmount, MutationObserverImpl = globalThis.MutationObserver }) {
   let trackedEditor = null;
   let disposed = false;
 
@@ -51,8 +56,9 @@ export function createDiscovery({ root, onRegionButton, onEditorMount, onEditorU
     safe(onEditorMount, el);
   };
 
-  const handle = ({ regionButtons, editors }) => {
+  const handle = ({ regionButtons, editors, aliases = [] }) => {
     for (const btn of regionButtons) safe(onRegionButton, btn);
+    for (const a of aliases) safe(onAlias, a);
     for (const el of editors) mountEditor(el);
   };
 
@@ -78,7 +84,8 @@ export function createDiscovery({ root, onRegionButton, onEditorMount, onEditorU
       try {
         const regionButtons = Array.from(root.querySelectorAll(`.${REGION_BUTTON_CLASS}`)).filter((el) => !skipped(el));
         const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el));
-        handle({ regionButtons, editors });
+        const aliases = Array.from(root.querySelectorAll(`a.${ALIAS_CLASS}`)).filter((el) => !skipped(el));
+        handle({ regionButtons, editors, aliases });
       } catch (error) {
         console.warn("[plexus] scanExisting failed", error);
       }

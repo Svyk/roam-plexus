@@ -85,6 +85,26 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return out;
   }
 
+  // { string, pageTitle } of a block; pageTitle is set only when its direct parent is a page. Null for a missing block.
+  function labelSource(uid) {
+    if (!uid) return null;
+    const raw = api.data.pull("[:block/uid :block/string {:block/_children [:node/title]}]", [":block/uid", uid]);
+    if (!raw || !raw[":block/uid"]) return null;
+    const parents = raw[":block/_children"];
+    const parent = Array.isArray(parents) ? parents[0] : parents;
+    return { string: raw[":block/string"] ?? "", pageTitle: parent?.[":node/title"] ?? null };
+  }
+
+  const REGION_ROWS_QUERY = `[:find ?u ?s ?cu :where [?c :block/string "${CONTAINER_STRING}"] [?c :block/uid ?cu] [?c :block/children ?b] [?b :block/uid ?u] [?b :block/string ?s]]`;
+
+  // Every child of a region container in the graph: [{ uid, string, containerUid }], stable by uid.
+  function allRegionBlocks() {
+    const rows = api.data.q(REGION_ROWS_QUERY) || [];
+    return rows
+      .map((r) => ({ uid: r[0], string: String(r[1] ?? ""), containerUid: r[2] }))
+      .sort((a, b) => (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
+  }
+
   async function ensureRegionContainer(drawingUid) {
     const existing = findContainer(pullBlock(drawingUid));
     if (existing) return existing.uid;
@@ -257,6 +277,8 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     pullBlock,
     drawing,
     regionsOf,
+    labelSource,
+    allRegionBlocks,
     ensureRegionContainer,
     createRegion,
     updateRegionString,

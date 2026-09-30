@@ -30,7 +30,7 @@ test("refOverrides memoized and frozen", () => {
   const a = readSettings(api).refOverrides;
   assert.equal(a, readSettings(api).refOverrides);
   assert.ok(Object.isFrozen(a));
-  assert.deepEqual(a, { "a|b": "link" });
+  assert.deepEqual(a, { "a|b": { mode: "link" } });
 });
 
 test("inlineDisplay falls back", () => {
@@ -74,4 +74,54 @@ test("showBacklinks defaults on, follows the stored value, and has a panel switc
   const item = createSettingsPanel().settings.find((x) => x.id === "show-backlinks");
   assert.equal(item.name, "Show backlinks on canvas");
   assert.equal(item.action.type, "switch");
+});
+
+test("caption settings: defaults, normalization, panel", () => {
+  const d = readSettings(fakeApi());
+  assert.equal(d.captionDisplay, "written");
+  assert.equal(d.captionMode, "auto");
+  assert.equal(d.pinSize, 8);
+  assert.equal(d.numberPins, false);
+  const s = readSettings(fakeApi({ "caption-display": "never", "caption-mode": "none", "pin-size": "12", "number-pins": true }));
+  assert.deepEqual([s.captionDisplay, s.captionMode, s.pinSize, s.numberPins], ["never", "none", 12, true]);
+  assert.equal(readSettings(fakeApi({ "pin-size": 4 })).pinSize, 4);
+  for (const bad of ["zzz", "", 5, null]) {
+    const n = readSettings(fakeApi({ "caption-display": bad, "caption-mode": bad, "pin-size": bad }));
+    assert.deepEqual([n.captionDisplay, n.captionMode, n.pinSize], ["written", "auto", 8]);
+  }
+  const calls = [];
+  const items = createSettingsPanel({ onChange: () => calls.push(1) }).settings;
+  const byId = (id) => items.find((x) => x.id === id);
+  assert.deepEqual(byId("caption-display").action.items, ["written", "always", "never"]);
+  assert.deepEqual(byId("caption-mode").action.items, ["auto", "ask", "none"]);
+  assert.deepEqual(byId("pin-size").action.items, ["4", "8", "12"]);
+  assert.equal(byId("number-pins").action.type, "switch");
+  assert.match(byId("caption-mode").description, /stores no words; links to source blocks are still stored/);
+  byId("caption-display").action.onChange();
+  assert.equal(calls.length, 1);
+  for (const id of ["caption-mode", "pin-size", "number-pins"]) assert.equal(byId(id).action.onChange, undefined);
+  assert.equal(SETTING_IDS.captionDisplay, "caption-display");
+  assert.equal(SETTING_IDS.captionMode, "caption-mode");
+  assert.equal(SETTING_IDS.pinSize, "pin-size");
+  assert.equal(SETTING_IDS.numberPins, "number-pins");
+});
+
+test("setRefOverride patches merge, string and null shorthands keep caption", async () => {
+  const api = fakeApi();
+  await setRefOverride(api, "b", "r", { caption: "hide" });
+  await setRefOverride(api, "b", "r", "link");
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), { "b|r": { mode: "link", caption: "hide" } });
+  await setRefOverride(api, "b", "r", null);
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), { "b|r": { caption: "hide" } });
+  await setRefOverride(api, "b", "r", { caption: null });
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), {});
+  await setRefOverride(api, "b", "r", "image");
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), { "b|r": "image" });
+});
+
+test("0.6.x string overrides migrate on read and round-trip on write", async () => {
+  const api = fakeApi({ [SETTING_IDS.refOverrides]: '{"a|b":"link"}' });
+  assert.deepEqual(readSettings(api).refOverrides, { "a|b": { mode: "link" } });
+  await setRefOverride(api, "c", "d", { caption: "show" });
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), { "a|b": "link", "c|d": { caption: "show" } });
 });

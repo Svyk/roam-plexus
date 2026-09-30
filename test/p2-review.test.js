@@ -108,7 +108,7 @@ test("a whole-group selection creates k=group and exports every member", async (
 test("Alt-lasso on a drawing image writes k=poly and clips the cached svg", async () => {
   const img = { id: "img", type: "image", x: 0, y: 0, width: 100, height: 100, angle: 0 };
   const editor = { app: { getSceneElements: () => [img] }, drawingUid: "drw000001" };
-  const t = build({ editor, ids: ["img"], startTool: () => Object.assign(Promise.resolve({ p: [0, 0, 1, 0, 1, 1] }), { cancel() {} }) });
+  const t = build({ editor, ids: ["img"], startTool: () => Object.assign(Promise.resolve({ kind: "lasso", p: [0, 0, 1, 0, 1, 1], altKey: true }), { cancel() {} }) });
   await t.actions.createImageRegion();
   const region = parseRegion(t.created[0][1]);
   assert.equal(region.kind, "poly");
@@ -130,7 +130,7 @@ function plain(picked) {
 }
 
 test("plain-image rect writes k=imgrect with i and f, caches the png under fnv1a(url)", async () => {
-  const t = plain([0.1, 0.2, 0.5, 0.5]);
+  const t = plain({ kind: "rect", f: [0.1, 0.2, 0.5, 0.5] });
   assert.equal(await t.actions.createPlainImageRegion("blk000001"), "reg000001");
   assert.equal(t.created[0][0], "blk000001");
   const region = parseRegion(t.created[0][1]);
@@ -142,7 +142,7 @@ test("plain-image rect writes k=imgrect with i and f, caches the png under fnv1a
 });
 
 test("plain-image lasso writes k=imgpoly and clips the canvas crop", async () => {
-  const t = plain({ p: [0, 0, 1, 0, 1, 1] });
+  const t = plain({ kind: "lasso", p: [0, 0, 1, 0, 1, 1] });
   await t.actions.createPlainImageRegion("blk000001");
   assert.equal(parseRegion(t.created[0][1]).kind, "imgpoly");
 });

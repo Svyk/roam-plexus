@@ -48,11 +48,14 @@ test("every label is registered and removed on dispose", () => {
   const { api, dispose } = setup();
   assert.deepEqual([...api.commands.blockRefContextMenu.keys()], [
     "Plexus: Open region", "Plexus: Open region in sidebar", "Plexus: Show as image", "Plexus: Show as thumbnail",
-    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Region settings…",
+    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Refresh crop",
+    "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG",
+    "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Region settings…",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
     "Plexus: Region on image", "Plexus: Present frames", "Plexus: Mind map from outline", "Plexus: Open region",
-    "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Refresh crops", "Plexus: Region settings…",
+    "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
+    "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
   ]);
   dispose();
   assert.equal(api.commands.blockRefContextMenu.size, 0);
@@ -113,7 +116,7 @@ test("ref callbacks call actions; show-as sets the override then refreshes the b
   assert.deepEqual(calls, [
     ["openRegion", "reg000001", { sidebar: false }],
     ["openRegion", "reg000001", { sidebar: true }],
-    ["setRefOverride", "blk000001", "reg000001", "link"],
+    ["setRefOverride", "blk000001", "reg000001", { mode: "link" }],
     ["refreshRegion", "reg000001"],
     ["openSettings"],
     ["refreshBlock", "blk000001"],
@@ -121,7 +124,7 @@ test("ref callbacks call actions; show-as sets the override then refreshes the b
   calls.length = 0;
   run("Plexus: Use default display");
   await tick();
-  assert.deepEqual(calls, [["setRefOverride", "blk000001", "reg000001", null], ["refreshBlock", "blk000001"]]);
+  assert.deepEqual(calls, [["setRefOverride", "blk000001", "reg000001", { mode: null }], ["refreshBlock", "blk000001"]]);
 });
 
 test("block menu conditionals by content", () => {
@@ -289,4 +292,96 @@ test("link caption callback relinks then refreshes the region", async () => {
   api.commands.blockRefContextMenu.get(LINK).callback({ "ref-uid": "reg000001", "block-uid": "b" });
   await tick();
   assert.deepEqual(calls, [["relinkRegionCaption", "reg000001"], ["refreshRegion", "reg000001"]]);
+});
+
+const REGION_IMG = "{{[[plexus-region]]: k=imgrect d=abc123XYZ i=0 f=0.1,0.1,0.5,0.5}} Site";
+function setup2({ strings, captionState = "written", mode = "thumbnail", overrides = {}, encrypted = false, prompt = async () => "New" } = {}) {
+  const api = fakeApi(strings);
+  const calls = [];
+  const rec = (name) => (...a) => { calls.push([name, ...a]); };
+  const actions = {
+    nameRegion: async (...a) => { calls.push(["nameRegion", ...a]); },
+    copyCropPng: rec("copyCropPng"), copyCropSvg: rec("copyCropSvg"), downloadCrop: rec("downloadCrop"),
+    insertCropImage: rec("insertCropImage"), copyAlias: rec("copyAlias"),
+  };
+  const regionref = { modeOf: () => mode, captionStateOf: () => captionState, refreshBlock: rec("refreshBlock"), refreshRegion: rec("refreshRegion") };
+  const prompts = [];
+  installRoamMenus({
+    api, host: {}, actions, regionref,
+    getSettings: () => ({ refOverrides: overrides }),
+    setRefOverride: async (...a) => { calls.push(["setRefOverride", ...a]); },
+    openSettings() {}, isEncrypted: () => encrypted,
+    openPrompt: async (o) => { prompts.push(o); return prompt(o); },
+    doc: { querySelectorAll: () => [], defaultView: { innerWidth: 1000 } },
+    now: () => 0,
+  });
+  return { api, calls, prompts };
+}
+const RE = { "ref-uid": "reg000001", "block-uid": "blk000001" };
+
+test("caption items follow captionStateOf and mode; default display needs a mode override, not a caption one", () => {
+  const strings = { reg000001: REGION };
+  const has = (o, label) => show(setup2({ strings, ...o }).api, "blockRefContextMenu", label, RE);
+  assert.equal(has({}, "Plexus: Hide caption"), true);
+  assert.equal(has({}, "Plexus: Show caption"), false);
+  assert.equal(has({ captionState: "hide" }, "Plexus: Hide caption"), false);
+  assert.equal(has({ captionState: "hide" }, "Plexus: Show caption"), true);
+  assert.equal(has({ mode: "link" }, "Plexus: Hide caption"), false);
+  assert.equal(has({ overrides: { "blk000001|reg000001": { caption: "hide" } } }, "Plexus: Use default display"), false);
+  assert.equal(has({ overrides: { "blk000001|reg000001": { mode: "link", caption: "hide" } } }, "Plexus: Use default display"), true);
+});
+
+test("hide and show caption write caption patches then refresh the block", async () => {
+  const { api, calls } = setup2({ strings: { reg000001: REGION } });
+  api.commands.blockRefContextMenu.get("Plexus: Hide caption").callback(RE);
+  api.commands.blockRefContextMenu.get("Plexus: Show caption").callback(RE);
+  await tick();
+  assert.deepEqual(calls.filter((c) => c[0] === "setRefOverride"), [
+    ["setRefOverride", "blk000001", "reg000001", { caption: "hide" }],
+    ["setRefOverride", "blk000001", "reg000001", { caption: "show" }],
+  ]);
+});
+
+test("SVG copy is drawing kinds only; insert is hidden on encrypted graphs and absent from the region-block menu", () => {
+  const draw = setup2({ strings: { reg000001: REGION } });
+  const img = setup2({ strings: { reg000001: REGION_IMG } });
+  assert.equal(show(draw.api, "blockRefContextMenu", "Plexus: Copy crop as SVG", RE), true);
+  assert.equal(show(img.api, "blockRefContextMenu", "Plexus: Copy crop as SVG", RE), false);
+  assert.equal(show(img.api, "blockRefContextMenu", "Plexus: Copy crop as PNG", RE), true);
+  assert.equal(show(draw.api, "blockRefContextMenu", "Plexus: Insert crop as image block", RE), true);
+  const enc = setup2({ strings: { reg000001: REGION }, encrypted: true });
+  assert.equal(show(enc.api, "blockRefContextMenu", "Plexus: Insert crop as image block", RE), false);
+  assert.equal(draw.api.commands.blockContextMenu.has("Plexus: Insert crop as image block"), false);
+  assert.equal(show(draw.api, "blockContextMenu", "Plexus: Copy alias", { "block-uid": "reg000001" }), true);
+  assert.equal(show(draw.api, "blockContextMenu", "Plexus: Copy alias", { "block-uid": "nope00001" }), false);
+});
+
+test("crop and alias callbacks call the injected actions synchronously", () => {
+  const { api, calls } = setup2({ strings: { reg000001: REGION } });
+  for (const label of ["Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias"]) {
+    api.commands.blockRefContextMenu.get(label).callback(RE);
+  }
+  assert.deepEqual(calls, [
+    ["copyCropPng", "reg000001"], ["copyCropSvg", "reg000001"], ["downloadCrop", "reg000001"],
+    ["insertCropImage", "reg000001", "blk000001"], ["copyAlias", "reg000001"],
+  ]);
+});
+
+test("Name region prompts with the raw caption and cancel-on-escape, then names and refreshes without purging", async () => {
+  const { api, calls, prompts } = setup2({ strings: { reg000001: REGION } });
+  api.commands.blockRefContextMenu.get("Plexus: Name region").callback(RE);
+  await tick();
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].initial, "Region A");
+  assert.equal(prompts[0].escape, "cancel");
+  assert.equal(prompts[0].select, true);
+  assert.deepEqual(prompts[0].rect, { left: 400, top: 60, width: 200, height: 0 });
+  assert.deepEqual(calls, [["nameRegion", "reg000001", "New"], ["refreshRegion", "reg000001", { purge: false }]]);
+});
+
+test("Name region does nothing when the prompt is cancelled", async () => {
+  const { api, calls } = setup2({ strings: { reg000001: REGION }, prompt: async () => null });
+  api.commands.blockContextMenu.get("Plexus: Name region").callback({ "block-uid": "reg000001" });
+  await tick();
+  assert.deepEqual(calls, []);
 });

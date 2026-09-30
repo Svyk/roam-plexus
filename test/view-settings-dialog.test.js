@@ -151,11 +151,28 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
 test("show backlinks checkbox defaults on and saves a boolean", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  assert.equal(all.length, 6);
+  assert.equal(all.length, 10);
   const box = all[5];
   assert.equal(box.checked, true);
   box.checked = false; box.fire("change");
   await tick();
   assert.deepEqual(writes, [["show-backlinks", false]]);
   assert.equal(setup({ "show-backlinks": false }).dlg && inputs(setup({ "show-backlinks": false }).dlg)[5].checked, false);
+});
+
+test("caption and pin fields show stored values, unknown values show the default, and changes save option strings", async () => {
+  const { dlg, writes } = setup({ "caption-display": "bogus", "caption-mode": "ask", "pin-size": 12, "number-pins": true });
+  const [, , , , , , display, mode, pin, numbered] = inputs(dlg);
+  assert.equal(display.value, "written");
+  assert.equal(mode.value, "ask");
+  assert.equal(pin.value, "12");
+  assert.equal(numbered.checked, true);
+  assert.deepEqual(display.children.map((o) => o.value), ["written", "always", "never"]);
+  assert.deepEqual(pin.children.map((o) => o.value), ["4", "8", "12"]);
+  display.value = "never"; display.fire("change");
+  pin.value = "4"; pin.fire("change");
+  numbered.checked = false; numbered.fire("change");
+  await tick();
+  assert.deepEqual(writes, [["caption-display", "never"], ["pin-size", "4"], ["number-pins", false]]);
+  assert.equal(setup({ "pin-size": "nope" }).dlg && inputs(setup({ "pin-size": "nope" }).dlg)[8].value, "8");
 });

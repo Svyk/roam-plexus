@@ -32,9 +32,16 @@ export function selectedElementIds(app) {
 }
 
 let captureTail = Promise.resolve();
+let capturing = 0;
+
+// True from captureSelectionSvg entry until its finally has restored the clipboard (grace period included).
+export const clipboardBusy = () => capturing > 0;
 
 export function captureSelectionSvg(app, ids, opts = {}) {
+  capturing += 1;
   const run = captureTail.then(() => captureOnce(app, ids, opts));
+  const done = () => { capturing -= 1; };
+  run.then(done, done);
   captureTail = run.catch(() => {});
   return run;
 }

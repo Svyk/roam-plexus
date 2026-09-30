@@ -9,6 +9,12 @@ const clampInt = (value, fallback, min, max) => {
   return Math.min(max, Math.max(min, Math.round(base)));
 };
 
+// A select stores one of its option values as a string; anything else shows the default option (first unless defaultIndex).
+const selectValue = (f, v) => {
+  const s = v == null ? "" : String(v);
+  return f.options.some(([value]) => value === s) ? s : f.options[f.defaultIndex ?? 0][0];
+};
+
 const FIELDS = [
   { id: SETTING_IDS.figureHeight, label: "Image height (px)", type: "number", fallback: 280, min: 80, max: 1200 },
   { id: SETTING_IDS.thumbHeight, label: "Thumbnail height (px)", type: "number", fallback: 72, min: 24, max: 400 },
@@ -16,6 +22,10 @@ const FIELDS = [
   { id: SETTING_IDS.darkCrops, label: "Match dark theme", type: "checkbox", fallback: true },
   { id: SETTING_IDS.openInSidebar, label: "Open regions in sidebar", type: "checkbox", fallback: false },
   { id: SETTING_IDS.showBacklinks, label: "Show backlinks on canvas", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.captionDisplay, label: "Caption under crops", type: "select", options: [["written", "When written"], ["always", "Always"], ["never", "Never"]] },
+  { id: SETTING_IDS.captionMode, label: "Caption mode", type: "select", options: [["auto", "Auto"], ["ask", "Ask"], ["none", "None"]] },
+  { id: SETTING_IDS.pinSize, label: "Pin size", type: "select", defaultIndex: 1, options: [["4", "4%"], ["8", "8%"], ["12", "12%"]] },
+  { id: SETTING_IDS.numberPins, label: "Number pins", type: "checkbox", fallback: false },
 ];
 
 export function openSettingsDialog({ doc, get = () => undefined, set = () => {}, onChanged = () => {}, zIndex = 100000, dark = false } = {}) {
@@ -40,12 +50,12 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     let v;
     try { v = get(f.id); } catch { v = undefined; }
     if (f.type === "number") return String(clampInt(v, f.fallback, f.min, f.max));
-    if (f.type === "select") return v === "link" ? "link" : "thumbnail";
+    if (f.type === "select") return selectValue(f, v);
     return v == null ? f.fallback : !!v;
   };
   const current = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
-    if (f.type === "select") return input.value === "link" ? "link" : "thumbnail";
+    if (f.type === "select") return selectValue(f, input.value);
     return !!input.checked;
   };
 

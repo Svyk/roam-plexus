@@ -21,6 +21,35 @@ test("classifies region buttons on the node and its descendants", () => {
   const out = classifyAddedNode(self);
   assert.deepEqual(out.regionButtons, [self, inner]);
   assert.deepEqual(out.editors, []);
+  assert.deepEqual(out.aliases, []);
+});
+
+test("classifies block aliases on the node and its descendants, skipping plexus output", () => {
+  const inner = fakeNode({ classes: ["rm-alias--block"] });
+  const self = fakeNode({ classes: ["rm-alias--block"], children: [{ classes: ["rm-alias--block"], node: inner }] });
+  assert.deepEqual(classifyAddedNode(self).aliases, [self, inner]);
+  const own = fakeNode({ classes: ["rm-alias--block"], closest: { "plexus-root": 1 } });
+  assert.deepEqual(classifyAddedNode(own).aliases, []);
+});
+
+test("observer and scanExisting dispatch aliases to onAlias", () => {
+  let callback;
+  class FakeMO {
+    constructor(cb) { callback = cb; }
+    observe() {}
+    disconnect() {}
+  }
+  const seen = [];
+  const alias = fakeNode({ classes: ["rm-alias--block"] });
+  const queries = [];
+  const root = { querySelectorAll: (sel) => { queries.push(sel); return sel.startsWith("a.") ? [alias] : []; } };
+  const discovery = createDiscovery({ root, onAlias: (a) => seen.push(a), MutationObserverImpl: FakeMO });
+  callback([{ addedNodes: [alias], removedNodes: [] }]);
+  discovery.scanExisting();
+  assert.deepEqual(seen, [alias, alias]);
+  assert.ok(queries.includes("a.rm-alias--block"));
+  const throwing = createDiscovery({ root, onAlias: () => { throw new Error("x"); }, MutationObserverImpl: FakeMO });
+  assert.doesNotThrow(() => throwing.scanExisting());
 });
 
 test("editors count only under a full-screen outer container", () => {
@@ -34,8 +63,8 @@ test("editors count only under a full-screen outer container", () => {
 
 test("skips nodes inside plexus-offscreen and ignores non-elements", () => {
   const btn = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-offscreen": 1 } });
-  assert.deepEqual(classifyAddedNode(btn), { regionButtons: [], editors: [] });
-  assert.deepEqual(classifyAddedNode({ nodeType: 3 }), { regionButtons: [], editors: [] });
+  assert.deepEqual(classifyAddedNode(btn), { regionButtons: [], editors: [], aliases: [] });
+  assert.deepEqual(classifyAddedNode({ nodeType: 3 }), { regionButtons: [], editors: [], aliases: [] });
 });
 
 test("observer dispatches added buttons and editor unmount, and disconnects on dispose", () => {
@@ -92,5 +121,5 @@ test("scanExisting claims buttons and editors already on the page and skips plex
 
 test("classifyAddedNode skips output inside .plexus-root", () => {
   const own = fakeNode({ classes: [REGION_BUTTON_CLASS], closest: { "plexus-root": 1 } });
-  assert.deepEqual(classifyAddedNode(own), { regionButtons: [], editors: [] });
+  assert.deepEqual(classifyAddedNode(own), { regionButtons: [], editors: [], aliases: [] });
 });

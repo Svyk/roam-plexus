@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findApp, activeEditor, selectedElementIds, captureSelectionSvg, withClipboard, looksLikeSvg } from "../src/host/native.js";
+import { findApp, activeEditor, selectedElementIds, captureSelectionSvg, withClipboard, looksLikeSvg, clipboardBusy } from "../src/host/native.js";
 
 function makeApp({ svg = "<svg/>", throwOnExecute = false, silent = false } = {}) {
   const app = {
@@ -274,4 +274,19 @@ test("waitNotLoading ends false as soon as the editor deactivates between polls"
   let t = 0;
   assert.equal(await waitNotLoading(app, 100000, { doc, raf, now: () => (t += 1) }), false);
   assert.ok(polls <= 3, `stopped early, polled ${polls}`);
+});
+
+test("clipboardBusy is true from captureSelectionSvg entry until the capture has fully settled", async () => {
+  assert.equal(clipboardBusy(), false);
+  const clipboard = { writeText: async () => {}, write: async () => {} };
+  const app = makeApp();
+  app.clipboard = clipboard;
+  const run = captureSelectionSvg(app, ["a"], { clipboard, raf: (f) => f(), doneWaitMs: 0 });
+  assert.equal(clipboardBusy(), true);
+  assert.equal(await run, "<svg/>");
+  assert.equal(clipboardBusy(), false);
+  const failing = captureSelectionSvg(makeApp({ throwOnExecute: true }), ["a"], { clipboard, raf: (f) => f(), timeoutMs: 20, graceMs: 0, doneWaitMs: 0 });
+  assert.equal(clipboardBusy(), true);
+  await assert.rejects(failing);
+  assert.equal(clipboardBusy(), false);
 });

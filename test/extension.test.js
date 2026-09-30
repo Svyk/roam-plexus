@@ -36,8 +36,8 @@ test("extension exports the Roam lifecycle contract and survives repeated unload
   await extension.onunload();
   await extension.onunload();
 
-  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 8);
-  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 8);
+  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 10);
+  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 10);
   assert.ok(api.calls.some(([name, label]) => name === "panel:create" && label === "Plexus"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Clear crop cache"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Legacy drawings (dry run)"));
@@ -50,8 +50,8 @@ test("a second load disposes the previous runtime before registering again", asy
   await extension.onload({ extensionAPI: firstApi, extension: { version: "one" } });
   const cleanup = await extension.onload({ extensionAPI: secondApi, extension: { version: "two" } });
 
-  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 8);
-  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 8);
+  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 10);
+  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 10);
   await cleanup();
 });
 

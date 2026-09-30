@@ -1,6 +1,7 @@
 import { parseRegion } from "../model/region.js";
 import { parseImageRefs } from "../model/image.js";
 import { overrideKey } from "../model/refdisplay.js";
+import { isImageKind } from "../model/label.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const MEMO_MS = 500;
@@ -19,7 +20,9 @@ const cond = (fn) => (e) => {
   try { return !!fn(e); } catch { return false; }
 };
 
-export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, openSettings, now = () => Date.now() } = {}) {
+const overrideMode = (o) => (typeof o === "string" ? o : o?.mode ?? null);
+
+export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, openSettings, openPrompt, isEncrypted, doc = globalThis.document, now = () => Date.now() } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -50,8 +53,11 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     if (!supported) return { supported };
     let mode = null;
     try { mode = regionref.modeOf({ blockUid: block, refUid: ref }); } catch { mode = null; }
+    let captionState = "written";
+    try { captionState = regionref.captionStateOf?.({ blockUid: block, refUid: ref }) ?? "written"; } catch { captionState = "written"; }
     const overrides = getSettings()?.refOverrides || {};
-    return { supported, mode, hasOverride: overrideKey(block, ref) in overrides };
+    const kind = parseRegion(string)?.kind;
+    return { supported, mode, captionState, drawingKind: !isImageKind(kind), hasOverride: overrideMode(overrides[overrideKey(block, ref)]) != null };
   });
   const candidateOf = memoize((uid) => {
     try { return actions.regionCaptionCandidate?.(uid) ?? null; } catch { return null; }
@@ -64,6 +70,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
       images: parseImageRefs(string).length > 0,
       drawing: DRAWING_START.test(string),
       region: !!region?.supported,
+      drawingKind: !!region?.supported && !isImageKind(region.kind),
     };
   });
   const register = (menuName, label, display, callback) => {
@@ -94,17 +101,28 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   for (const [mode, name] of [["image", "image"], ["thumbnail", "thumbnail"], ["link", "link"]]) {
     register("blockRefContextMenu", `Plexus: Show as ${name}`, refShow((i) => i.mode !== mode), async (e) => {
       const { ref, block } = refOf(e);
-      await setRefOverride(block, ref, mode);
+      await setRefOverride(block, ref, { mode });
       clearMemo();
       regionref.refreshBlock(block);
     });
   }
   register("blockRefContextMenu", "Plexus: Use default display", refShow((i) => i.hasOverride), async (e) => {
     const { ref, block } = refOf(e);
-    await setRefOverride(block, ref, null);
+    await setRefOverride(block, ref, { mode: null });
     clearMemo();
     regionref.refreshBlock(block);
   });
+  for (const [caption, label, extra] of [
+    ["hide", "Plexus: Hide caption", (i) => i.mode !== "link" && i.captionState !== "hide"],
+    ["show", "Plexus: Show caption", (i) => i.captionState === "hide"],
+  ]) {
+    register("blockRefContextMenu", label, refShow(extra), async (e) => {
+      const { ref, block } = refOf(e);
+      await setRefOverride(block, ref, { caption });
+      clearMemo();
+      regionref.refreshBlock(block);
+    });
+  }
   register("blockRefContextMenu", "Plexus: Refresh crop", refShow(), (e) => regionref.refreshRegion(refOf(e).ref));
   const relink = async (uid) => {
     await actions.relinkRegionCaption(uid);
@@ -112,6 +130,42 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     regionref.refreshRegion?.(uid);
   };
   register("blockRefContextMenu", LINK_LABEL, refShowLink, (e) => relink(refOf(e).ref));
+  const encrypted = () => {
+    try { return !!(isEncrypted ? isEncrypted() : host?.isEncrypted?.()); } catch { return false; }
+  };
+
+  // The prompt anchors to the region's ref under the block, else the block's input, else the top centre of the viewport.
+  const anchorRect = (blockUid) => {
+    try {
+      const blockEl = [...(doc.querySelectorAll?.('[id^="block-input-"]') ?? [])].find((n) => String(n.id).endsWith(`-${blockUid}`));
+      const target = blockEl?.querySelector?.("[data-plexus-card-host], .plexus-root") ?? blockEl;
+      const r = target?.getBoundingClientRect?.();
+      if (r && (r.width || r.height)) return { left: r.left, top: r.top, width: r.width, height: r.height };
+    } catch { /* fall through */ }
+    const w = doc?.defaultView?.innerWidth ?? 800;
+    return { left: Math.max(8, w / 2 - 100), top: 60, width: 200, height: 0 };
+  };
+  const nameRegion = async (uid, blockUid) => {
+    const string = pullString(uid);
+    const region = string == null ? null : parseRegion(string);
+    if (!region?.supported) return;
+    const text = await openPrompt({ doc, rect: anchorRect(blockUid), initial: region.caption ?? "", select: true, escape: "cancel" });
+    if (text == null) return;
+    await actions.nameRegion(uid, text);
+    clearMemo();
+    regionref.refreshRegion?.(uid, { purge: false });
+  };
+  const cropItems = (menuName, show, uidOf, blockOf, { insert }) => {
+    const drawingShow = (e) => !!show(e).drawingKind;
+    register(menuName, "Plexus: Name region", (e) => show(e).supported, (e) => nameRegion(uidOf(e), blockOf(e)));
+    // These callbacks call the action with no await first: clipboard writes need the user gesture.
+    register(menuName, "Plexus: Copy crop as PNG", (e) => show(e).supported, (e) => actions.copyCropPng(uidOf(e)));
+    register(menuName, "Plexus: Copy crop as SVG", drawingShow, (e) => actions.copyCropSvg(uidOf(e)));
+    register(menuName, "Plexus: Download crop", (e) => show(e).supported, (e) => actions.downloadCrop(uidOf(e)));
+    if (insert) register(menuName, "Plexus: Insert crop as image block", (e) => show(e).supported && !encrypted(), (e) => actions.insertCropImage(uidOf(e), blockOf(e)));
+    register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf(e)));
+  };
+  cropItems("blockRefContextMenu", (e) => { const { ref, block } = refOf(e); return refInfo(`${ref}|${block}`, ref, block); }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
 
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
@@ -121,6 +175,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   register("blockContextMenu", "Plexus: Open region", blockShow("region"), (e) => actions.openRegion(e?.["block-uid"], { sidebar: false }));
   register("blockContextMenu", "Plexus: Refresh crop", blockShow("region"), (e) => regionref.refreshRegion(e?.["block-uid"]));
   register("blockContextMenu", LINK_LABEL, (e) => blockInfo(e?.["block-uid"], e?.["block-uid"]).region && candidateOf(e?.["block-uid"], e?.["block-uid"]) != null, (e) => relink(e?.["block-uid"]));
+  cropItems("blockContextMenu", (e) => { const b = blockInfo(e?.["block-uid"], e?.["block-uid"]); return { supported: !!b.region, drawingKind: !!b.drawingKind }; }, (e) => e?.["block-uid"], (e) => e?.["block-uid"], { insert: false });
   register("blockContextMenu", "Plexus: Refresh crops", blockShow("drawing"), (e) => actions.refreshCropsForDrawing(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Region settings…", blockShow("drawing"), () => openSettings());
 

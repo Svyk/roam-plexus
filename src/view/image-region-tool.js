@@ -2,11 +2,14 @@ import { elementBounds, rectToFraction } from "../model/scene.js";
 import { viewportRectOf } from "../host/native.js";
 
 const LASSO_STEP_PX = 4;
+const PIN_SLOP_PX = 4;
+const LINGER_MS = 50;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// Resolves a rect fraction array [rx, ry, rw, rh] (plain drag), { p: [x1,y1,...] } (Alt-drag lasso), or null.
+// Resolves null, { kind: "rect", f: [rx, ry, rw, rh], altKey } (plain drag), { kind: "lasso", p: [x1,y1,...], altKey } (Alt-drag)
+// or { kind: "pin", x, y } (a click that moved under 4 px, Alt or not); all values are displayed-box fractions.
 // imageRect (a viewport rect) overrides app/element for images that live in ordinary blocks.
-export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }) {
+export function startImageRegionTool({ app, element, doc, imageRect: fixedRect, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
   let cancel = null;
   const promise = new Promise((resolve) => {
     if (!fixedRect && element?.angle) return resolve(null);
@@ -34,9 +37,19 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
     let lasso = null;
     let start = null;
     let drag = null;
+    let moved = 0;
     let finished = false;
+    let lingerTimer = null;
 
-    const finish = (value) => {
+    const removeOverlay = () => {
+      if (lingerTimer != null) { clearT(lingerTimer); lingerTimer = null; }
+      overlay.removeEventListener("click", onTrailingClick);
+      overlay.remove();
+    };
+    // After a pin or a drag the overlay keeps swallowing the trailing mouseup/click so they cannot reach Roam
+    // (a click on an image block would put it into edit mode and steal focus from the caption prompt).
+    const onTrailingClick = () => removeOverlay();
+    const finish = (value, { linger = false } = {}) => {
       if (finished) return;
       finished = true;
       doc.removeEventListener("keydown", onKey, true);
@@ -44,10 +57,16 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
       doc.removeEventListener("wheel", cancelOnMove, true);
       doc.removeEventListener("scroll", cancelOnMove, true);
       doc.defaultView?.removeEventListener?.("resize", cancelOnMove);
-      overlay.remove();
+      if (linger && value) {
+        overlay.addEventListener("click", onTrailingClick);
+        lingerTimer = setT(removeOverlay, LINGER_MS);
+      } else removeOverlay();
       resolve(value);
     };
-    cancel = () => finish(null);
+    cancel = () => {
+      finish(null);
+      removeOverlay();
+    };
     const onKey = (e) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
@@ -68,6 +87,9 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
     overlay.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       e.preventDefault();
+      if (e.button !== 0) return finish(null);
+      if (finished) return;
+      moved = 0;
       start = { x: e.clientX, y: e.clientY };
       drag = rectFrom(start, start);
       lasso = e.altKey ? [start] : null;
@@ -75,7 +97,8 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
     });
     overlay.addEventListener("pointermove", (e) => {
       e.stopPropagation();
-      if (!start) return;
+      if (!start || finished) return;
+      moved = Math.max(moved, Math.hypot(e.clientX - start.x, e.clientY - start.y));
       if (lasso) {
         const last = lasso[lasso.length - 1];
         if (Math.hypot(e.clientX - last.x, e.clientY - last.y) >= LASSO_STEP_PX) {
@@ -91,10 +114,26 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect }
       marquee.style.width = `${drag.width}px`;
       marquee.style.height = `${drag.height}px`;
     });
+    overlay.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
     overlay.addEventListener("pointerup", (e) => {
       e.stopPropagation();
-      if (!start) return;
-      finish(lasso ? lassoToFraction(lasso, imageRect) : rectToFraction(drag, imageRect));
+      if (e.button !== 0) return;
+      if (!start || finished) return;
+      const altKey = !!e.altKey;
+      if (moved < PIN_SLOP_PX) {
+        const x = Math.min(1, Math.max(0, (e.clientX - imageRect.left) / imageRect.width));
+        const y = Math.min(1, Math.max(0, (e.clientY - imageRect.top) / imageRect.height));
+        return finish({ kind: "pin", x, y }, { linger: true });
+      }
+      if (lasso) {
+        const p = lassoToFraction(lasso, imageRect);
+        return finish(p ? { kind: "lasso", p: p.p, altKey } : null, { linger: true });
+      }
+      const f = rectToFraction(drag, imageRect);
+      finish(f ? { kind: "rect", f, altKey } : null, { linger: true });
     });
     const reset = () => {
       start = null;

@@ -66,7 +66,7 @@ test("cropToFraction and regionFromCrop use natural fractions", async () => {
   const region = parseRegion(t.created[0][1]);
   assert.equal(region.kind, "rect");
   assert.deepEqual(region.f, [0.25, 0.25, 0.5, 0.5]);
-  assert.equal(region.caption, "Image crop");
+  assert.equal(region.caption, "");
 });
 
 test("regionFromCrop toasts for an uncropped image", async () => {

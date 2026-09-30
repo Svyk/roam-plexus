@@ -126,7 +126,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 
 ## 8. Compass integration contract
 
-`window.RoamPlexus` (frozen, `apiVersion: 1`):
+`window.RoamPlexus` (frozen, `apiVersion: 3`; v2 callers are unaffected, since every change is additive):
 
 | Member | Returns | Notes |
 |---|---|---|
@@ -134,7 +134,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 | `create({pageUid?, parentUid?, title?})` | `Promise<{uid, pageUid}>` | creates `{{[[excalidraw]]}}` block; with `title` creates page `Drawings/<title>` first |
 | `open(uid, {region?, sidebar?})` | Promise | sidebar via `rightSidebar.addWindow` (d.ts:343; Compass host.js:483) |
 | `thumbnail(uid, {maxWidth, render=false})` | `Promise<Blob|null>` | cache only unless `render`; never loads the module when `render=false` |
-| `regionsOf(uid)` | `[{uid, kind, caption}]` | one pull, no watch |
+| `regionsOf(uid)` | `[{uid, kind, caption, label}]` | one pull, no watch. `label` (v3, additive) is a plain one-line name of at most 80 characters: the caption with markup stripped, else the image alt text (image kinds), else `<drawing title> · <kind word>`. `"Region"` if it cannot be computed. Callers should use it only when it is a non-empty string, so v2 entries still work |
 | `drawingsOn(pageUid)` | `[uid]` | `data.q` over blocks with `:block/props`, capped 50 |
 | `addEventListener('change', cb)` / `removeEventListener` | | `{uid, kind: 'drawing' | 'region'}` after own writes and absorbed echoes |
 
@@ -211,6 +211,26 @@ Spike drawing `ITvT3bqaL`; region block `eyjMKi1DA`; ref block `N4AykqSVu`. Trus
 | S6 element links | Stored as-is (`link: "[[Page]]"`). Roam passes no `onLinkOpen`. In view mode the whole element body is a link hotspot. Wrapping `app.redirectToLink` did not fire for CDP clicks (`hitLinkElement` null at pointer-up). A **capture-phase `pointerdown`/`pointerup` listener on the container** + `app.getElementLinkAtPosition(sceneXY)` caught `[[Plexus Spike Target]]` from a trusted click | Intercept only `[[…]]` / `((…))` links (shift → sidebar), let every other link fall through to Excalidraw. Native 0.18 also ships `linkToElement` / `copyElementLink` (element-to-element) and `cropEditor` (image crop): reuse them, do not rebuild |
 
 Decisions changed by Phase 0: section 5.1 geometry stays in the string (confirmed, and now required by the S3 replace semantics). The section 7 "Crop render from cache" cold path becomes "hidden `renderBlock` → Roam PNG → canvas crop", not a chip. The chip remains only when the bounds check fails. Section 6 `view/discover.js` claims the S5 selectors above. The `registerComponent` path is dropped.
+
+### Phase 7 results: DATA-5 (live, 2026-09-29, Readwisenotes, trusted CDP)
+
+Roam's `app-excalidraw.js` (7.7 MB) embeds `PKG_VERSION:"0.18.0"`. With the drawing open, each row below was watched for 3 s against `:edit/time`, `:excalidraw/state-json` and `:excalidraw/elements-json` of the drawing block.
+
+| Probe | Result | Consequence |
+|---|---|---|
+| Pan (`scrollX` +200) | No change | View operations are write-free |
+| Zoom (x0.8) | No change | Same |
+| Selection | No change | Same |
+| Theme dark/light | No change | Same |
+| `frameRendering.name` toggle | No change to `:edit/time` or the state | Same. Persistence of `frameRendering` through Roam's save: not re-measured in P7 (earlier source: `phase2-contract.md:8`) |
+| `exportScale` 3 | No change | Same |
+| Close the full-screen editor with no edits | `:edit/time` unchanged | An unchanged mount hash means no work after close (REF-6) |
+| Roam's action table | 93 actions in 0.18.0 | See the next row |
+| Native actions present | `searchMenu`, `stats`, `wrapSelectionInFrame`, `copyAsPng`, `copyAsSvg`, `copyElementLink`, `linkToElement`, `cropEditor`, `changeExportScale`, `exportWithDarkMode`, `toggleElementLock`, `unlockAllElements`, `gridMode`, `objectsSnapMode`, `zenMode`, `viewMode`, `changeArrowType` (elbow arrows), `setEmbeddableAsActiveTool`, `setFrameAsActiveTool`, `selectAllElementsInFrame`, `removeAllElementsFromFrame`, `updateFrameRendering`, `zoomToFit`, `zoomToFitSelection`, `zoomToFitSelectionInViewport`, `toggleTheme`, `toggleShortcuts`, `hyperlink` | Reuse these before building anything. There is no shape-switch action |
+| Laser tool | `app.setActiveTool({type: "laser"})` reads back `"laser"` | Works |
+| `scrollToContent(target, {fitToContent, animate})` | Present. `animate` defaults to true for element-link targets | Animated zoom needs no tween of our own |
+| `searchMatches` in appState | Not re-measured in P7 (earlier source: `roadmap-next.md`, search item) | Runtime feature check stays |
+| Flowchart keys | Not re-measured in P7 (earlier source: `phase4-contract.md:230-232`, live in Roam's build) | Same |
 
 ## Verification (when implementation starts)
 

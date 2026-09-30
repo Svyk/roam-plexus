@@ -1,4 +1,4 @@
-import { parseOverrides, withOverride } from "./model/refdisplay.js";
+import { CAPTION_DISPLAYS, parseOverrides, serializeOverrides, withOverride } from "./model/refdisplay.js";
 
 export const SETTING_IDS = Object.freeze({
   openInSidebar: "open-in-sidebar",
@@ -10,6 +10,10 @@ export const SETTING_IDS = Object.freeze({
   cacheOnDisk: "cache-on-disk",
   cacheLimitMb: "cache-limit-mb",
   showBacklinks: "show-backlinks",
+  captionDisplay: "caption-display",
+  captionMode: "caption-mode",
+  pinSize: "pin-size",
+  numberPins: "number-pins",
   debug: "debug",
 });
 
@@ -23,8 +27,15 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.cacheOnDisk]: true,
   [SETTING_IDS.cacheLimitMb]: "100",
   [SETTING_IDS.showBacklinks]: true,
+  [SETTING_IDS.captionDisplay]: "written",
+  [SETTING_IDS.captionMode]: "auto",
+  [SETTING_IDS.pinSize]: "8",
+  [SETTING_IDS.numberPins]: false,
   [SETTING_IDS.debug]: false,
 });
+
+export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
+export const PIN_SIZES = Object.freeze([4, 8, 12]);
 
 export async function initializeSettings(extensionAPI) {
   if (extensionAPI.settings.canSet === false) return;
@@ -51,6 +62,10 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cacheOnDisk, name: "Cache crops on disk", description: "Store rendered crops in IndexedDB. Ignored on encrypted graphs.", action: { type: "switch" } },
       { id: SETTING_IDS.cacheLimitMb, name: "Cache limit (MB)", description: "Maximum size of the on-disk crop cache.", action: { type: "input", placeholder: "100" } },
       { id: SETTING_IDS.showBacklinks, name: "Show backlinks on canvas", description: "Show a reference count beside each region or mind-map node that is referenced elsewhere in Roam.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.captionDisplay, name: "Caption under crops", description: "written: show a region's stored caption when it has one. always: also show a derived label when it has none. never: hide captions. Per-ref override: Plexus: Hide caption / Show caption.", action: wrap({ type: "select", items: ["written", "always", "never"] }) },
+      { id: SETTING_IDS.captionMode, name: "Caption mode", description: "auto: fill a new region's caption from its text and source blocks. ask: prompt for it. none: stores no words; links to source blocks are still stored.", action: { type: "select", items: ["auto", "ask", "none"] } },
+      { id: SETTING_IDS.pinSize, name: "Pin size (%)", description: "Side of a pin dropped by clicking an image, as a percent of the image's shorter side.", action: { type: "select", items: ["4", "8", "12"] } },
+      { id: SETTING_IDS.numberPins, name: "Number pins", description: "Pre-fill each new pin's caption with the next number on that image.", action: { type: "switch" } },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
     ],
   };
@@ -61,6 +76,8 @@ const clampNumber = (value, fallback, min, max) => {
   const base = value == null || (typeof value === "string" && value.trim() === "") || !Number.isFinite(n) ? fallback : n;
   return Math.round(Math.min(max, Math.max(min, base)));
 };
+
+const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 
 let overridesMemo = { raw: undefined, value: null };
 function memoOverrides(raw) {
@@ -85,6 +102,10 @@ export function readSettings(extensionAPI) {
     cacheOnDisk: !!get(SETTING_IDS.cacheOnDisk),
     cacheLimitMb: Number(get(SETTING_IDS.cacheLimitMb)) || 100,
     showBacklinks: !!get(SETTING_IDS.showBacklinks),
+    captionDisplay: oneOf(get(SETTING_IDS.captionDisplay), CAPTION_DISPLAYS, "written"),
+    captionMode: oneOf(get(SETTING_IDS.captionMode), CAPTION_MODES, "auto"),
+    pinSize: PIN_SIZES.includes(Number(get(SETTING_IDS.pinSize))) ? Number(get(SETTING_IDS.pinSize)) : 8,
+    numberPins: !!get(SETTING_IDS.numberPins),
     debug: !!get(SETTING_IDS.debug),
   };
 }
@@ -99,12 +120,14 @@ export async function writeSetting(extensionAPI, id, value) {
 
 const overrideQueues = new WeakMap();
 
-export function setRefOverride(extensionAPI, blockUid, refUid, mode) {
+// patch is {mode?, caption?} (null field removes it). A string is shorthand for {mode}, null for {mode: null}.
+export function setRefOverride(extensionAPI, blockUid, refUid, patch) {
+  const fields = typeof patch === "string" ? { mode: patch } : patch == null ? { mode: null } : patch;
   const prev = overrideQueues.get(extensionAPI) || Promise.resolve();
   const next = prev.then(async () => {
     try {
       const map = parseOverrides(extensionAPI.settings.get(SETTING_IDS.refOverrides));
-      await writeSetting(extensionAPI, SETTING_IDS.refOverrides, JSON.stringify(withOverride(map, blockUid, refUid, mode)));
+      await writeSetting(extensionAPI, SETTING_IDS.refOverrides, JSON.stringify(serializeOverrides(withOverride(map, blockUid, refUid, fields))));
     } catch (error) {
       console.warn("[plexus] setRefOverride failed", error);
     }

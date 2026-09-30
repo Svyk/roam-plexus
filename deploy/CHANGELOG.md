@@ -4,6 +4,18 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.7.0]
+
+- Quiet regions: new regions no longer get a placeholder caption. Captions come from the selection (visual order, container labels first, joined with " · ", 60 characters), or stay empty. Setting "Caption under crops" (written / always / never) plus per-ref "Hide caption" / "Show caption"; "Caption mode" (auto / ask / none).
+- Caption cleanup: `Plexus: Clear placeholder captions (dry run)` reports old placeholder captions, applies on confirm, and `Plexus: Undo caption cleanup` restores them.
+- Name a region from the right-click menu (`Plexus: Name region`).
+- Image regions: a whole-image pick copies the image block ref instead of making a region (Alt forces a region); a click drops a pin (size 4/8/12, optional numbering) and asks for a caption.
+- Crops: copy as PNG or SVG, download, insert as an image block, copy alias.
+- Block aliases `[label](((uid)))` that point at a region show the crop on hover and open the region on a plain click (Shift, Ctrl and Cmd clicks stay Roam's); region cards are keyboard-operable with an accessible name.
+- Crops refresh after the full-screen editor closes when the drawing changed.
+- Automation API v3: `regionsOf` entries carry `label`. Compass 0.3.0 uses it.
+- Deferred to P8: an area region matching the scene bounds is not converted to a drawing ref.
+
 ## [0.6.1]
 
 - Region captions link their source blocks: a region made from a mind-map node, a canvas embed, or an element with a `[[Page]]`/`((ref))` link gets `((uid))`/`[[Title]]` in its caption instead of copied text, so the source block gets a backlink and the caption follows renames. Existing regions: right-click > Extensions > "Plexus: Link caption to source blocks".
