@@ -453,7 +453,7 @@ test("host attr: link mode never marks ancestors", () => {
   assert.ok(chain.every((e) => !e.attrs["data-plexus-card-host"]));
 });
 
-test("hover stoppers: thumbnail on root, link on refEl, image none; disposed on release", () => {
+test("hover stoppers: thumbnail and image on root, link on refEl; disposed on release", () => {
   const stop = { stopped: 0, stopPropagation() { this.stopped += 1; } };
   const t = hostSetup();
   t.r.claim(t.btns[0]);
@@ -480,10 +480,13 @@ test("hover stoppers: thumbnail on root, link on refEl, image none; disposed on 
   i.r.claim(i.btns[0]);
   const iroot = i.parents[0].children[1];
   assert.ok(iroot.classes.has("plexus-regionref--image"));
-  assert.equal(iroot.listeners.mouseover, undefined);
-  assert.equal(iroot.listeners.mouseenter, undefined);
+  assert.equal(typeof iroot.listeners.mouseover, "function");
+  assert.equal(typeof iroot.listeners.mouseout, "function");
+  assert.equal(typeof iroot.listeners.mouseenter, "function");
   assert.equal(i.refEls[0].listeners.mouseover, undefined);
   assert.equal(i.refEls[0].listeners.mouseenter, undefined);
+  iroot.listeners.mouseover(stop);
+  assert.equal(stop.stopped, 2);
 });
 
 test("host attr survives React overwriting the ancestor className", () => {

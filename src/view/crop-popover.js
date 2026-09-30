@@ -5,6 +5,18 @@ const MAX_H = 360;
 const GAP = 6;
 const EDGE = 4;
 const HEAD_H = 18;
+const NOTE_CAP = 5;
+
+function noteLines(notes) {
+  if (!Array.isArray(notes)) return [];
+  const lines = [];
+  for (const note of notes) {
+    if (typeof note !== "string") continue;
+    lines.push(note);
+    if (lines.length === NOTE_CAP) break;
+  }
+  return lines;
+}
 
 export function createCropPopover({ doc, delayMs = 300 }) {
   let portal = null;
@@ -97,12 +109,24 @@ export function createCropPopover({ doc, delayMs = 300 }) {
     return row;
   }
 
+  function notesList(lines) {
+    const list = doc.createElement("ul");
+    list.className = "plexus-notes";
+    for (const line of lines) {
+      const li = doc.createElement("li");
+      li.textContent = line;
+      list.append(li);
+    }
+    return list;
+  }
+
   function show(anchor, getEntry) {
     const mine = ++token;
     Promise.resolve()
       .then(() => getEntry())
       .then((entry) => {
-        if (mine !== token || !entry?.url || anchor.isConnected === false) return;
+        const lines = noteLines(entry?.notes);
+        if (mine !== token || anchor.isConnected === false || !entry || (!entry.url && lines.length === 0)) return;
         const box = place(anchor, entry);
         portal?.remove();
         portal = doc.createElement("div");
@@ -112,16 +136,23 @@ export function createCropPopover({ doc, delayMs = 300 }) {
         portal.style.zIndex = "100001";
         portal.style.left = `${box.left}px`;
         portal.style.top = `${box.top}px`;
-        const invertClass = `${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
-        const img = doc.createElement("img");
-        img.className = `plexus-crop${invertClass}`;
-        img.draggable = false;
-        img.style.width = `${box.w}px`;
-        img.style.height = `${box.h}px`;
-        img.onerror = () => { if (mine === token) hide(); };
-        img.src = entry.url;
-        if (entry.peek) portal.append(peekHead(entry.peek), peekRow(img, entry.peek, invertClass));
-        else portal.append(img);
+        if (lines.length) portal.append(notesList(lines));
+        if (entry.url) {
+          const invertClass = `${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
+          const img = doc.createElement("img");
+          img.className = `plexus-crop${invertClass}`;
+          img.draggable = false;
+          img.style.width = `${box.w}px`;
+          img.style.height = `${box.h}px`;
+          img.onerror = () => { if (mine === token) hide(); };
+          img.src = entry.url;
+          if (entry.peek) {
+            portal.append(peekHead(entry.peek));
+            portal.append(peekRow(img, entry.peek, invertClass));
+          } else {
+            portal.append(img);
+          }
+        }
         doc.body.append(portal);
         scrollTarget = doc.defaultView;
         scrollTarget?.addEventListener?.("scroll", onDismiss, true);

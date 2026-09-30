@@ -1,4 +1,4 @@
-/* Plexus v0.14.0 | MIT | generated; edit src/ */
+/* Plexus v0.15.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -5095,6 +5095,17 @@ var MAX_H = 360;
 var GAP = 6;
 var EDGE = 4;
 var HEAD_H = 18;
+var NOTE_CAP = 5;
+function noteLines(notes) {
+  if (!Array.isArray(notes)) return [];
+  const lines = [];
+  for (const note of notes) {
+    if (typeof note !== "string") continue;
+    lines.push(note);
+    if (lines.length === NOTE_CAP) break;
+  }
+  return lines;
+}
 function createCropPopover({ doc, delayMs = 300 }) {
   let portal = null;
   let token = 0;
@@ -5177,10 +5188,21 @@ function createCropPopover({ doc, delayMs = 300 }) {
     row.append(img, thumb);
     return row;
   }
+  function notesList(lines) {
+    const list = doc.createElement("ul");
+    list.className = "plexus-notes";
+    for (const line of lines) {
+      const li = doc.createElement("li");
+      li.textContent = line;
+      list.append(li);
+    }
+    return list;
+  }
   function show(anchor, getEntry) {
     const mine = ++token;
     Promise.resolve().then(() => getEntry()).then((entry) => {
-      if (mine !== token || !entry?.url || anchor.isConnected === false) return;
+      const lines = noteLines(entry?.notes);
+      if (mine !== token || anchor.isConnected === false || !entry || !entry.url && lines.length === 0) return;
       const box = place(anchor, entry);
       portal?.remove();
       portal = doc.createElement("div");
@@ -5190,18 +5212,25 @@ function createCropPopover({ doc, delayMs = 300 }) {
       portal.style.zIndex = "100001";
       portal.style.left = `${box.left}px`;
       portal.style.top = `${box.top}px`;
-      const invertClass = `${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
-      const img = doc.createElement("img");
-      img.className = `plexus-crop${invertClass}`;
-      img.draggable = false;
-      img.style.width = `${box.w}px`;
-      img.style.height = `${box.h}px`;
-      img.onerror = () => {
-        if (mine === token) hide();
-      };
-      img.src = entry.url;
-      if (entry.peek) portal.append(peekHead(entry.peek), peekRow(img, entry.peek, invertClass));
-      else portal.append(img);
+      if (lines.length) portal.append(notesList(lines));
+      if (entry.url) {
+        const invertClass = `${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
+        const img = doc.createElement("img");
+        img.className = `plexus-crop${invertClass}`;
+        img.draggable = false;
+        img.style.width = `${box.w}px`;
+        img.style.height = `${box.h}px`;
+        img.onerror = () => {
+          if (mine === token) hide();
+        };
+        img.src = entry.url;
+        if (entry.peek) {
+          portal.append(peekHead(entry.peek));
+          portal.append(peekRow(img, entry.peek, invertClass));
+        } else {
+          portal.append(img);
+        }
+      }
       doc.body.append(portal);
       scrollTarget = doc.defaultView;
       scrollTarget?.addEventListener?.("scroll", onDismiss, true);
@@ -5251,6 +5280,42 @@ var IMAGE_SETTLE_MS = 1200;
 var PLAIN_SETTLE_MS = 150;
 var IMAGE_KINDS3 = /* @__PURE__ */ new Set(["imgrect", "imgpoly"]);
 var isImageKind2 = (kind) => IMAGE_KINDS3.has(kind);
+var ATTR_RE = /^\s*([^:\n]+)::(.*)$/;
+function childText(child) {
+  if (typeof child === "string") return child;
+  if (child && typeof child.string === "string") return child.string;
+  return "";
+}
+function attrName(text) {
+  if (typeof text !== "string") return null;
+  const m = ATTR_RE.exec(text);
+  if (!m) return null;
+  const name = m[1].trim();
+  if (!name || !m[2].trim() || name.startsWith("BT_attr")) return null;
+  return name;
+}
+function regionMeta(children) {
+  const list = Array.isArray(children) ? children : [];
+  const hover = [];
+  const attrs = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const text = childText(list[i]);
+    if (hover.length < 5) hover.push(text);
+    if (attrName(text)) attrs.push(list[i]);
+  }
+  return { count: list.length, hover, attrs };
+}
+function regionMatchesTag(strings, tag) {
+  if (tag == null || tag === "") return true;
+  const list = Array.isArray(strings) ? strings : [];
+  const hash = `#${tag}`;
+  const wiki = `[[${tag}]]`;
+  const hashWiki = `#[[${tag}]]`;
+  return list.some((item) => {
+    const text = typeof item === "string" ? item : childText(item);
+    return text.includes(hashWiki) || text.includes(wiki) || text.includes(hash);
+  });
+}
 var pt = (v) => Array.isArray(v) ? v : [v.x, v.y];
 function displayedRect(el, f) {
   if (!el?.crop) return f;
@@ -5518,18 +5583,29 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     }
     return { entry, entryKey };
   }
+  function childNotes(uid) {
+    try {
+      return regionMeta(host.pullBlock(uid)?.children).hover;
+    } catch {
+      return [];
+    }
+  }
   async function hoverEntryOf(region, target, keys, uid) {
     const s = settings();
     const hot = hotEntry(region, target, keys, s);
     let entry = hot?.entry;
     let key = hot?.key;
-    if (!entry) {
+    if (!entry?.url) {
       const res = await fetchEntry(region, target, keys, () => true);
-      entry = res.entry;
-      key = res.entryKey;
+      if (res?.entry?.url) {
+        entry = res.entry;
+        key = res.entryKey;
+      }
     }
-    if (!entry) return null;
+    const notes = childNotes(uid);
+    if (!entry?.url) return notes.length ? { notes } : null;
     const out = { url: entry.url, w: entry.w, h: entry.h, invertible: !isDarkTier(key) && invertible(region, target, s) };
+    if (notes.length) out.notes = notes;
     const peek = await peekOf(region, target, uid);
     if (peek) out.peek = peek;
     return out;
@@ -5612,6 +5688,26 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     root.parentNode?.insertBefore(span, root.nextSibling);
     info.extras.push(span);
   };
+  const addMeta = (root, info, children) => {
+    const meta = regionMeta(children);
+    if (!(meta.count > 0)) return;
+    const parent = root.parentNode;
+    const place = (node) => {
+      const anchor = info.extras.length ? info.extras[info.extras.length - 1] : root;
+      parent?.insertBefore?.(node, anchor.nextSibling);
+      info.extras.push(node);
+    };
+    const sup = doc.createElement("sup");
+    sup.className = "plexus-count";
+    sup.textContent = String(meta.count);
+    place(sup);
+    for (const attr of meta.attrs) {
+      const span = doc.createElement("span");
+      span.className = "plexus-attr";
+      span.textContent = typeof attr === "string" ? attr : String(attr?.string ?? "");
+      place(span);
+    }
+  };
   const hasTail = (region) => !!String(region.caption ?? "").trim();
   const applyCaption = (root, region, ctx, info, state) => {
     if (!ctx.refEl || ctx.context === "home") return;
@@ -5653,6 +5749,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
         ctx.refEl.classList.add(`plexus-mode-${mode}`);
         hostAncestors(ctx.refEl, info);
       }
+      addMeta(root, info, block.children);
       if (!region.supported) {
         chip(root, region.error ? `Invalid region: ${region.error}` : `Region kind ${region.kind} needs a newer Plexus`);
         return;
@@ -5698,7 +5795,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
         stopHover(anchor, info);
         return;
       }
-      if (mode === "thumbnail") {
+      if (mode === "thumbnail" || mode === "image") {
         info.disposers.push(getPopover().hoverOn(root, hoverEntry));
         stopHover(root, info);
       }
@@ -6012,6 +6109,329 @@ function showSpotlight({ rect, doc, durationMs = 1400, motion = true }) {
   for (const type of events) doc.addEventListener(type, remove, { capture: true, passive: true });
   timer = setTimeout(remove, durationMs);
   return remove;
+}
+function selectedList(selectedIds) {
+  if (Array.isArray(selectedIds)) return selectedIds;
+  if (selectedIds instanceof Set) return [...selectedIds];
+  if (selectedIds && typeof selectedIds === "object") return Object.keys(selectedIds).filter((id) => selectedIds[id]);
+  return [];
+}
+function indexElements(elements) {
+  const byId = /* @__PURE__ */ new Map();
+  if (!Array.isArray(elements)) return byId;
+  for (const el of elements) {
+    if (el && typeof el.id === "string" && !byId.has(el.id)) byId.set(el.id, el);
+  }
+  return byId;
+}
+function isLive(el) {
+  return !!el && typeof el.id === "string" && el.isDeleted !== true;
+}
+function bindingIds(el) {
+  const out = [];
+  const start = el.startBinding && typeof el.startBinding.elementId === "string" ? el.startBinding.elementId : "";
+  const end = el.endBinding && typeof el.endBinding.elementId === "string" ? el.endBinding.elementId : "";
+  if (start) out.push(start);
+  if (end && end !== start) out.push(end);
+  return out;
+}
+function hopTargets(el, byId) {
+  const out = [];
+  const pushArrow = (arrow) => {
+    if (!isLive(arrow) || arrow.type !== "arrow") return;
+    out.push(arrow.id, ...bindingIds(arrow));
+  };
+  if (el.type === "arrow") pushArrow(el);
+  const bound = Array.isArray(el.boundElements) ? el.boundElements : [];
+  for (const entry of bound) {
+    if (!entry || entry.type !== "arrow" || typeof entry.id !== "string") continue;
+    pushArrow(byId.get(entry.id));
+  }
+  return out;
+}
+function appendBoundText(kept, seen, byId) {
+  const hopCount = kept.length;
+  for (let i = 0; i < hopCount; i++) {
+    const el = byId.get(kept[i]);
+    const bound = el && Array.isArray(el.boundElements) ? el.boundElements : [];
+    for (const entry of bound) {
+      if (!entry || entry.type !== "text" || typeof entry.id !== "string" || seen.has(entry.id)) continue;
+      const text = byId.get(entry.id);
+      if (!isLive(text)) continue;
+      seen.add(text.id);
+      kept.push(text.id);
+    }
+  }
+}
+function focusKeptIds(elements, selectedIds, depth) {
+  const byId = indexElements(elements);
+  const max = depth === "all" ? Infinity : Number.isFinite(depth) ? depth : 0;
+  const kept = [];
+  const seen = /* @__PURE__ */ new Set();
+  const queue = [];
+  const enqueue = (id, dist) => {
+    if (typeof id !== "string" || seen.has(id)) return;
+    if (!isLive(byId.get(id))) return;
+    seen.add(id);
+    kept.push(id);
+    queue.push(dist);
+  };
+  for (const id of selectedList(selectedIds)) enqueue(id, 0);
+  for (let i = 0; i < queue.length; i++) {
+    if (queue[i] >= max) continue;
+    const el = byId.get(kept[i]);
+    if (!el) continue;
+    for (const id of hopTargets(el, byId)) enqueue(id, queue[i] + 1);
+  }
+  appendBoundText(kept, seen, byId);
+  return kept;
+}
+var TODO_MACRO = "{{[[TODO]]}}";
+function elementString(el, textOf) {
+  if (typeof textOf === "function") {
+    const supplied = textOf(el);
+    if (typeof supplied === "string") return supplied;
+  }
+  return typeof el.text === "string" ? el.text : "";
+}
+function todoKeptIds(elements, textOf) {
+  const byId = indexElements(elements);
+  const kept = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const el of Array.isArray(elements) ? elements : []) {
+    if (!isLive(el) || seen.has(el.id)) continue;
+    if (!elementString(el, textOf).includes(TODO_MACRO)) continue;
+    seen.add(el.id);
+    kept.push(el.id);
+  }
+  appendBoundText(kept, seen, byId);
+  return kept;
+}
+function finiteRect(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const x = Number(raw.left ?? raw.x);
+  const y = Number(raw.top ?? raw.y);
+  const w = Number(raw.width);
+  const h = Number(raw.height);
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+  return { x, y, w, h };
+}
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+function near(a, b) {
+  return Math.abs(a - b) < 1e-6;
+}
+function gridUnion(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.w]))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.flatMap((r) => [r.y, r.y + r.h]))].sort((a, b) => a - b);
+  const rows = [];
+  for (let j = 0; j < ys.length - 1; j++) {
+    const y = ys[j];
+    const h = ys[j + 1] - y;
+    if (!(h > 0)) continue;
+    const row = [];
+    let run = null;
+    for (let i = 0; i < xs.length - 1; i++) {
+      const x = xs[i];
+      const w = xs[i + 1] - x;
+      if (!(w > 0)) continue;
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const hit = rects.some((r) => cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h);
+      if (!hit) {
+        if (run) row.push(run);
+        run = null;
+        continue;
+      }
+      if (run) run.w += w;
+      else run = { x, y, w, h };
+    }
+    if (run) row.push(run);
+    if (row.length) rows.push(row);
+  }
+  const out = [];
+  let prev = [];
+  for (const row of rows) {
+    const next = [];
+    const used = new Array(row.length).fill(false);
+    for (const seg of prev) {
+      let merged = false;
+      for (let i = 0; i < row.length; i++) {
+        const r = row[i];
+        if (used[i] || !near(r.x, seg.x) || !near(r.w, seg.w) || !near(r.y, seg.y + seg.h)) continue;
+        used[i] = true;
+        next.push({ x: seg.x, y: seg.y, w: seg.w, h: seg.h + r.h });
+        merged = true;
+        break;
+      }
+      if (!merged) out.push(seg);
+    }
+    for (let i = 0; i < row.length; i++) if (!used[i]) next.push({ x: row[i].x, y: row[i].y, w: row[i].w, h: row[i].h });
+    prev = next;
+  }
+  out.push(...prev);
+  return out;
+}
+function unionRects(rects) {
+  if (rects.length <= 1) return rects;
+  for (let i = 0; i < rects.length; i++) {
+    for (let j = i + 1; j < rects.length; j++) {
+      if (rectsOverlap(rects[i], rects[j])) return gridUnion(rects);
+    }
+  }
+  return rects;
+}
+function veilClip(holes) {
+  const raw = Array.isArray(holes) ? holes : [];
+  const rects = unionRects(raw.map(finiteRect).filter(Boolean));
+  const pts = ["0% 0%", "100% 0%", "100% 100%", "0% 100%", "0% 0%"];
+  for (const r of rects) {
+    const x2 = r.x + r.w;
+    const y2 = r.y + r.h;
+    pts.push(`${r.x}px ${r.y}px`, `${x2}px ${r.y}px`, `${x2}px ${y2}px`, `${r.x}px ${y2}px`, `${r.x}px ${r.y}px`, "0% 0%");
+  }
+  return `polygon(evenodd, ${pts.join(", ")})`;
+}
+function showFocusVeil({ doc, getHoles, subscribe: subscribe2 }) {
+  const el = doc.createElement("div");
+  el.className = "plexus-portal plexus-focus-veil";
+  el.style.position = "fixed";
+  el.style.left = "0";
+  el.style.top = "0";
+  el.style.right = "0";
+  el.style.bottom = "0";
+  el.style.zIndex = "100000";
+  el.style.pointerEvents = "none";
+  el.style.background = "rgba(0, 0, 0, 0.45)";
+  const place = () => {
+    el.style.clipPath = veilClip(typeof getHoles === "function" ? getHoles() : []);
+  };
+  let done2 = false;
+  let unsub = () => {
+  };
+  const onKey = (ev) => {
+    if (ev && ev.key === "Escape") remove();
+  };
+  const remove = () => {
+    if (done2) return;
+    done2 = true;
+    doc.removeEventListener("keydown", onKey, { capture: true });
+    unsub();
+    unsub = () => {
+    };
+    el.remove();
+  };
+  place();
+  const off = typeof subscribe2 === "function" ? subscribe2(place) : null;
+  if (typeof off === "function") unsub = off;
+  doc.addEventListener("keydown", onKey, { capture: true });
+  doc.body.append(el);
+  return remove;
+}
+function showTodoVeil({ doc, elements, textOf, rectOf: rectOf2, subscribe: subscribe2 }) {
+  const getHoles = () => {
+    const holes = [];
+    for (const id of todoKeptIds(elements, textOf)) {
+      const rect = typeof rectOf2 === "function" ? rectOf2(id) : null;
+      if (rect) holes.push(rect);
+    }
+    return holes;
+  };
+  return showFocusVeil({ doc, getHoles, subscribe: subscribe2 });
+}
+
+// src/query-cards.js
+var CAP = 50;
+var COLS = 4;
+var CARD_W = 360;
+var CARD_H = 200;
+var GAP2 = 40;
+function resultUid(row) {
+  const uid = row?.[":block/uid"];
+  return typeof uid === "string" && uid ? uid : null;
+}
+function resultRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  const results = payload?.results;
+  return Array.isArray(results) ? results : [];
+}
+function childUid(row) {
+  if (!row || typeof row !== "object") return null;
+  const uid = row[":block/uid"] ?? row.uid;
+  return typeof uid === "string" && uid ? uid : null;
+}
+function embedUid(el) {
+  const parsed = parseEmbedRef(el?.customData?.plexus?.embed);
+  return parsed?.kind === "block" ? parsed.uid : null;
+}
+function takenUids(existing) {
+  const taken = /* @__PURE__ */ new Set();
+  for (const el of liveElements(existing)) {
+    const uid = embedUid(el);
+    if (uid) taken.add(uid);
+  }
+  return taken;
+}
+function sourceCount(existing, sourceUid) {
+  let n = 0;
+  for (const el of liveElements(existing)) {
+    if (el.customData?.plexus?.query === sourceUid) n++;
+  }
+  return n;
+}
+function layCards(uids, sourceUid, origin) {
+  const x0 = Number.isFinite(origin?.x) ? origin.x : 0;
+  const y0 = Number.isFinite(origin?.y) ? origin.y : 0;
+  const out = [];
+  for (let i = 0; i < uids.length; i++) {
+    const [rect, text] = makeEmbedAnchor({
+      ref: `((${uids[i]}))`,
+      x: x0 + i % COLS * (CARD_W + GAP2),
+      y: y0 + Math.floor(i / COLS) * (CARD_H + GAP2),
+      width: CARD_W,
+      height: CARD_H
+    });
+    rect.customData.plexus.query = sourceUid;
+    out.push(rect, text);
+  }
+  return out;
+}
+function cardsFromRows(rows, readUid, sourceUid, existing, origin) {
+  const taken = takenUids(existing);
+  const room = Math.max(0, CAP - sourceCount(existing, sourceUid));
+  const picked = [];
+  const list = Array.isArray(rows) ? rows : [];
+  for (const row of list) {
+    if (picked.length >= room) break;
+    const uid = readUid(row);
+    if (!uid || taken.has(uid)) continue;
+    taken.add(uid);
+    picked.push(uid);
+  }
+  return layCards(picked, sourceUid, origin);
+}
+async function cardsFromQuery({ api, sourceUid, existing, origin } = {}) {
+  let payload;
+  try {
+    payload = await api.data.roamQuery({ uid: sourceUid, limit: CAP });
+  } catch {
+    return [];
+  }
+  return cardsFromRows(resultRows(payload), resultUid, sourceUid, existing, origin);
+}
+function cardsFromChildren({ children, sourceUid, existing, origin } = {}) {
+  return cardsFromRows(children, childUid, sourceUid, existing, origin);
+}
+
+// src/relations.js
+var DEFAULT_LABEL = "relates to";
+function relationPlan({ sourceUid, destUid, label = DEFAULT_LABEL, strings } = {}) {
+  if (typeof sourceUid !== "string" || sourceUid === "" || typeof destUid !== "string" || destUid === "" || sourceUid === destUid) return null;
+  const name = typeof label === "string" && label !== "" ? label : DEFAULT_LABEL;
+  const child = `((${destUid}))`;
+  if (Array.isArray(strings) && strings.some((entry) => typeof entry === "string" && entry.includes(child))) return null;
+  return { parentUid: sourceUid, attribute: `${name}::`, child };
 }
 
 // src/model/links.js
@@ -7567,7 +7987,7 @@ var DEFAULT_STYLE = Object.freeze({
 });
 var LAYOUT_KINDS = Object.freeze(["row", "column", "grid", "tree"]);
 var STYLE_KEYS = Object.keys(DEFAULT_STYLE);
-var GAP2 = 4;
+var GAP3 = 4;
 var LAYOUT_GAP = 40;
 var LABEL_FONT = 16;
 var LABEL_FAMILY = 5;
@@ -7728,8 +8148,8 @@ function createBuilder({ style: initial, measure: measure2, newId } = {}) {
       Object.assign(el, {
         points: [[0, 0], [0, 0]],
         lastCommittedPoint: null,
-        startBinding: { elementId: from.id, focus: 0, gap: GAP2 },
-        endBinding: { elementId: to.id, focus: 0, gap: GAP2 },
+        startBinding: { elementId: from.id, focus: 0, gap: GAP3 },
+        endBinding: { elementId: to.id, focus: 0, gap: GAP3 },
         startArrowhead: o.startArrowhead ?? null,
         endArrowhead: o.endArrowhead === void 0 ? "arrow" : o.endArrowhead,
         elbowed: false,
@@ -7854,8 +8274,8 @@ function createBuilder({ style: initial, measure: measure2, newId } = {}) {
           const ux = (cb.x - ca.x) / dist;
           const uy = (cb.y - ca.y) / dist;
           const exit = (b) => Math.min(Math.abs(ux) > 1e-9 ? b.width / 2 / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-9 ? b.height / 2 / Math.abs(uy) : Infinity);
-          const s0 = exit(A) + GAP2;
-          const s1 = exit(B) + GAP2;
+          const s0 = exit(A) + GAP3;
+          const s1 = exit(B) + GAP3;
           if (s0 + s1 < dist) {
             p0 = { x: ca.x + ux * s0, y: ca.y + uy * s0 };
             p1 = { x: cb.x - ux * s1, y: cb.y - uy * s1 };
@@ -8762,9 +9182,9 @@ var TOL = 0.5;
 var idPrefix = (root) => `pmm-${root}-`;
 var nodeId = (root, uid) => `pmm-${root}-${uid}`;
 var textId = (root, uid) => `pmm-${root}-${uid}-t`;
-var edgeId = (root, childUid) => `pmm-${root}-${childUid}-e`;
+var edgeId = (root, childUid2) => `pmm-${root}-${childUid2}-e`;
 var boundaryId = (root, uid) => `pmm-${root}-${uid}-b`;
-var labelId = (root, childUid) => `${edgeId(root, childUid)}-t`;
+var labelId = (root, childUid2) => `${edgeId(root, childUid2)}-t`;
 var spineId = (root) => `pmm-${root}-${root}-s`;
 var lanePrefix = (root) => `pmm-${root}-lane-`;
 var laneId = (root, name) => `${lanePrefix(root)}${fnv1a(name)}`;
@@ -8855,34 +9275,34 @@ function buildText({ map, uid, x, y, width, height, text, originalText, fontSize
     lineHeight: LINE_HEIGHT
   });
 }
-function buildEdge({ map, parentUid, childUid, x, y, points, via, unboundStart = false, boundElements, id, mm: mm2, arrow = false, dashed = false }) {
+function buildEdge({ map, parentUid, childUid: childUid2, x, y, points, via, unboundStart = false, boundElements, id, mm: mm2, arrow = false, dashed = false }) {
   const [, [dx, dy]] = points;
-  return base(id || edgeId(map, childUid), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
+  return base(id || edgeId(map, childUid2), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
     points,
     ...dashed ? { strokeStyle: "dashed" } : {},
     lastCommittedPoint: null,
     startBinding: unboundStart ? null : { elementId: nodeId(map, parentUid), focus: 0, gap: EDGE_GAP },
-    endBinding: { elementId: nodeId(map, childUid), focus: 0, gap: EDGE_GAP },
+    endBinding: { elementId: nodeId(map, childUid2), focus: 0, gap: EDGE_GAP },
     startArrowhead: null,
     endArrowhead: arrow ? "arrow" : null,
     elbowed: false,
     ...boundElements && boundElements.length ? { boundElements } : {},
-    customData: withMM(null, mm2 || edgeMM(map, parentUid, childUid, via))
+    customData: withMM(null, mm2 || edgeMM(map, parentUid, childUid2, via))
   });
 }
-var edgeMM = (map, parentUid, childUid, via) => ({ edge: [parentUid, childUid], map, ...via ? { via } : {} });
-function buildLabel({ map, childUid, x, y, width, height, text, originalText }) {
-  return base(labelId(map, childUid), "text", x, y, width, height, {
+var edgeMM = (map, parentUid, childUid2, via) => ({ edge: [parentUid, childUid2], map, ...via ? { via } : {} });
+function buildLabel({ map, childUid: childUid2, x, y, width, height, text, originalText }) {
+  return base(labelId(map, childUid2), "text", x, y, width, height, {
     text,
     originalText,
     fontSize: LABEL_FONT2,
     fontFamily: 5,
     textAlign: "center",
     verticalAlign: "middle",
-    containerId: edgeId(map, childUid),
+    containerId: edgeId(map, childUid2),
     autoResize: true,
     lineHeight: LINE_HEIGHT,
-    customData: withMM(null, { label: childUid, map })
+    customData: withMM(null, { label: childUid2, map })
   });
 }
 function buildChip({ map, uid, n, kind, x, y, width, height, frameId: frameId2 }) {
@@ -9199,12 +9619,12 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
   const addEdges = [];
   const addBodies = [];
   const addLabels = [];
-  const doEdge = ({ eid, parentUid, childUid, g, wantEdgeMM, via, boneStart, arrow = false, dashed = false, labelUid = null }) => {
+  const doEdge = ({ eid, parentUid, childUid: childUid2, g, wantEdgeMM, via, boneStart, arrow = false, dashed = false, labelUid = null }) => {
     const pid = nodeId(root, parentUid);
-    const nid = nodeId(root, childUid);
+    const nid = nodeId(root, childUid2);
     const e = byId.get(eid);
     const [, [dx, dy]] = g.points;
-    const lid = labelId(root, childUid);
+    const lid = labelId(root, childUid2);
     let label = null;
     const ltext = labelUid !== null ? labels.get(labelUid) : null;
     if (ltext) {
@@ -9223,7 +9643,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     if (label) {
       desiredIds.add(lid);
       const lt = byId.get(lid);
-      if (!lt) addLabels.push(buildLabel({ map: root, childUid, ...label }));
+      if (!lt) addLabels.push(buildLabel({ map: root, childUid: childUid2, ...label }));
       else {
         const lp = patchOf(lid);
         if (lt.isDeleted) lp.isDeleted = false;
@@ -9238,11 +9658,11 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
         if (Math.abs((lt.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) lp.lineHeight = LINE_HEIGHT;
         if (lt.containerId !== eid) lp.containerId = eid;
         const lm = mmOf(lt);
-        if (!lm || lm.label !== childUid || lm.map !== root) lp.customData = withMM(lt.customData, { label: childUid, map: root });
+        if (!lm || lm.label !== childUid2 || lm.map !== root) lp.customData = withMM(lt.customData, { label: childUid2, map: root });
       }
     }
     if (!e) {
-      addEdges.push(buildEdge({ map: root, parentUid, childUid, ...g, via, unboundStart: !!boneStart, boundElements: edgeBound, id: eid, mm: wantEdgeMM, arrow, dashed }));
+      addEdges.push(buildEdge({ map: root, parentUid, childUid: childUid2, ...g, via, unboundStart: !!boneStart, boundElements: edgeBound, id: eid, mm: wantEdgeMM, arrow, dashed }));
     } else {
       const ep = patchOf(eid);
       if (e.isDeleted) ep.isDeleted = false;
@@ -14402,6 +14822,8 @@ function createRegionsLayer({
   let capLogged = false;
   let samples = [];
   let disposed = false;
+  let filterTag = "";
+  let onFilterKey = null;
   const isVisible = () => root != null;
   const resolveBlock = (uid) => host?.labelSource?.(uid)?.string ?? "";
   function fetchRegions() {
@@ -14554,6 +14976,69 @@ function createRegionsLayer({
     }
     syncOutlines();
     chipsDirty = true;
+    applyFilter();
+  }
+  function classOf(outline) {
+    if (typeof outline?.getAttribute === "function") return outline.getAttribute("class") || "";
+    return outline?.attrs?.class || "";
+  }
+  function setDim(outline, on) {
+    const parts = classOf(outline).split(/\s+/).filter(Boolean);
+    const has2 = parts.includes("plexus-region-dim");
+    if (on === has2) return;
+    const next = on ? [...parts, "plexus-region-dim"] : parts.filter((c) => c !== "plexus-region-dim");
+    outline.setAttribute?.("class", next.join(" "));
+  }
+  function textsFor(entry) {
+    const texts = [];
+    if (typeof entry?.string === "string") texts.push(entry.string);
+    if (!entry) return texts;
+    let children = null;
+    try {
+      children = host?.pullBlock?.(entry.uid)?.children ?? null;
+    } catch {
+      children = null;
+    }
+    if (!Array.isArray(children)) return texts;
+    for (const child of children) texts.push(typeof child === "string" ? child : String(child?.string ?? ""));
+    return texts;
+  }
+  function applyFilter() {
+    const active = filterTag !== "";
+    const byUid = active ? new Map(regions.map((r) => [r.uid, r])) : null;
+    for (const [uid, item] of items) {
+      const dim = active && !regionMatchesTag(textsFor(byUid.get(uid)), filterTag);
+      setDim(item.outline, dim);
+    }
+  }
+  function listenFilter() {
+    if (onFilterKey || !filterTag) return;
+    const fn = (e) => {
+      if (e?.key === "Escape") setTagFilter("");
+    };
+    try {
+      doc.addEventListener("keydown", fn);
+      onFilterKey = fn;
+    } catch (error) {
+      warn7("regions layer filter key failed", error);
+    }
+  }
+  function silenceFilter() {
+    if (!onFilterKey) return;
+    const fn = onFilterKey;
+    onFilterKey = null;
+    try {
+      doc.removeEventListener("keydown", fn);
+    } catch (error) {
+      warn7("regions layer filter key failed", error);
+    }
+  }
+  function setTagFilter(tag) {
+    if (disposed) return;
+    filterTag = typeof tag === "string" ? tag : "";
+    if (filterTag) listenFilter();
+    else silenceFilter();
+    applyFilter();
   }
   function syncOutlines() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -14761,9 +15246,11 @@ function createRegionsLayer({
   function dispose() {
     if (disposed) return;
     hide();
+    filterTag = "";
+    silenceFilter();
     disposed = true;
   }
-  return { show, hide, toggle, visible: isVisible, refresh, dispose };
+  return { show, hide, toggle, visible: isVisible, refresh, dispose, setTagFilter };
 }
 
 // src/view/landing.js
@@ -19077,10 +19564,10 @@ function createActions({
         } else {
           regionUid = await host.createRegion(drawingUid, serializeRegion({ kind: "cframe", drawingUid, frameId: frame2.id, caption: String(frame2.name ?? "").trim() }));
         }
-        const childUid = await host.createBlock({ parentUid: regionUid, string: "" });
+        const childUid2 = await host.createBlock({ parentUid: regionUid, string: "" });
         emitChange(regionUid);
         added.push(regionUid);
-        return { regionUid, childUid };
+        return { regionUid, childUid: childUid2 };
       } catch (error) {
         console.warn("[plexus] add notes failed", error);
         return null;
@@ -19218,13 +19705,13 @@ function createActions({
     const refs = kids2.filter((k) => k.regionUid).slice(0, PRESENT_CAP);
     const slides = [];
     let skipped2 = kids2.length - kids2.filter((k) => k.regionUid).length;
-    for (const { childUid, regionUid } of refs) {
+    for (const { childUid: childUid2, regionUid } of refs) {
       const { prep } = cropPrepQuiet(regionUid);
       if (!prep) {
         skipped2 += 1;
         continue;
       }
-      slides.push({ regionUid, prep, notes: isId(childUid) ? { rootUid: childUid } : void 0, name: stripBrackets(labelOf(prep.region)) || `Slide ${slides.length + 1}`, url: null });
+      slides.push({ regionUid, prep, notes: isId(childUid2) ? { rootUid: childUid2 } : void 0, name: stripBrackets(labelOf(prep.region)) || `Slide ${slides.length + 1}`, url: null });
     }
     if (!slides.length) {
       toaster.show("No region refs under this block", { kind: "error" });
@@ -23178,7 +23665,7 @@ var BLOCKS = "roam/block-uid-list";
 var URIS = "roam/roam-uri-list";
 var CLAIM = [PARENTS, BLOCKS, PLEXUS_MIME];
 var UID_RE4 = /^[\w-]{9}$/;
-var CAP = 500;
+var CAP2 = 500;
 var WATCHDOG_MS = 250;
 var OFFSET = 12;
 var LABELS = { embed: "Embed", link: "Link", label: "Label" };
@@ -23227,7 +23714,7 @@ async function parseRoamDrop(dataTransfer, { resolve, exclude } = {}) {
   const items = [];
   let excluded = 0;
   for (const c of candidates) {
-    if (items.length >= CAP) break;
+    if (items.length >= CAP2) break;
     let item = null;
     if (c.kind === "page") {
       item = { kind: "page", title: c.title, ref: c.ref };
@@ -24043,6 +24530,75 @@ function createEmitter() {
 function versionFlagTarget() {
   return globalThis.window ?? globalThis;
 }
+function isPaletteChord(event) {
+  const key = event?.key;
+  if (typeof key !== "string" || key.toLowerCase() !== "p") return false;
+  return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+}
+function isMindMapChord(event) {
+  if (!event || event.isComposing || event.repeat) return false;
+  if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return false;
+  return event.code === "KeyM";
+}
+function attachLazyPalette({ doc, palette, lifecycle, commands, onMindMap }) {
+  if (!palette?.addCommand || !palette?.removeCommand) throw new TypeError("A command palette is required");
+  let paletteOn = false;
+  const enable = () => {
+    if (paletteOn || lifecycle.disposed) return [];
+    paletteOn = true;
+    return commands.map((command) => {
+      try {
+        const added = palette.addCommand(command);
+        if (added?.then) added.catch((error) => console.warn("[plexus] command", error));
+        return added;
+      } catch (error) {
+        console.warn("[plexus] command", error);
+        return null;
+      }
+    });
+  };
+  const disable = () => {
+    if (!paletteOn) return;
+    paletteOn = false;
+    for (const command of commands) {
+      try {
+        palette.removeCommand({ label: command.label });
+      } catch {
+      }
+    }
+  };
+  const releaseIfClosed = () => {
+    if (!paletteOn || doc?.querySelector?.(".rm-command-palette")) return;
+    disable();
+  };
+  const first = enable();
+  if (typeof doc?.addEventListener === "function") {
+    lifecycle.event(doc, "keydown", (event) => {
+      if (isPaletteChord(event)) enable();
+      else if (isMindMapChord(event) && onMindMap?.(event) !== false) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    }, true);
+    lifecycle.event(doc, "keyup", () => {
+      if (paletteOn) setTimeout(releaseIfClosed, 0);
+    }, true);
+    lifecycle.event(doc, "pointerup", () => {
+      if (paletteOn) setTimeout(releaseIfClosed, 0);
+    }, true);
+    const timerBox = { id: 0 };
+    let cancelled = false;
+    lifecycle.add(() => {
+      cancelled = true;
+      clearTimeout(timerBox.id);
+    });
+    Promise.all(first.map((item) => Promise.resolve(item))).then(() => {
+      if (cancelled || lifecycle.disposed) return;
+      timerBox.id = setTimeout(releaseIfClosed, 0);
+    });
+  }
+  lifecycle.add(disable);
+}
 async function onload({ extensionAPI, extension, openCommandList: openList = openCommandList }) {
   if (!extensionAPI) throw new TypeError("Roam did not provide extensionAPI");
   if (activeLifecycle) await activeLifecycle.dispose();
@@ -24089,9 +24645,135 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
+    let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
+    let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
+    let runEmbedQuery = () => console.warn("[plexus] unavailable outside Roam: embedQuery");
+    let runEmbedChildren = () => console.warn("[plexus] unavailable outside Roam: embedChildren");
+    let runLinkSelected = () => console.warn("[plexus] unavailable outside Roam: linkSelected");
+    let runFilterTag = () => console.warn("[plexus] unavailable outside Roam: filterTag");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
+      let openVeil = function(show) {
+        let alive = true;
+        const orig = typeof doc.createElement === "function" ? doc.createElement : null;
+        if (orig) {
+          doc.createElement = (...args) => {
+            const el = orig.apply(doc, args);
+            if (el && typeof el.remove === "function") {
+              const base2 = el.remove.bind(el);
+              el.remove = () => {
+                alive = false;
+                base2();
+              };
+            }
+            return el;
+          };
+        }
+        try {
+          const off = show();
+          const close2 = typeof off === "function" ? off : () => {
+          };
+          return {
+            get alive() {
+              return alive;
+            },
+            close() {
+              alive = false;
+              try {
+                close2();
+              } catch (error) {
+                console.warn("[plexus] veil close failed", error);
+              }
+            }
+          };
+        } finally {
+          if (orig) {
+            try {
+              doc.createElement = orig;
+            } catch (error) {
+              console.warn("[plexus] veil restore failed", error);
+            }
+          }
+        }
+      }, endFocus = function() {
+        focusIndex = -1;
+        const cur = focusVeil;
+        focusVeil = null;
+        cur?.close();
+      }, endTodo = function() {
+        const cur = todoVeil;
+        todoVeil = null;
+        cur?.close();
+      }, todoText = function(el) {
+        const parsed = parseEmbedRef(el?.customData?.plexus?.embed);
+        if (parsed?.kind === "block") {
+          try {
+            const block = host.pullBlock(parsed.uid);
+            return typeof block?.string === "string" ? block.string : "";
+          } catch (error) {
+            console.warn("[plexus] todo text failed", error);
+            return "";
+          }
+        }
+        if (typeof el?.text === "string") return el.text;
+        if (typeof el?.originalText === "string") return el.originalText;
+        return "";
+      }, cardUid = function(el) {
+        if (!el || el.isDeleted) return "";
+        const mm2 = el.customData?.plexus?.mm;
+        if (mm2 && typeof mm2 === "object") {
+          if (mm2.edge || mm2.boundary) return "";
+          if (typeof mm2.uid === "string" && mm2.uid) return mm2.uid;
+        }
+        const embed = parseEmbedRef(el.customData?.plexus?.embed);
+        if (embed?.kind === "block" && embed.uid) return embed.uid;
+        const link = parseEmbedRef(el.link);
+        if (link?.kind === "block" && link.uid) return link.uid;
+        return "";
+      }, refUid = function(el, byId) {
+        const own = cardUid(el);
+        if (own) return own;
+        const parent = el?.containerId ? byId.get(el.containerId) : null;
+        return parent ? cardUid(parent) : "";
+      }, relationStrings = function(uid) {
+        let block = null;
+        try {
+          block = host.pullBlock(uid);
+        } catch (error) {
+          console.warn("[plexus] relation pull failed", error);
+        }
+        const strings = [];
+        if (typeof block?.string === "string") strings.push(block.string);
+        const children = Array.isArray(block?.children) ? block.children : [];
+        for (const child of children) {
+          if (typeof child?.string !== "string") continue;
+          strings.push(child.string);
+          if (child.string.trim() !== "relates to::" || !child.uid) continue;
+          let attr = null;
+          try {
+            attr = host.pullBlock(child.uid);
+          } catch (error) {
+            console.warn("[plexus] relation pull failed", error);
+          }
+          const grands = Array.isArray(attr?.children) ? attr.children : [];
+          for (const grand of grands) if (typeof grand?.string === "string") strings.push(grand.string);
+        }
+        return strings;
+      }, tagIn = function(text) {
+        const m = /#\[\[([^\]\n]+)\]\]|\[\[([^\]\n]+)\]\]|#([^\s#\[\](){}]+)/.exec(String(text ?? ""));
+        if (!m) return "";
+        return (m[1] || m[2] || m[3] || "").trim();
+      }, placeCards = function(app, drawingUid, cards, label) {
+        if (!Array.isArray(cards) || cards.length === 0) return void toaster.show("Nothing new to place");
+        const ok = guard2.guardedWrite(app, {
+          drawingUid,
+          label,
+          captureUpdate: "IMMEDIATELY",
+          next: (current6) => [...Array.isArray(current6) ? current6 : [], ...cards]
+        });
+        if (!ok) toaster.show("Could not place the cards", { kind: "error" });
+      };
       const host = createRoamHost({ api });
       const settings = getSettings();
       const cache = createCropCache({
@@ -24649,7 +25331,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         actions,
         regionref,
         getSettings,
-        setRefOverride: (blockUid, refUid, patch) => setRefOverride(extensionAPI, blockUid, refUid, patch),
+        setRefOverride: (blockUid, refUid2, patch) => setRefOverride(extensionAPI, blockUid, refUid2, patch),
         openSettings,
         showInCompass,
         openPrompt: openCaptionPrompt,
@@ -24687,7 +25369,254 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         thumbTimers.add(timer);
       };
       let navigatedAt = -Infinity;
+      let focusVeil = null;
+      let focusIndex = -1;
+      let todoVeil = null;
+      const FOCUS_DEPTHS = [1, 2, 3, "all"];
+      const sceneElements = (app) => {
+        const list = app?.getSceneElementsIncludingDeleted?.();
+        return Array.isArray(list) ? list : [];
+      };
+      const indexScene = (elements) => {
+        const byId = /* @__PURE__ */ new Map();
+        for (const el of elements) {
+          if (el && typeof el.id === "string" && !byId.has(el.id)) byId.set(el.id, el);
+        }
+        return byId;
+      };
+      const viewOrigin = (app) => {
+        const st = app?.state || {};
+        return viewportToScene({
+          x: (st.offsetLeft || 0) + (st.width || 0) / 2,
+          y: (st.offsetTop || 0) + (st.height || 0) / 2,
+          appState: st
+        });
+      };
+      const holesFor = (app, ids) => {
+        const byId = indexScene(sceneElements(app));
+        const holes = [];
+        for (const id of ids) {
+          const el = byId.get(id);
+          if (!el || el.isDeleted) continue;
+          try {
+            const rect = viewportRectOf(app, elementBounds(el));
+            if (rect) holes.push(rect);
+          } catch (error) {
+            console.warn("[plexus] veil rect failed", error);
+          }
+        }
+        return holes;
+      };
+      const subscribeViewport2 = (app, place) => {
+        try {
+          return subscribeViewport(app, place);
+        } catch (error) {
+          console.warn("[plexus] veil subscribe failed", error);
+          return () => {
+          };
+        }
+      };
+      const focusedUid = (ctx) => ctx?.focusedUid || api.ui?.getFocusedBlock?.()?.["block-uid"] || "";
+      runFocusMode = () => {
+        if (typeof showFocusVeil !== "function" || typeof focusKeptIds !== "function") return void toaster.show("Focus mode is unavailable");
+        const editor = activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!selectedElementIds(editor.app).length) return void toaster.show("Select some elements first", { kind: "error" });
+        endTodo();
+        const next = focusVeil?.alive === true ? focusIndex + 1 : 0;
+        endFocus();
+        if (next >= FOCUS_DEPTHS.length) return;
+        const depth = FOCUS_DEPTHS[next];
+        const app = editor.app;
+        let veil = null;
+        try {
+          veil = openVeil(() => showFocusVeil({
+            doc,
+            getHoles: () => holesFor(app, focusKeptIds(sceneElements(app), selectedElementIds(app), depth)),
+            subscribe: (place) => subscribeViewport2(app, place)
+          }));
+        } catch (error) {
+          console.warn("[plexus] focus mode failed", error);
+          toaster.show("Focus mode is unavailable");
+          return;
+        }
+        focusIndex = next;
+        focusVeil = veil;
+      };
+      runTodoMode = () => {
+        if (typeof showTodoVeil !== "function" || typeof todoKeptIds !== "function") return void toaster.show("Todo mode is unavailable");
+        const editor = activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        endFocus();
+        endTodo();
+        const app = editor.app;
+        try {
+          todoVeil = openVeil(() => showTodoVeil({
+            doc,
+            elements: sceneElements(app),
+            textOf: todoText,
+            rectOf: (id) => {
+              const el = indexScene(sceneElements(app)).get(id);
+              if (!el || el.isDeleted) return null;
+              try {
+                return viewportRectOf(app, elementBounds(el));
+              } catch (error) {
+                console.warn("[plexus] veil rect failed", error);
+                return null;
+              }
+            },
+            subscribe: (place) => subscribeViewport2(app, place)
+          }));
+        } catch (error) {
+          console.warn("[plexus] todo mode failed", error);
+          toaster.show("Todo mode is unavailable");
+        }
+      };
+      runEmbedQuery = async (ctx) => {
+        if (typeof cardsFromQuery !== "function") return void toaster.show("Embed query results is unavailable");
+        const editor = activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const sourceUid = focusedUid(ctx);
+        if (!sourceUid) return void toaster.show("Click into a block first", { kind: "error" });
+        const app = editor.app;
+        let cards = [];
+        try {
+          cards = await cardsFromQuery({ api, sourceUid, existing: sceneElements(app), origin: viewOrigin(app) });
+        } catch (error) {
+          console.warn("[plexus] embed query failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        if (activeEditor(doc)?.app !== app) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        placeCards(app, editor.drawingUid, cards, "Embed query results");
+      };
+      runEmbedChildren = (ctx) => {
+        if (typeof cardsFromChildren !== "function") return void toaster.show("Embed page children is unavailable");
+        const editor = activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const uid = focusedUid(ctx);
+        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        const pageUid = host.blockInfo(uid)?.pageUid;
+        if (!pageUid) return void toaster.show("Could not find that page", { kind: "error" });
+        let children = [];
+        try {
+          children = host.pullBlock(pageUid)?.children ?? [];
+        } catch (error) {
+          console.warn("[plexus] embed children failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        let cards = [];
+        try {
+          cards = cardsFromChildren({ children, sourceUid: pageUid, existing: sceneElements(editor.app), origin: viewOrigin(editor.app) });
+        } catch (error) {
+          console.warn("[plexus] embed children failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        placeCards(editor.app, editor.drawingUid, cards, "Embed page children");
+      };
+      runLinkSelected = async () => {
+        if (typeof relationPlan !== "function" || typeof withLock !== "function" || typeof lockName !== "function") {
+          toaster.show("Link selected is unavailable");
+          return;
+        }
+        const editor = activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const byId = indexScene(sceneElements(editor.app));
+        const selected = selectedElementIds(editor.app).map((id) => byId.get(id)).filter((el) => el && !el.isDeleted);
+        const arrow = selected.find((el) => el.type === "arrow" && el.startBinding?.elementId && el.endBinding?.elementId);
+        let sourceUid = "";
+        let destUid = "";
+        if (arrow) {
+          sourceUid = refUid(byId.get(arrow.startBinding.elementId), byId);
+          destUid = refUid(byId.get(arrow.endBinding.elementId), byId);
+        } else {
+          const ids = [];
+          for (const el of selected) {
+            const uid = refUid(el, byId);
+            if (!uid || ids.includes(uid)) continue;
+            ids.push(uid);
+            if (ids.length === 2) break;
+          }
+          sourceUid = ids[0] || "";
+          destUid = ids[1] || "";
+        }
+        if (!sourceUid || !destUid) return void toaster.show("Select two cards, or an arrow between them", { kind: "error" });
+        const plan = relationPlan({ sourceUid, destUid, strings: relationStrings(sourceUid) });
+        if (!plan) return void toaster.show("Already linked");
+        try {
+          const held = await withLock(lockName(host.graphName(), sourceUid), async () => {
+            const attrUid2 = await host.createBlock({ parentUid: plan.parentUid, order: "last", string: plan.attribute });
+            try {
+              const childUid3 = await host.createBlock({ parentUid: attrUid2, order: "last", string: plan.child });
+              return { attrUid: attrUid2, childUid: childUid3 };
+            } catch (error) {
+              try {
+                await host.deleteBlock(attrUid2);
+              } catch (cleanup) {
+                console.warn("[plexus] link cleanup failed", cleanup);
+              }
+              throw error;
+            }
+          });
+          if (!held?.acquired || !held.value) return void toaster.show("Could not link those cards", { kind: "error" });
+          const { attrUid, childUid: childUid2 } = held.value;
+          toaster.show("Linked", {
+            action: {
+              label: "Undo",
+              run: () => {
+                void (async () => {
+                  try {
+                    await host.deleteBlock(childUid2);
+                  } catch (error) {
+                    console.warn("[plexus] undo link failed", error);
+                  }
+                  try {
+                    await host.deleteBlock(attrUid);
+                  } catch (error) {
+                    console.warn("[plexus] undo link failed", error);
+                  }
+                })();
+              }
+            }
+          });
+        } catch (error) {
+          console.warn("[plexus] link selected failed", error);
+          toaster.show("Could not link those cards", { kind: "error" });
+        }
+      };
+      runFilterTag = (ctx) => {
+        const uid = focusedUid(ctx);
+        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        const setTagFilter = mounted?.layer?.setTagFilter;
+        if (typeof setTagFilter !== "function") return void toaster.show("Open a drawing first", { kind: "error" });
+        let text = "";
+        try {
+          text = host.pullBlock(uid)?.string ?? "";
+        } catch (error) {
+          console.warn("[plexus] tag filter failed", error);
+        }
+        const tag = tagIn(text);
+        if (!tag) return void toaster.show("No tag in this block");
+        try {
+          setTagFilter(tag);
+        } catch (error) {
+          console.warn("[plexus] tag filter failed", error);
+          toaster.show("Could not filter regions", { kind: "error" });
+        }
+      };
       const unmountEditor = ({ unloading = false } = {}) => {
+        try {
+          endFocus();
+        } catch (error) {
+          console.warn("[plexus] focus veil failed", error);
+        }
+        try {
+          endTodo();
+        } catch (error) {
+          console.warn("[plexus] todo veil failed", error);
+        }
         const current6 = mounted;
         mounted = null;
         closeDialogs();
@@ -25025,6 +25954,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },
+      { id: "focusMode", label: "Focus mode", run: () => runFocusMode() },
+      { id: "todoMode", label: "Todo mode", run: () => runTodoMode() },
+      { id: "embedQuery", label: "Embed query results", run: (ctx) => runEmbedQuery(ctx) },
+      { id: "embedChildren", label: "Embed page children", run: (ctx) => runEmbedChildren(ctx) },
+      { id: "linkSelected", label: "Link selected", run: () => runLinkSelected() },
+      { id: "filterRegions", label: "Filter regions by tag", run: (ctx) => runFilterTag(ctx) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
@@ -25033,18 +25968,34 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       commandListHandle?.close?.();
       commandListHandle = null;
     });
-    await lifecycle.command(extensionAPI.ui.commandPalette, {
-      label: "Plexus: Commands…",
-      callback: () => {
-        try {
-          const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
-          commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
-        } catch (error) {
-          console.warn("[plexus] command list failed", error);
-        }
-      }
+    attachLazyPalette({
+      doc,
+      palette: extensionAPI.ui.commandPalette,
+      lifecycle,
+      onMindMap: (event) => {
+        const app = mountedApp?.();
+        const target = event?.target;
+        const tag = String(target?.tagName ?? "").toLowerCase();
+        const typing = tag === "textarea" || tag === "input" || target?.isContentEditable === true;
+        if (app && (app.state?.editingTextElement || typing && target.closest?.(".excalidraw-outer-container, .plexus-portal"))) return false;
+        runHotkey("mindmap");
+        return true;
+      },
+      commands: [
+        {
+          label: "Plexus: Commands…",
+          callback: () => {
+            try {
+              const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+              commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
+            } catch (error) {
+              console.warn("[plexus] command list failed", error);
+            }
+          }
+        },
+        { label: "Plexus: Mind map", callback: () => runHotkey("mindmap"), "default-hotkey": specOf("mindmap") }
+      ]
     });
-    await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Mind map", callback: () => runHotkey("mindmap"), "default-hotkey": specOf("mindmap") });
     try {
       const slash = extensionAPI.ui?.slashCommand ?? globalThis.roamAlphaAPI?.ui?.slashCommand;
       await lifecycle.command(slash, {
@@ -25085,6 +26036,7 @@ async function onunload() {
 }
 var extension_default = { onload, onunload };
 export {
+  attachLazyPalette,
   extension_default as default,
   onload,
   onunload

@@ -1595,3 +1595,32 @@ body.bt-theme-dark .plexus-settings .plexus-settings-input[type="color"] {
   opacity: 0.45;
   cursor: default;
 }
+
+/* == p15:region == */
+sup.plexus-count {
+  margin-left: 4px;
+  font-size: 0.75em;
+  line-height: 1;
+}
+
+span.plexus-attr {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.75em;
+  line-height: 1.4;
+  background: rgba(92, 112, 128, 0.15);
+}
+
+.plexus-crop-popover .plexus-notes {
+  margin: 0 0 4px;
+  padding: 2px 8px 0 18px;
+  max-width: 480px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-region-outline.plexus-region-dim {
+  opacity: 0.28;
+}

@@ -20,6 +20,47 @@ export const PLAIN_SETTLE_MS = 150;
 export const IMAGE_KINDS = new Set(["imgrect", "imgpoly"]);
 export const isImageKind = (kind) => IMAGE_KINDS.has(kind);
 
+const ATTR_RE = /^\s*([^:\n]+)::(.*)$/;
+
+function childText(child) {
+  if (typeof child === "string") return child;
+  if (child && typeof child.string === "string") return child.string;
+  return "";
+}
+
+function attrName(text) {
+  if (typeof text !== "string") return null;
+  const m = ATTR_RE.exec(text);
+  if (!m) return null;
+  const name = m[1].trim();
+  if (!name || !m[2].trim() || name.startsWith("BT_attr")) return null;
+  return name;
+}
+
+export function regionMeta(children) {
+  const list = Array.isArray(children) ? children : [];
+  const hover = [];
+  const attrs = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const text = childText(list[i]);
+    if (hover.length < 5) hover.push(text);
+    if (attrName(text)) attrs.push(list[i]);
+  }
+  return { count: list.length, hover, attrs };
+}
+
+export function regionMatchesTag(strings, tag) {
+  if (tag == null || tag === "") return true;
+  const list = Array.isArray(strings) ? strings : [];
+  const hash = `#${tag}`;
+  const wiki = `[[${tag}]]`;
+  const hashWiki = `#[[${tag}]]`;
+  return list.some((item) => {
+    const text = typeof item === "string" ? item : childText(item);
+    return text.includes(hashWiki) || text.includes(wiki) || text.includes(hash);
+  });
+}
+
 const pt = (v) => (Array.isArray(v) ? v : [v.x, v.y]);
 
 // Natural-image fraction rect -> fractions of the displayed element box, clipped to what the crop shows.
@@ -314,18 +355,30 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     return { entry, entryKey };
   }
 
+  function childNotes(uid) {
+    try {
+      return regionMeta(host.pullBlock(uid)?.children).hover;
+    } catch {
+      return [];
+    }
+  }
+
   async function hoverEntryOf(region, target, keys, uid) {
     const s = settings();
     const hot = hotEntry(region, target, keys, s);
     let entry = hot?.entry;
     let key = hot?.key;
-    if (!entry) {
+    if (!entry?.url) {
       const res = await fetchEntry(region, target, keys, () => true);
-      entry = res.entry;
-      key = res.entryKey;
+      if (res?.entry?.url) {
+        entry = res.entry;
+        key = res.entryKey;
+      }
     }
-    if (!entry) return null;
+    const notes = childNotes(uid);
+    if (!entry?.url) return notes.length ? { notes } : null;
     const out = { url: entry.url, w: entry.w, h: entry.h, invertible: !isDarkTier(key) && invertible(region, target, s) };
+    if (notes.length) out.notes = notes;
     const peek = await peekOf(region, target, uid);
     if (peek) out.peek = peek;
     return out;
@@ -418,6 +471,27 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     info.extras.push(span);
   };
 
+  const addMeta = (root, info, children) => {
+    const meta = regionMeta(children);
+    if (!(meta.count > 0)) return;
+    const parent = root.parentNode;
+    const place = (node) => {
+      const anchor = info.extras.length ? info.extras[info.extras.length - 1] : root;
+      parent?.insertBefore?.(node, anchor.nextSibling);
+      info.extras.push(node);
+    };
+    const sup = doc.createElement("sup");
+    sup.className = "plexus-count";
+    sup.textContent = String(meta.count);
+    place(sup);
+    for (const attr of meta.attrs) {
+      const span = doc.createElement("span");
+      span.className = "plexus-attr";
+      span.textContent = typeof attr === "string" ? attr : String(attr?.string ?? "");
+      place(span);
+    }
+  };
+
   const hasTail = (region) => !!String(region.caption ?? "").trim();
 
   // Image and thumbnail cards: hide the written text, or show the derived label when there is no tail.
@@ -464,6 +538,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         ctx.refEl.classList.add(`plexus-mode-${mode}`);
         hostAncestors(ctx.refEl, info);
       }
+      addMeta(root, info, block.children);
 
       if (!region.supported) {
         chip(root, region.error ? `Invalid region: ${region.error}` : `Region kind ${region.kind} needs a newer Plexus`);
@@ -515,7 +590,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         stopHover(anchor, info);
         return;
       }
-      if (mode === "thumbnail") {
+      if (mode === "thumbnail" || mode === "image") {
         info.disposers.push(getPopover().hoverOn(root, hoverEntry));
         stopHover(root, info);
       }

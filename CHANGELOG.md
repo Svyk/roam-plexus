@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.15.0]
+
+- `apiVersion` stays 6. Command list, before Show in Compass: Focus mode, Todo mode, Embed query results, Embed page children, Link selected, Filter regions by tag. The same two palette entries attach on Cmd/Ctrl+P and drop when the palette closes. Alt+Shift+M still starts a mind map.
+- Typing with the editor closed: -0.042 ms/key (five interleaved rounds, 42 keys, 5 s settle). Loaded 12.405, 12.019, 12.071, 12.195, 12.062 (mean 12.150). Unloaded 12.217, 12.088, 12.233, 12.195, 12.229 (mean 12.192).
+- Focus cycles 1, 2, 3, all, off. Todo lights open TODOs, including embeds. Escape clears the veil. No scene write.
+- At most 50 new cards; no block writes. Link selected adds `relates to::` and `((dest))`, toasts Undo, and skips an existing ref. Tag filter only dims outlines.
+
 ## [0.14.0]
 
 - `apiVersion` is 6. `linksOf(uid)` and `framesOf(uid)` read `host.drawing(uid)` and return `[]` when the drawing is missing or the pull throws. They do not open an editor and do not load `app-excalidraw.js`.

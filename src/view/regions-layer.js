@@ -1,6 +1,7 @@
 import * as defaultNative from "../host/native.js";
 import { KIND_WORDS, isImageKind, plainCaption } from "../model/label.js";
 import { liveElements, regionSceneBBox } from "../model/scene.js";
+import { regionMatchesTag } from "./regionref.js";
 
 export const REGION_LAYER_CAP = 150;
 const REGION_REFETCH_MS = 3000;
@@ -59,6 +60,8 @@ export function createRegionsLayer({
   let capLogged = false;
   let samples = [];
   let disposed = false;
+  let filterTag = "";
+  let onFilterKey = null;
 
   const isVisible = () => root != null;
 
@@ -190,6 +193,66 @@ export function createRegionsLayer({
     }
     syncOutlines();
     chipsDirty = true;
+    applyFilter();
+  }
+
+  function classOf(outline) {
+    if (typeof outline?.getAttribute === "function") return outline.getAttribute("class") || "";
+    return outline?.attrs?.class || "";
+  }
+
+  function setDim(outline, on) {
+    const parts = classOf(outline).split(/\s+/).filter(Boolean);
+    const has = parts.includes("plexus-region-dim");
+    if (on === has) return;
+    const next = on ? [...parts, "plexus-region-dim"] : parts.filter((c) => c !== "plexus-region-dim");
+    outline.setAttribute?.("class", next.join(" "));
+  }
+
+  function textsFor(entry) {
+    const texts = [];
+    if (typeof entry?.string === "string") texts.push(entry.string);
+    if (!entry) return texts;
+    let children = null;
+    try { children = host?.pullBlock?.(entry.uid)?.children ?? null; } catch { children = null; }
+    if (!Array.isArray(children)) return texts;
+    for (const child of children) texts.push(typeof child === "string" ? child : String(child?.string ?? ""));
+    return texts;
+  }
+
+  function applyFilter() {
+    const active = filterTag !== "";
+    const byUid = active ? new Map(regions.map((r) => [r.uid, r])) : null;
+    for (const [uid, item] of items) {
+      const dim = active && !regionMatchesTag(textsFor(byUid.get(uid)), filterTag);
+      setDim(item.outline, dim);
+    }
+  }
+
+  function listenFilter() {
+    if (onFilterKey || !filterTag) return;
+    const fn = (e) => { if (e?.key === "Escape") setTagFilter(""); };
+    try {
+      doc.addEventListener("keydown", fn);
+      onFilterKey = fn;
+    } catch (error) {
+      warn("regions layer filter key failed", error);
+    }
+  }
+
+  function silenceFilter() {
+    if (!onFilterKey) return;
+    const fn = onFilterKey;
+    onFilterKey = null;
+    try { doc.removeEventListener("keydown", fn); } catch (error) { warn("regions layer filter key failed", error); }
+  }
+
+  function setTagFilter(tag) {
+    if (disposed) return;
+    filterTag = typeof tag === "string" ? tag : "";
+    if (filterTag) listenFilter();
+    else silenceFilter();
+    applyFilter();
   }
 
   // Scene-unit outlines: only touched when the scene signature changes, never on pan.
@@ -383,8 +446,10 @@ export function createRegionsLayer({
   function dispose() {
     if (disposed) return;
     hide();
+    filterTag = "";
+    silenceFilter();
     disposed = true;
   }
 
-  return { show, hide, toggle, visible: isVisible, refresh, dispose };
+  return { show, hide, toggle, visible: isVisible, refresh, dispose, setTagFilter };
 }

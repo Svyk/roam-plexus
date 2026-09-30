@@ -12,7 +12,10 @@ import { createPresenter } from "./view/present.js";
 import { installCanvasPaste } from "./view/canvas-paste.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
-import { showSpotlight } from "./view/spotlight.js";
+import { focusKeptIds, todoKeptIds, showFocusVeil, showTodoVeil, showSpotlight } from "./view/spotlight.js";
+import { cardsFromQuery, cardsFromChildren } from "./query-cards.js";
+import { relationPlan } from "./relations.js";
+import { lockName, withLock } from "./host/locks.js";
 import { createHoverPreview } from "./view/hover-preview.js";
 import { clearLinkTooltip, installLinkInterception, navigateToTarget } from "./host/links.js";
 import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublicApi } from "./api.js";
@@ -46,7 +49,7 @@ import { createDock } from "./view/dock.js";
 import { installRoamDrop } from "./view/drop.js";
 import { installTextLinks } from "./view/text-links.js";
 import { parseEmbedRef } from "./model/embeds.js";
-import { viewportToScene } from "./model/scene.js";
+import { elementBounds, viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
 import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
 
@@ -79,6 +82,69 @@ function createEmitter() {
 
 function versionFlagTarget() {
   return globalThis.window ?? globalThis;
+}
+
+function isPaletteChord(event) {
+  const key = event?.key;
+  if (typeof key !== "string" || key.toLowerCase() !== "p") return false;
+  return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+}
+
+function isMindMapChord(event) {
+  if (!event || event.isComposing || event.repeat) return false;
+  if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return false;
+  return event.code === "KeyM";
+}
+
+// Roam's keydown walk costs about 0.055 ms per palette entry. Register for the open palette, then drop.
+export function attachLazyPalette({ doc, palette, lifecycle, commands, onMindMap }) {
+  if (!palette?.addCommand || !palette?.removeCommand) throw new TypeError("A command palette is required");
+  let paletteOn = false;
+  const enable = () => {
+    if (paletteOn || lifecycle.disposed) return [];
+    paletteOn = true;
+    return commands.map((command) => {
+      try {
+        const added = palette.addCommand(command);
+        if (added?.then) added.catch((error) => console.warn("[plexus] command", error));
+        return added;
+      } catch (error) {
+        console.warn("[plexus] command", error);
+        return null;
+      }
+    });
+  };
+  const disable = () => {
+    if (!paletteOn) return;
+    paletteOn = false;
+    for (const command of commands) {
+      try { palette.removeCommand({ label: command.label }); } catch { /* already gone */ }
+    }
+  };
+  const releaseIfClosed = () => {
+    if (!paletteOn || doc?.querySelector?.(".rm-command-palette")) return;
+    disable();
+  };
+  const first = enable();
+  if (typeof doc?.addEventListener === "function") {
+    lifecycle.event(doc, "keydown", (event) => {
+      if (isPaletteChord(event)) enable();
+      else if (isMindMapChord(event) && onMindMap?.(event) !== false) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    }, true);
+    lifecycle.event(doc, "keyup", () => { if (paletteOn) setTimeout(releaseIfClosed, 0); }, true);
+    lifecycle.event(doc, "pointerup", () => { if (paletteOn) setTimeout(releaseIfClosed, 0); }, true);
+    const timerBox = { id: 0 };
+    let cancelled = false;
+    lifecycle.add(() => { cancelled = true; clearTimeout(timerBox.id); });
+    Promise.all(first.map((item) => Promise.resolve(item))).then(() => {
+      if (cancelled || lifecycle.disposed) return;
+      timerBox.id = setTimeout(releaseIfClosed, 0);
+    });
+  }
+  lifecycle.add(disable);
 }
 
 export async function onload({ extensionAPI, extension, openCommandList: openList = openCommandList }) {
@@ -118,6 +184,12 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
+    let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
+    let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
+    let runEmbedQuery = () => console.warn("[plexus] unavailable outside Roam: embedQuery");
+    let runEmbedChildren = () => console.warn("[plexus] unavailable outside Roam: embedChildren");
+    let runLinkSelected = () => console.warn("[plexus] unavailable outside Roam: linkSelected");
+    let runFilterTag = () => console.warn("[plexus] unavailable outside Roam: filterTag");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
@@ -614,7 +686,323 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       };
       // Link interception and hover preview live only while an editor is mounted.
       let navigatedAt = -Infinity;
+      let focusVeil = null;
+      let focusIndex = -1;
+      let todoVeil = null;
+      const FOCUS_DEPTHS = [1, 2, 3, "all"];
+      const sceneElements = (app) => {
+        const list = app?.getSceneElementsIncludingDeleted?.();
+        return Array.isArray(list) ? list : [];
+      };
+      const indexScene = (elements) => {
+        const byId = new Map();
+        for (const el of elements) {
+          if (el && typeof el.id === "string" && !byId.has(el.id)) byId.set(el.id, el);
+        }
+        return byId;
+      };
+      const viewOrigin = (app) => {
+        const st = app?.state || {};
+        return viewportToScene({
+          x: (st.offsetLeft || 0) + (st.width || 0) / 2,
+          y: (st.offsetTop || 0) + (st.height || 0) / 2,
+          appState: st,
+        });
+      };
+      const holesFor = (app, ids) => {
+        const byId = indexScene(sceneElements(app));
+        const holes = [];
+        for (const id of ids) {
+          const el = byId.get(id);
+          if (!el || el.isDeleted) continue;
+          try {
+            const rect = native.viewportRectOf(app, elementBounds(el));
+            if (rect) holes.push(rect);
+          } catch (error) { console.warn("[plexus] veil rect failed", error); }
+        }
+        return holes;
+      };
+      const subscribeViewport = (app, place) => {
+        try { return native.subscribeViewport(app, place); }
+        catch (error) { console.warn("[plexus] veil subscribe failed", error); return () => {}; }
+      };
+      function openVeil(show) {
+        let alive = true;
+        const orig = typeof doc.createElement === "function" ? doc.createElement : null;
+        if (orig) {
+          doc.createElement = (...args) => {
+            const el = orig.apply(doc, args);
+            if (el && typeof el.remove === "function") {
+              const base = el.remove.bind(el);
+              el.remove = () => { alive = false; base(); };
+            }
+            return el;
+          };
+        }
+        try {
+          const off = show();
+          const close = typeof off === "function" ? off : () => {};
+          return {
+            get alive() { return alive; },
+            close() {
+              alive = false;
+              try { close(); } catch (error) { console.warn("[plexus] veil close failed", error); }
+            },
+          };
+        } finally {
+          if (orig) {
+            try { doc.createElement = orig; } catch (error) { console.warn("[plexus] veil restore failed", error); }
+          }
+        }
+      }
+      function endFocus() {
+        focusIndex = -1;
+        const cur = focusVeil;
+        focusVeil = null;
+        cur?.close();
+      }
+      function endTodo() {
+        const cur = todoVeil;
+        todoVeil = null;
+        cur?.close();
+      }
+      function todoText(el) {
+        const parsed = parseEmbedRef(el?.customData?.plexus?.embed);
+        if (parsed?.kind === "block") {
+          try {
+            const block = host.pullBlock(parsed.uid);
+            return typeof block?.string === "string" ? block.string : "";
+          } catch (error) {
+            console.warn("[plexus] todo text failed", error);
+            return "";
+          }
+        }
+        if (typeof el?.text === "string") return el.text;
+        if (typeof el?.originalText === "string") return el.originalText;
+        return "";
+      }
+      function cardUid(el) {
+        if (!el || el.isDeleted) return "";
+        const mm = el.customData?.plexus?.mm;
+        if (mm && typeof mm === "object") {
+          if (mm.edge || mm.boundary) return "";
+          if (typeof mm.uid === "string" && mm.uid) return mm.uid;
+        }
+        const embed = parseEmbedRef(el.customData?.plexus?.embed);
+        if (embed?.kind === "block" && embed.uid) return embed.uid;
+        const link = parseEmbedRef(el.link);
+        if (link?.kind === "block" && link.uid) return link.uid;
+        return "";
+      }
+      function refUid(el, byId) {
+        const own = cardUid(el);
+        if (own) return own;
+        const parent = el?.containerId ? byId.get(el.containerId) : null;
+        return parent ? cardUid(parent) : "";
+      }
+      function relationStrings(uid) {
+        let block = null;
+        try { block = host.pullBlock(uid); } catch (error) { console.warn("[plexus] relation pull failed", error); }
+        const strings = [];
+        if (typeof block?.string === "string") strings.push(block.string);
+        const children = Array.isArray(block?.children) ? block.children : [];
+        for (const child of children) {
+          if (typeof child?.string !== "string") continue;
+          strings.push(child.string);
+          if (child.string.trim() !== "relates to::" || !child.uid) continue;
+          let attr = null;
+          try { attr = host.pullBlock(child.uid); } catch (error) { console.warn("[plexus] relation pull failed", error); }
+          const grands = Array.isArray(attr?.children) ? attr.children : [];
+          for (const grand of grands) if (typeof grand?.string === "string") strings.push(grand.string);
+        }
+        return strings;
+      }
+      function tagIn(text) {
+        const m = /#\[\[([^\]\n]+)\]\]|\[\[([^\]\n]+)\]\]|#([^\s#\[\](){}]+)/.exec(String(text ?? ""));
+        if (!m) return "";
+        return (m[1] || m[2] || m[3] || "").trim();
+      }
+      const focusedUid = (ctx) => ctx?.focusedUid || api.ui?.getFocusedBlock?.()?.["block-uid"] || "";
+      function placeCards(app, drawingUid, cards, label) {
+        if (!Array.isArray(cards) || cards.length === 0) return void toaster.show("Nothing new to place");
+        const ok = guard.guardedWrite(app, {
+          drawingUid,
+          label,
+          captureUpdate: "IMMEDIATELY",
+          next: (current) => [...(Array.isArray(current) ? current : []), ...cards],
+        });
+        if (!ok) toaster.show("Could not place the cards", { kind: "error" });
+      }
+      runFocusMode = () => {
+        if (typeof showFocusVeil !== "function" || typeof focusKeptIds !== "function") return void toaster.show("Focus mode is unavailable");
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!native.selectedElementIds(editor.app).length) return void toaster.show("Select some elements first", { kind: "error" });
+        endTodo();
+        const next = focusVeil?.alive === true ? focusIndex + 1 : 0;
+        endFocus();
+        if (next >= FOCUS_DEPTHS.length) return;
+        const depth = FOCUS_DEPTHS[next];
+        const app = editor.app;
+        let veil = null;
+        try {
+          veil = openVeil(() => showFocusVeil({
+            doc,
+            getHoles: () => holesFor(app, focusKeptIds(sceneElements(app), native.selectedElementIds(app), depth)),
+            subscribe: (place) => subscribeViewport(app, place),
+          }));
+        } catch (error) {
+          console.warn("[plexus] focus mode failed", error);
+          toaster.show("Focus mode is unavailable");
+          return;
+        }
+        focusIndex = next;
+        focusVeil = veil;
+      };
+      runTodoMode = () => {
+        if (typeof showTodoVeil !== "function" || typeof todoKeptIds !== "function") return void toaster.show("Todo mode is unavailable");
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        endFocus();
+        endTodo();
+        const app = editor.app;
+        try {
+          todoVeil = openVeil(() => showTodoVeil({
+            doc,
+            elements: sceneElements(app),
+            textOf: todoText,
+            rectOf: (id) => {
+              const el = indexScene(sceneElements(app)).get(id);
+              if (!el || el.isDeleted) return null;
+              try { return native.viewportRectOf(app, elementBounds(el)); }
+              catch (error) { console.warn("[plexus] veil rect failed", error); return null; }
+            },
+            subscribe: (place) => subscribeViewport(app, place),
+          }));
+        } catch (error) {
+          console.warn("[plexus] todo mode failed", error);
+          toaster.show("Todo mode is unavailable");
+        }
+      };
+      runEmbedQuery = async (ctx) => {
+        if (typeof cardsFromQuery !== "function") return void toaster.show("Embed query results is unavailable");
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const sourceUid = focusedUid(ctx);
+        if (!sourceUid) return void toaster.show("Click into a block first", { kind: "error" });
+        const app = editor.app;
+        let cards = [];
+        try {
+          cards = await cardsFromQuery({ api, sourceUid, existing: sceneElements(app), origin: viewOrigin(app) });
+        } catch (error) {
+          console.warn("[plexus] embed query failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        if (native.activeEditor(doc)?.app !== app) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        placeCards(app, editor.drawingUid, cards, "Embed query results");
+      };
+      runEmbedChildren = (ctx) => {
+        if (typeof cardsFromChildren !== "function") return void toaster.show("Embed page children is unavailable");
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const uid = focusedUid(ctx);
+        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        const pageUid = host.blockInfo(uid)?.pageUid;
+        if (!pageUid) return void toaster.show("Could not find that page", { kind: "error" });
+        let children = [];
+        try { children = host.pullBlock(pageUid)?.children ?? []; }
+        catch (error) {
+          console.warn("[plexus] embed children failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        let cards = [];
+        try { cards = cardsFromChildren({ children, sourceUid: pageUid, existing: sceneElements(editor.app), origin: viewOrigin(editor.app) }); }
+        catch (error) {
+          console.warn("[plexus] embed children failed", error);
+          toaster.show("Could not place the cards", { kind: "error" });
+          return;
+        }
+        placeCards(editor.app, editor.drawingUid, cards, "Embed page children");
+      };
+      runLinkSelected = async () => {
+        if (typeof relationPlan !== "function" || typeof withLock !== "function" || typeof lockName !== "function") {
+          toaster.show("Link selected is unavailable");
+          return;
+        }
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        const byId = indexScene(sceneElements(editor.app));
+        const selected = native.selectedElementIds(editor.app).map((id) => byId.get(id)).filter((el) => el && !el.isDeleted);
+        const arrow = selected.find((el) => el.type === "arrow" && el.startBinding?.elementId && el.endBinding?.elementId);
+        let sourceUid = "";
+        let destUid = "";
+        if (arrow) {
+          sourceUid = refUid(byId.get(arrow.startBinding.elementId), byId);
+          destUid = refUid(byId.get(arrow.endBinding.elementId), byId);
+        } else {
+          const ids = [];
+          for (const el of selected) {
+            const uid = refUid(el, byId);
+            if (!uid || ids.includes(uid)) continue;
+            ids.push(uid);
+            if (ids.length === 2) break;
+          }
+          sourceUid = ids[0] || "";
+          destUid = ids[1] || "";
+        }
+        if (!sourceUid || !destUid) return void toaster.show("Select two cards, or an arrow between them", { kind: "error" });
+        const plan = relationPlan({ sourceUid, destUid, strings: relationStrings(sourceUid) });
+        if (!plan) return void toaster.show("Already linked");
+        try {
+          const held = await withLock(lockName(host.graphName(), sourceUid), async () => {
+            const attrUid = await host.createBlock({ parentUid: plan.parentUid, order: "last", string: plan.attribute });
+            try {
+              const childUid = await host.createBlock({ parentUid: attrUid, order: "last", string: plan.child });
+              return { attrUid, childUid };
+            } catch (error) {
+              try { await host.deleteBlock(attrUid); } catch (cleanup) { console.warn("[plexus] link cleanup failed", cleanup); }
+              throw error;
+            }
+          });
+          if (!held?.acquired || !held.value) return void toaster.show("Could not link those cards", { kind: "error" });
+          const { attrUid, childUid } = held.value;
+          toaster.show("Linked", {
+            action: {
+              label: "Undo",
+              run: () => {
+                void (async () => {
+                  try { await host.deleteBlock(childUid); } catch (error) { console.warn("[plexus] undo link failed", error); }
+                  try { await host.deleteBlock(attrUid); } catch (error) { console.warn("[plexus] undo link failed", error); }
+                })();
+              },
+            },
+          });
+        } catch (error) {
+          console.warn("[plexus] link selected failed", error);
+          toaster.show("Could not link those cards", { kind: "error" });
+        }
+      };
+      runFilterTag = (ctx) => {
+        const uid = focusedUid(ctx);
+        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        const setTagFilter = mounted?.layer?.setTagFilter;
+        if (typeof setTagFilter !== "function") return void toaster.show("Open a drawing first", { kind: "error" });
+        let text = "";
+        try { text = host.pullBlock(uid)?.string ?? ""; }
+        catch (error) { console.warn("[plexus] tag filter failed", error); }
+        const tag = tagIn(text);
+        if (!tag) return void toaster.show("No tag in this block");
+        try { setTagFilter(tag); }
+        catch (error) {
+          console.warn("[plexus] tag filter failed", error);
+          toaster.show("Could not filter regions", { kind: "error" });
+        }
+      };
       const unmountEditor = ({ unloading = false } = {}) => {
+        try { endFocus(); } catch (error) { console.warn("[plexus] focus veil failed", error); }
+        try { endTodo(); } catch (error) { console.warn("[plexus] todo veil failed", error); }
         const current = mounted;
         mounted = null;
         closeDialogs();
@@ -827,7 +1215,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const args = useFocus === false ? { where } : { where, uid: ctx?.focusedUid };
       Promise.resolve(actions.newDrawing(args)).catch((error) => console.warn("[plexus] new drawing failed", error));
     };
-    // Every palette entry costs Roam's keydown handler ~0.055 ms per keystroke, so the palette holds two entries and this list holds the rest.
+    // The palette holds two entries. They attach for Cmd/Ctrl+P and drop when it closes, so typing does not scan them.
     const isMac = /mac|iphone|ipad/i.test(String(doc?.defaultView?.navigator?.platform ?? ""));
     const hk = (id) => hotkeyFor(id, { mac: isMac });
     const commandList = [
@@ -894,21 +1282,43 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },
+      { id: "focusMode", label: "Focus mode", run: () => runFocusMode() },
+      { id: "todoMode", label: "Todo mode", run: () => runTodoMode() },
+      { id: "embedQuery", label: "Embed query results", run: (ctx) => runEmbedQuery(ctx) },
+      { id: "embedChildren", label: "Embed page children", run: (ctx) => runEmbedChildren(ctx) },
+      { id: "linkSelected", label: "Link selected", run: () => runLinkSelected() },
+      { id: "filterRegions", label: "Filter regions by tag", run: (ctx) => runFilterTag(ctx) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;
     lifecycle.add(() => { commandListHandle?.close?.(); commandListHandle = null; });
-    await lifecycle.command(extensionAPI.ui.commandPalette, {
-      label: "Plexus: Commands\u2026",
-      callback: () => {
-        try {
-          const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
-          commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
-        } catch (error) { console.warn("[plexus] command list failed", error); }
+    attachLazyPalette({
+      doc,
+      palette: extensionAPI.ui.commandPalette,
+      lifecycle,
+      onMindMap: (event) => {
+        const app = mountedApp?.();
+        const target = event?.target;
+        const tag = String(target?.tagName ?? "").toLowerCase();
+        const typing = tag === "textarea" || tag === "input" || target?.isContentEditable === true;
+        if (app && (app.state?.editingTextElement || (typing && target.closest?.(".excalidraw-outer-container, .plexus-portal")))) return false;
+        runHotkey("mindmap");
+        return true;
       },
+      commands: [
+        {
+          label: "Plexus: Commands\u2026",
+          callback: () => {
+            try {
+              const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+              commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
+            } catch (error) { console.warn("[plexus] command list failed", error); }
+          },
+        },
+        { label: "Plexus: Mind map", callback: () => runHotkey("mindmap"), "default-hotkey": specOf("mindmap") },
+      ],
     });
-    await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Mind map", callback: () => runHotkey("mindmap"), "default-hotkey": specOf("mindmap") });
     try {
       const slash = extensionAPI.ui?.slashCommand ?? globalThis.roamAlphaAPI?.ui?.slashCommand;
       await lifecycle.command(slash, {
