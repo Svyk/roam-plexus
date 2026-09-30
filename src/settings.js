@@ -22,6 +22,10 @@ export const SETTING_IDS = Object.freeze({
   cardHome: "card-home",
   drawingName: "drawing-name",
   dockWidth: "dock-width",
+  printSize: "print-size",
+  printMargin: "print-margin",
+  laserColor: "laser-color",
+  laserDecay: "laser-decay",
 });
 
 const DEFAULTS = Object.freeze({
@@ -46,6 +50,10 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.cardHome]: "drawing",
   [SETTING_IDS.drawingName]: "Drawing {date}",
   [SETTING_IDS.dockWidth]: "320",
+  [SETTING_IDS.printSize]: "letter",
+  [SETTING_IDS.printMargin]: "10",
+  [SETTING_IDS.laserColor]: "#e03131",
+  [SETTING_IDS.laserDecay]: "1000",
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -55,6 +63,8 @@ export const ANIMATIONS = Object.freeze(["system", "on", "off"]);
 export const PASTE_REFS = Object.freeze(["text", "embed", "link"]);
 export const CARD_HOMES = Object.freeze(["drawing", "page", "daily"]);
 export const DEFAULT_DRAWING_NAME = "Drawing {date}";
+export const PRINT_SIZES = Object.freeze(["letter", "a4", "16:9"]);
+export const DEFAULT_LASER_COLOR = "#e03131";
 
 // Alt+Shift only, never a single letter. Roam registers these as command-palette default hotkeys.
 export const HOTKEYS = Object.freeze([
@@ -140,6 +150,8 @@ const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : f
 
 export const drawingNameOf = (value) => (typeof value === "string" && value.trim() ? value : DEFAULT_DRAWING_NAME);
 
+export const laserColorOf = (value) => (typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : DEFAULT_LASER_COLOR);
+
 let overridesMemo = { raw: undefined, value: null };
 function memoOverrides(raw) {
   if (overridesMemo.value && overridesMemo.raw === raw) return overridesMemo.value;
@@ -175,6 +187,10 @@ export function readSettings(extensionAPI) {
     cardHome: oneOf(get(SETTING_IDS.cardHome), CARD_HOMES, "drawing"),
     drawingName: drawingNameOf(get(SETTING_IDS.drawingName)),
     dockWidth: clampNumber(get(SETTING_IDS.dockWidth), 320, 240, 640),
+    printSize: oneOf(get(SETTING_IDS.printSize), PRINT_SIZES, "letter"),
+    printMargin: clampNumber(get(SETTING_IDS.printMargin), 10, 0, 30),
+    laserColor: laserColorOf(get(SETTING_IDS.laserColor)),
+    laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1000, 300, 3000),
   };
 }
 

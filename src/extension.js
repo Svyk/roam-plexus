@@ -9,6 +9,7 @@ import { baseZIndex, createEditorToolbar, installBackKey } from "./view/toolbar.
 import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
 import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
+import { installCanvasPaste } from "./view/canvas-paste.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { showSpotlight } from "./view/spotlight.js";
@@ -49,6 +50,10 @@ const THUMB_WARM_DELAY_MS = 1500;
 const REFRESH_DEBOUNCE_MS = 300;
 const LAYER_REFRESH_MS = 200;
 const DOCK_SETTLE_MS = 150;
+// Toolbar preset ids -> model/frames.js preset keys; toolbar layout kinds -> LAYOUTS keys.
+const TOOLBAR_PRESETS = { a4: "A4", letter: "Letter", "16:9": "16:9", "4:3": "4:3", "1:1": "1:1", mobile: "Mobile" };
+const presetOf = (id) => TOOLBAR_PRESETS[id] ?? id;
+const LAYOUT_KINDS = { "2x2": "grid", strip: "strip" };
 
 function createEmitter() {
   const listeners = new Map();
@@ -134,6 +139,11 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         onNote: () => mounted?.noteTool?.arm(),
         onPresent: () => actions.presentDrawing(),
         canPresent: () => actions.hasFrames(),
+        onAddFrame: (preset) => actions.addFrame({ preset: presetOf(preset) }),
+        onReformatFrame: (preset) => actions.reformatFrame({ preset: presetOf(preset) }),
+        canReformat: () => !!actions.selectedFrameId(),
+        onMakeSlide: () => actions.makeSlide(),
+        onLayout: (kind, preset) => actions.addFrameLayout({ kind: LAYOUT_KINDS[kind] ?? kind, preset: presetOf(preset) }),
         onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
         onEditEmbed: () => actions.editEmbed(),
         canEditEmbed: () => actions.canEditEmbed(),
@@ -217,7 +227,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         return Number.isFinite(z) ? z : 1000;
       };
       commandZ = () => { const editor = native.activeEditor(doc); return editor ? zIndexFor(editor.el) : 0; };
-      const presenter = createPresenter({ doc });
+      const presenter = createPresenter({ doc, api, host });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
       const measurer = createMeasurer({ doc });
@@ -248,6 +258,19 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         viewHistory: (app) => (mounted?.app === app ? mounted.history : null),
       });
       lifecycle.add(() => actions.dispose());
+      lifecycle.add(installCanvasPaste({
+        win: doc.defaultView,
+        doc,
+        toast: (message) => toaster.show(message),
+        blockUid: (node) => host.blockUidFromNode(node),
+        createSibling: async ({ uid, strings }) => {
+          const info = host.blockInfo(uid);
+          if (!info?.parentUid) { toaster.show("Could not add the remaining lines", { kind: "error" }); return; }
+          for (let i = 0; i < strings.length; i += 1) {
+            await host.createBlock({ parentUid: info.parentUid, order: info.order + 1 + i, string: strings[i] });
+          }
+        },
+      }));
 
       const timers = new Set();
       let closed = false;
@@ -492,6 +515,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000,
             toast: (message) => toaster.show(message, { kind: "error" }),
             onStateChange: () => toolbar.refresh(),
+            onLoaded: () => actions.scheduleEmbedLabels(app),
           });
           mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
@@ -636,6 +660,11 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         return out;
       } catch (error) { console.warn("[plexus]", name, "failed", error); }
     };
+    const printMode = (ctx, mode) => {
+      if (!actions) return unavailable("printFrames");
+      const drawingUid = native.activeEditor(doc)?.drawingUid ?? ctx?.focusedUid;
+      return Promise.resolve(actions.printFrames({ drawingUid, mode })).catch((error) => console.warn("[plexus] print failed", error));
+    };
     const specOf = (id) => HOTKEYS.find((h) => h.id === id)?.spec;
     const newDrawing = (where, useFocus) => (ctx) => {
       if (!actions) return unavailable("newDrawing");
@@ -665,6 +694,26 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "embed", label: "Embed page or block\u2026", hotkey: hk("embed"), run: () => runHotkey("embed") },
       { id: "note", label: "New note card", hotkey: hk("note"), run: () => runHotkey("note") },
       { id: "present", label: "Present open drawing", hotkey: hk("present"), run: () => runHotkey("present") },
+      {
+        id: "presentHere",
+        label: "Present from here",
+        run: (ctx) => {
+          if (!actions) return unavailable("presentHere");
+          const out = native.activeEditor(doc) ? actions.presentDrawing({ from: "here" }) : actions.presentFromRegion(ctx?.focusedUid);
+          return Promise.resolve(out).catch((error) => console.warn("[plexus] present failed", error));
+        },
+      },
+      {
+        id: "presentOutline",
+        label: "Present this outline",
+        run: (ctx) => {
+          if (!actions) return unavailable("presentOutline");
+          return Promise.resolve(actions.presentOutline(ctx?.focusedUid)).catch((error) => console.warn("[plexus] present outline failed", error));
+        },
+      },
+      { id: "printFrames", label: "Print frames\u2026", run: (ctx) => printMode(ctx, "print") },
+      { id: "pngFrames", label: "PNG per frame", run: (ctx) => printMode(ctx, "png") },
+      { id: "makeSlide", label: "Make slide", run: () => (actions ? Promise.resolve(actions.makeSlide()).catch((error) => console.warn("[plexus] make slide failed", error)) : unavailable("makeSlide")) },
       { id: "back", label: "Back to previous view", run: guarded("back", () => backCommand && (() => backCommand())) },
       { id: "toggleLayer", label: "Toggle regions layer", run: guarded("toggleLayer", () => toggleLayer && (() => toggleLayer())) },
       { id: "dock", label: "Toggle outline dock", hotkey: hk("dock"), run: () => runHotkey("dock") },

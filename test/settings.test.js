@@ -155,3 +155,28 @@ test("dock-width defaults to 320, clamps to 240-640 and is not in the settings p
   assert.equal(readSettings(api({ "dock-width": "400" })).dockWidth, 400);
   assert.equal(createSettingsPanel().settings.some((s) => s.id === "dock-width"), false);
 });
+
+test("P11 settings: defaults and clamps", () => {
+  const d = readSettings(fakeApi());
+  assert.equal(d.printSize, "letter");
+  assert.equal(d.printMargin, 10);
+  assert.equal(d.laserColor, "#e03131");
+  assert.equal(d.laserDecay, 1000);
+  const bad = readSettings(fakeApi({ "print-size": "tabloid", "print-margin": "-4", "laser-color": "red", "laser-decay": "5" }));
+  assert.deepEqual([bad.printSize, bad.printMargin, bad.laserColor, bad.laserDecay], ["letter", 0, "#e03131", 300]);
+  const hi = readSettings(fakeApi({ "print-size": "16:9", "print-margin": "99", "laser-color": "#00AaFF", "laser-decay": "99999" }));
+  assert.deepEqual([hi.printSize, hi.printMargin, hi.laserColor, hi.laserDecay], ["16:9", 30, "#00aaff", 3000]);
+  assert.equal(readSettings(fakeApi({ "print-size": "a4" })).printSize, "a4");
+  assert.equal(readSettings(fakeApi({ "laser-color": "#12345" })).laserColor, "#e03131");
+  assert.equal(readSettings(fakeApi({ "laser-decay": "" })).laserDecay, 1000);
+});
+
+test("P11 settings ids exist and HOTKEYS is unchanged", async () => {
+  const { SETTING_IDS: ids, HOTKEYS, initializeSettings } = await import("../src/settings.js");
+  assert.deepEqual([ids.printSize, ids.printMargin, ids.laserColor, ids.laserDecay], ["print-size", "print-margin", "laser-color", "laser-decay"]);
+  assert.deepEqual(HOTKEYS.map((h) => h.id), ["region", "image", "present", "mindmap", "embed", "note", "dock"]);
+  const api = fakeApi();
+  await initializeSettings(api);
+  assert.equal(api.store["laser-color"], "#e03131");
+  assert.equal(api.store["print-size"], "letter");
+});

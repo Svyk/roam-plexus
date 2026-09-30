@@ -29,3 +29,9 @@ test("orderFrames: ties by y then x; skips deleted and non-frames; magicframe ke
   assert.deepEqual(ids(orderFrames(els)), ["t", "l", "r", "m"]);
   assert.deepEqual(orderFrames(null), []);
 });
+
+test("orderFrames is unchanged: a lone ordered frame sorts before unordered ones (frame ops rewrite orders instead)", async () => {
+  const { orderFrames } = await import("../src/model/slides.js");
+  const mk = (id, name, order) => ({ id, type: "frame", name, x: 0, y: 0, isDeleted: false, ...(order == null ? {} : { customData: { plexus: { order } } }) });
+  assert.deepEqual(orderFrames([mk("a", "A"), mk("b", "B"), mk("c", "Slide 4", 1)]).map((f) => f.id), ["c", "a", "b"]);
+});

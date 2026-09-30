@@ -17,6 +17,12 @@ test("embedLabel strips markup and truncates to 80", () => {
   assert.equal(embedLabel("x".repeat(200)).length, 80);
 });
 
+test("embedLabel is idempotent when the cut lands after a space", () => {
+  const label = embedLabel("w".repeat(79) + " tail...");
+  assert.equal(label, "w".repeat(79));
+  assert.equal(embedLabel(label), label);
+});
+
 test("makeEmbedAnchor returns a complete bound rect/text pair", () => {
   const [rect, text] = makeEmbedAnchor({ ref: "((abc123XYZ))", label: "Hello [[World]]", x: 10, y: 20 });
   for (const k of BASE) { assert.ok(k in rect, `rect ${k}`); assert.ok(k in text, `text ${k}`); }
@@ -75,4 +81,26 @@ test("makeEmbedAnchor keeps a separate link when given, else defaults to the ref
   assert.equal(rect.link, "[[September 29th, 2026]]");
   assert.deepEqual(rect.customData, { plexus: { embed: "plexus:today" } });
   assert.equal(makeEmbedAnchor({ ref: "((abc123XYZ))" })[0].link, "((abc123XYZ))");
+});
+
+import { layoutAnchorLabel, baseElement } from "../src/model/embeds.js";
+
+test("baseElement is exported and complete", () => {
+  const el = baseElement("a", "frame", 1, 2, 3, 4);
+  for (const k of BASE) assert.ok(k in el, k);
+});
+
+test("layoutAnchorLabel matches makeEmbedAnchor and clamps to the lines that fit", () => {
+  const [rect, text] = makeEmbedAnchor({ ref: "((abc123XYZ))", label: "Hello there general Kenobi ".repeat(6), x: 10, y: 20, width: 200, height: 60 });
+  const laid = layoutAnchorLabel({ label: text.originalText, x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+  assert.equal(laid.text, text.text);
+  assert.equal(laid.x, text.x);
+  assert.equal(laid.height, text.height);
+  assert.equal(laid.originalText, text.originalText);
+  const maxLines = Math.floor((60 - 8) / 20);
+  assert.equal(laid.text.split("\n").length, maxLines);
+  assert.ok(laid.text.endsWith("…"));
+  const short = layoutAnchorLabel({ label: "Hi", x: 0, y: 0, width: 100, height: 100 });
+  assert.equal(short.text, "Hi");
+  assert.equal(layoutAnchorLabel({ label: "x", width: 100, height: 10 }).text, "x");
 });

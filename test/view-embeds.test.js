@@ -839,3 +839,26 @@ test("onLeave errors are caught and do not block the leave", async () => {
   assert.equal(t.overlay.editState(), "idle");
   await t.overlay.dispose();
 });
+
+test("onLoaded fires after each load with the anchor id, ref and content, and never throws into the overlay", async () => {
+  const calls = [];
+  const body = fakeEl();
+  const frames = [];
+  const doc = { body, defaultView: { requestAnimationFrame: (cb) => { frames.push(cb); return frames.length; }, cancelAnimationFrame() {} }, createElement: () => fakeEl() };
+  const api = { ui: { components: { renderString() {}, unmountNode() {} } } };
+  const content = { kind: "block", uid: "abcdefghi", title: "T", string: "hello" };
+  const host = { pullEmbedContent: async () => content, watchEmbed: () => () => {} };
+  const app = {
+    state: { scrollX: 0, scrollY: 0, zoom: { value: 1 }, offsetLeft: 0, offsetTop: 0 },
+    getSceneElementsIncludingDeleted: () => [{ id: "e1", type: "rectangle", x: 0, y: 0, width: 100, height: 50, angle: 0, isDeleted: false, customData: { plexus: { embed: "((abcdefghi))" } } }],
+  };
+  const overlay = createEmbedOverlay({
+    doc, api, host, app, containerEl: { getBoundingClientRect: () => ({ left: 0, top: 0, right: 1000, bottom: 800 }) },
+    subscribe: () => () => {},
+    onLoaded: (info) => { calls.push(info); throw new Error("boom"); },
+  });
+  while (frames.length) frames.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(calls, [{ anchorId: "e1", ref: "((abcdefghi))", content }]);
+  overlay.dispose();
+});

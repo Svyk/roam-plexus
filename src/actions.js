@@ -1,8 +1,9 @@
 import { DEFAULT_PAD, geometryKey, isContainerString, isId, normalizeFrac, normalizePoly, parseRegion, serializeRegion } from "./model/region.js";
 import { commonBounds, elementBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
-import { embedAnchors, embedLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
+import { embedAnchors, embedLabel, layoutAnchorLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
 import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
 import { orderFrames } from "./model/slides.js";
+import { DEFAULT_PRESET, frameId, applyOrderRewrite, bumped, childrenOutside, frameAt, layoutFrames, nearestFrame, nextSlideSlot, planOrders, presetFrame, presetSize, reformatRect, selectedFrameOf, withOrder } from "./model/frames.js";
 import { captionRefsFromElements, captionRefsInfo } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
 import { isExcludedString } from "./model/mindmap.js";
@@ -15,6 +16,7 @@ import { lockName, withLock } from "./host/locks.js";
 import { cropCanvasToBlob } from "./host/cold-render.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
 import { startImageRegionTool } from "./view/image-region-tool.js";
+import { downloadPngs, printPages } from "./view/print.js";
 import { createLegacyDialog } from "./view/legacy-dialog.js";
 import { createCleanupDialog } from "./view/cleanup-dialog.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
@@ -29,6 +31,13 @@ const SVG_HREF_RE = /(?:xlink:)?href\s*=\s*["']([^"']*)["']/gi;
 const REFS_RE = /\(\([\w-]+\)\)|\[\[[^\]]+\]\]/g;
 const refTokens = (text) => new Set(String(text ?? "").match(REFS_RE) || []);
 const REGION_HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:[^}]*\}\}/;
+const PRESENT_CAP = 100;
+const OUTLINE_REF_RES = [/^\(\(([A-Za-z0-9_-]{9})\)\)$/, /^\[[^\]]*\]\(\(\(([A-Za-z0-9_-]{9})\)\)\)$/];
+const KIND_RANK = { cframe: 0, frame: 1 };
+const PRINT_CAP = 50;
+const PRINT_SIZES = ["letter", "a4", "16:9"];
+const LABEL_DEBOUNCE_MS = 1500;
+const LABEL_RETRY_MS = 1000;
 const WARM_KINDS = new Set(["area", "group", "frame", "cframe"]);
 const AUDIT_ROW_CAP = 2000;
 const AUDIT_YIELD_EVERY = 20;
@@ -180,6 +189,10 @@ export function createActions({
   viewHistory = () => null,
   measure = null,
   ensureFonts = null,
+  printKit = { printPages, downloadPngs },
+  printWin = (win) => win?.print?.(),
+  setTimer = (fn, ms) => globalThis.setTimeout(fn, ms),
+  clearTimer = (id) => globalThis.clearTimeout(id),
 }) {
   let disposed = false;
   let activeTool = null;
@@ -187,6 +200,10 @@ export function createActions({
   let stopSpotlight = null;
   const busy = new Set();
   let presentOwner = null;
+  let printJob = null;
+  let labelTimer = null;
+  let labelGen = 0;
+  const labelReady = new WeakSet();
   const thumbPending = new Map();
   const aborted = () => disposed;
   let legacyDialog = null;
@@ -911,6 +928,8 @@ export function createActions({
       cleanupDialog?.dispose();
       cleanupDialog = null;
       closePolls.clear();
+      cancelEmbedLabels();
+      printJob?.dispose();
       pendingUpdate = null;
       pending = null;
       cards.clear();
@@ -920,6 +939,7 @@ export function createActions({
 
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
     cancelDrawingTool() {
+      cancelEmbedLabels();
       pendingUpdate = null;
       if (activeToolIsDrawing) activeTool?.cancel?.();
       if (activePromptIsDrawing) activePrompt?.cancel?.();
@@ -1235,16 +1255,44 @@ export function createActions({
       return elements[0].id;
     }),
 
-    presentDrawing: async ({ drawingUid } = {}) => {
-      if (presentOwner) return null;
-      const token = {};
-      presentOwner = token;
-      const release = () => { if (presentOwner === token) presentOwner = null; };
-      try {
-        return await presentOnce(drawingUid, release);
-      } finally {
-        release();
+    presentDrawing: ({ drawingUid, from = "start", at } = {}) => runPresent((release) => presentOnce(drawingUid, release, { from, at })),
+
+    presentFromRegion: async (regionUid) => {
+      const block = isId(regionUid) ? safe(() => host.pullBlock(regionUid)) : null;
+      const region = block ? parseRegion(block.string) : null;
+      if (!region?.supported || !(region.kind === "frame" || region.kind === "cframe") || !region.frameId) {
+        toaster.show("Not a frame region", { kind: "error" });
+        return null;
       }
+      return runPresent((release) => presentOnce(region.drawingUid, release, { from: region.frameId }));
+    },
+
+    presentOutline: (blockUid) => runPresent((release) => presentOutlineOnce(blockUid, release)),
+
+    printFrames: (opts) => once("print", () => printFramesOnce(opts || {})),
+
+    refreshEmbedLabels,
+    scheduleEmbedLabels,
+    selectedFrameId,
+    addFrame: (opts) => addFrameOnce(opts || {}),
+    addFrameLayout: (opts) => addFrameLayoutOnce(opts || {}),
+    reformatFrame: (opts) => reformatFrameOnce(opts || {}),
+    makeSlide: () => makeSlideOnce(),
+    addNotesForFrame: async ({ drawingUid, frameId } = {}) => {
+      const editor = native.activeEditor(doc);
+      const uid = drawingUid || editor?.drawingUid;
+      const scene = editor && editor.drawingUid === uid ? sceneElements(editor.app) : safe(() => host.drawing(uid)?.elements) ?? [];
+      const frame = scene.find((el) => el && !el.isDeleted && isFrameEl(el) && el.id === frameId);
+      if (!isId(uid) || !frame) {
+        toaster.show("Select a frame first", { kind: "error" });
+        return null;
+      }
+      const added = [];
+      const out = await addNotesForFrame(uid, frame, added);
+      afterPresent(added);
+      if (!out) toaster.show("Could not add notes", { kind: "error" });
+      else if (!added.length) toaster.show("Notes already exist: Outline › regions");
+      return out;
     },
 
     createPlainImageRegion: (blockUid) => once("plain", async () => {
@@ -2194,29 +2242,35 @@ export function createActions({
   }
 
   // Everything synchronous a crop export needs: the region, where its pixels live, and the cache keys (regionref's keysFor).
-  function cropPrep(regionUid) {
+  // Toast-free: { prep } or { message } for the caller to show (or not).
+  function cropPrepQuiet(regionUid) {
     const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
     const region = block ? parseRegion(block.string) : null;
-    if (!region?.supported) {
-      toaster.show("Region cannot be copied", { kind: "error" });
-      return null;
-    }
+    if (!region?.supported) return { message: "Region cannot be copied" };
     const target = resolveRegionTarget(host, region);
-    if (target.error) {
-      toaster.show(target.error, { kind: "error" });
-      return null;
-    }
+    if (target.error) return { message: target.error };
     const gk = geometryKey(region);
     return {
-      uid: regionUid,
-      region,
-      target,
-      keys: {
-        png: cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
-        svg: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
-        png2x: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png2x" }),
+      prep: {
+        uid: regionUid,
+        region,
+        target,
+        keys: {
+          png: cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
+          svg: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+          png2x: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png2x" }),
+        },
       },
     };
+  }
+
+  function cropPrep(regionUid) {
+    const { prep, message } = cropPrepQuiet(regionUid);
+    if (!prep) {
+      toaster.show(message, { kind: "error" });
+      return null;
+    }
+    return prep;
   }
 
   // Starts reading a cache entry at once: the LRU may revoke its URL. Never rejects.
@@ -2262,7 +2316,16 @@ export function createActions({
   // first await) so callers can hand `promise` straight to a ClipboardItem inside the user gesture.
   function startPng(regionUid) {
     const prep = cropPrep(regionUid);
-    if (!prep) return null;
+    return prep ? startPngFor(prep) : null;
+  }
+
+  // Toast-free source of a region's PNG (png2x -> svg -> png -> cold); null when the region cannot be rendered.
+  function cropSource(regionUid) {
+    const { prep } = cropPrepQuiet(regionUid);
+    return prep ? startPngFor(prep) : null;
+  }
+
+  function startPngFor(prep) {
     const { region, target, keys } = prep;
     const mem2x = keys.png2x ? readEntry(cache.peek?.(keys.png2x)) : null;
     const memSvg = keys.svg ? readEntry(cache.peek?.(keys.svg)) : null;
@@ -2552,7 +2615,437 @@ export function createActions({
     return count;
   }
 
-  async function presentOnce(requestedUid, release) {
+  // ---- embed labels (EMB-6) ----
+
+  function cancelEmbedLabels() {
+    labelGen += 1;
+    if (labelTimer !== null) clearTimer(labelTimer);
+    labelTimer = null;
+  }
+
+  function editorBusy(app) {
+    const st = app?.state || {};
+    if (st.editingTextElement || st.newElement || st.resizingElement || st.multiElement) return true;
+    if (st.selectedElementsAreBeingDragged || st.isResizing || st.isRotating || st.cursorButton === "down") return true;
+    const edit = safe(() => getEmbedOverlay()?.editState?.());
+    return !!edit && edit !== "idle";
+  }
+
+  // One synchronous scan; every anchor whose bound text differs from the block's creation label is patched in a single
+  // "NEVER" write (not an undo step). Returns how many were rewritten.
+  function refreshEmbedLabels(app) {
+    const editor = native.activeEditor(doc);
+    if (!app || editor?.app !== app || !isId(editor.drawingUid)) return 0;
+    const scene = sceneElements(app);
+    const byId = new Map(scene.map((el) => [el?.id, el]));
+    const patches = new Map();
+    for (const anchor of embedAnchors(scene)) {
+      const parsed = parseEmbedRef(anchor.customData.plexus.embed);
+      if (!parsed || parsed.kind === "today") continue;
+      const bound = (anchor.boundElements || []).find((b) => b?.type === "text");
+      const text = bound ? byId.get(bound.id) : null;
+      if (!text || text.isDeleted || text.type !== "text" || text.containerId !== anchor.id) continue;
+      let content = null;
+      try { content = host.pullEmbedContent(parsed.ref); } catch { content = null; }
+      if (!content || typeof content.then === "function") continue;
+      const label = embedLabel(content.string || content.title);
+      if (!label || label === (text.originalText ?? text.text)) continue;
+      const laid = layoutAnchorLabel({
+        label, x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height,
+        fontSize: text.fontSize || 16, lineHeight: text.lineHeight || 1.25,
+      });
+      patches.set(text.id, { text: laid.text, originalText: laid.originalText, x: laid.x, y: laid.y, width: laid.width, height: laid.height });
+    }
+    if (!patches.size) return 0;
+    const ok = guard.guardedWrite(app, {
+      drawingUid: editor.drawingUid,
+      label: "Embed labels",
+      captureUpdate: "NEVER",
+      next: (current) => current.map((el) => (el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)),
+    });
+    return ok ? patches.size : 0;
+  }
+
+  // Trailing 1500 ms debounce. Skips (re-arming after 1 s) while the user is mid-gesture or the overlay is editing.
+  function scheduleEmbedLabels(app) {
+    if (disposed || !app) return;
+    cancelEmbedLabels();
+    const gen = labelGen;
+    const arm = (ms) => {
+      labelTimer = setTimer(() => { labelTimer = null; void flush(); }, ms);
+    };
+    const current = () => !disposed && gen === labelGen;
+    const flush = async () => {
+      if (!current()) return;
+      const editor = native.activeEditor(doc);
+      if (editor?.app !== app || !isId(editor.drawingUid)) return;
+      if (editorBusy(app)) { arm(LABEL_RETRY_MS); return; }
+      if (!labelReady.has(app)) {
+        await native.waitNotLoading?.(app, 5000, { doc });
+        await frame();
+        await frame();
+        if (!current() || native.activeEditor(doc)?.app !== app) return;
+        labelReady.add(app);
+        if (editorBusy(app)) { arm(LABEL_RETRY_MS); return; }
+      }
+      try {
+        refreshEmbedLabels(app);
+      } catch (error) {
+        console.warn("[plexus] embed label refresh failed", error);
+      }
+    };
+    arm(LABEL_DEBOUNCE_MS);
+  }
+
+  // ---- frames (AUTH-8) ----
+
+  function requireEditor() {
+    const editor = native.activeEditor(doc);
+    if (!editor || !isId(editor.drawingUid)) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    return editor;
+  }
+
+  function sceneViewRect(app) {
+    const st = app.state || {};
+    const a = viewportToScene({ x: st.offsetLeft || 0, y: st.offsetTop || 0, appState: st });
+    const b = viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0), y: (st.offsetTop || 0) + (st.height || 0), appState: st });
+    return { left: a.x, top: a.y, right: b.x, bottom: b.y };
+  }
+
+  // Scrolls (never zooms) to the frames only when they are not fully in view.
+  function revealFrames(app, frames) {
+    if (!frames.length || typeof app.scrollToContent !== "function") return;
+    const view = sceneViewRect(app);
+    const inside = frames.every((f) => f.x >= view.left && f.y >= view.top && f.x + f.width <= view.right && f.y + f.height <= view.bottom);
+    if (inside) return;
+    const animate = !!safe(() => motionOk(doc, settingsNow().animation));
+    safe(() => app.scrollToContent(frames.length === 1 ? frames[0] : frames, { fitToContent: false, animate }));
+  }
+
+  function selectedFrameId() {
+    const editor = native.activeEditor(doc);
+    if (!editor) return null;
+    return selectedFrameOf(sceneElements(editor.app), native.selectedElementIds(editor.app));
+  }
+
+  // One write, one undo step: existing frames get orders when needed, new frames are appended and selected.
+  function insertFrames(editor, rects, preset, label) {
+    const ids = rects.map(() => frameId());
+    const selectedElementIds = {};
+    for (const id of ids) selectedElementIds[id] = true;
+    let created = [];
+    const ok = guard.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => {
+        const plan = planOrders(current, rects.length);
+        created = rects.map((r, i) => ({ ...presetFrame({ id: ids[i], preset, x: r.x, y: r.y, order: plan.orders[i] }), width: r.width, height: r.height }));
+        return [...applyOrderRewrite(current, plan.rewrite), ...created];
+      },
+      appState: { selectedElementIds, selectedGroupIds: {} },
+    });
+    if (!ok) return null;
+    revealFrames(editor.app, created);
+    return created;
+  }
+
+  function addFrameOnce({ preset = DEFAULT_PRESET, placement = "centre" } = {}) {
+    const editor = requireEditor();
+    if (!editor) return null;
+    const size = presetSize(preset);
+    if (!size) {
+      toaster.show("Unknown frame size", { kind: "error" });
+      return null;
+    }
+    const slot = placement === "next" ? nextSlideSlot(sceneElements(editor.app)) : null;
+    const c = viewCentre(editor.app);
+    const rect = slot ? { x: slot.x, y: slot.y, ...size } : { x: c.x - size.width / 2, y: c.y - size.height / 2, ...size };
+    const created = insertFrames(editor, [rect], preset, "Add frame");
+    if (!created) {
+      toaster.show("Could not add the frame", { kind: "error" });
+      return null;
+    }
+    return created[0].id;
+  }
+
+  function addFrameLayoutOnce({ kind = "grid", preset = DEFAULT_PRESET } = {}) {
+    const editor = requireEditor();
+    if (!editor) return null;
+    const rects = layoutFrames({ kind, preset, centre: viewCentre(editor.app) });
+    if (!rects.length) {
+      toaster.show("Unknown frame layout", { kind: "error" });
+      return null;
+    }
+    const created = insertFrames(editor, rects, preset, "Add frames");
+    if (!created) {
+      toaster.show("Could not add the frames", { kind: "error" });
+      return null;
+    }
+    return created.map((f) => f.id);
+  }
+
+  function reformatFrameOnce({ preset = DEFAULT_PRESET } = {}) {
+    const editor = requireEditor();
+    if (!editor) return null;
+    const scene = sceneElements(editor.app);
+    const id = selectedFrameOf(scene, native.selectedElementIds(editor.app));
+    const target = id ? scene.find((el) => el?.id === id && !el.isDeleted) : null;
+    if (!target) {
+      toaster.show("Select a frame first", { kind: "error" });
+      return null;
+    }
+    const rect = reformatRect(target, preset);
+    if (!rect) {
+      toaster.show("Unknown frame size", { kind: "error" });
+      return null;
+    }
+    const released = new Set(childrenOutside(scene, target, rect).map((el) => el.id));
+    const ok = guard.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label: "Reformat frame",
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => current.map((el) => {
+        if (!el) return el;
+        if (el.id === id) return bumped(el, rect);
+        if (released.has(el.id)) return bumped(el, { frameId: null });
+        return el;
+      }),
+    });
+    if (!ok) {
+      toaster.show("Could not reformat the frame", { kind: "error" });
+      return null;
+    }
+    if (released.size) toaster.show(`${released.size} element${released.size === 1 ? "" : "s"} left the frame`);
+    return id;
+  }
+
+  function makeSlideOnce() {
+    const editor = requireEditor();
+    if (!editor) return null;
+    const { app } = editor;
+    const scene = sceneElements(app);
+    const ids = native.selectedElementIds(app);
+    const byId = new Map(scene.map((el) => [el?.id, el]));
+    const picked = ids.map((id) => byId.get(id)).filter((el) => el && !el.isDeleted);
+    if (!picked.length || picked.some(isFrameEl)) {
+      toaster.show("Select elements that are not frames", { kind: "error" });
+      return null;
+    }
+    const before = new Set(scene.filter(isFrameEl).map((el) => el.id));
+    const wrap = app.actionManager?.actions?.wrapSelectionInFrame;
+    let newFrameId = null;
+    if (wrap) {
+      try { app.actionManager.executeAction(wrap, "api"); } catch (error) { console.warn("[plexus] wrap in frame failed", error); }
+      newFrameId = sceneElements(app).find((el) => isFrameEl(el) && !el.isDeleted && !before.has(el.id))?.id ?? null;
+    }
+    let resultId = null;
+    let ok = false;
+    if (wrap && !newFrameId) {
+      toaster.show("Could not make a slide", { kind: "error" });
+      return null;
+    }
+    if (newFrameId) {
+      ok = guard.guardedWrite(app, {
+        drawingUid: editor.drawingUid,
+        label: "Make slide",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => {
+          const frameEl = current.find((el) => el?.id === newFrameId);
+          const rest = current.filter((el) => el?.id !== newFrameId);
+          const plan = planOrders(rest, 1);
+          const named = { ...withOrder(frameEl, plan.orders[0]), name: `Slide ${plan.orders[0]}` };
+          // Keep the frame where the action put it in the array; only its fields change.
+          return applyOrderRewrite(current, plan.rewrite).map((el) => (el?.id === newFrameId ? named : el));
+        },
+        appState: { selectedElementIds: { [newFrameId]: true }, selectedGroupIds: {} },
+      });
+      resultId = newFrameId;
+    } else {
+      // Fallback: the selection's box plus 16, children adopted in the same write.
+      const box = commonBounds(picked);
+      const pad = 16;
+      const members = new Set(picked.map((el) => el.id));
+      const fallbackId = frameId();
+      resultId = fallbackId;
+      for (const el of scene) if (el && !el.isDeleted && el.containerId && members.has(el.containerId)) members.add(el.id);
+      ok = guard.guardedWrite(app, {
+        drawingUid: editor.drawingUid,
+        label: "Make slide",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => {
+          const plan = planOrders(current, 1);
+          const order = plan.orders[0];
+          const frameEl = { ...presetFrame({ id: fallbackId, preset: DEFAULT_PRESET, x: box[0] - pad, y: box[1] - pad, order }), width: box[2] - box[0] + 2 * pad, height: box[3] - box[1] + 2 * pad, name: `Slide ${order}` };
+          const adopted = applyOrderRewrite(current, plan.rewrite).map((el) => (el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el));
+          return [...adopted, frameEl];
+        },
+        appState: { selectedElementIds: { [fallbackId]: true }, selectedGroupIds: {} },
+      });
+    }
+    if (!ok || !resultId) {
+      toaster.show("Could not make a slide", { kind: "error" });
+      return null;
+    }
+    return resultId;
+  }
+
+  // ---- shared frame-image pipeline (presenting, printing, PNG export) ----
+
+  async function pngSizeOf(blob) {
+    try {
+      const bytes = new Uint8Array(await blob.slice(0, 24).arrayBuffer());
+      if (bytes.length < 24) return null;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return { w: view.getUint32(16), h: view.getUint32(20) };
+    } catch {
+      return null;
+    }
+  }
+
+  // Renders the wanted frames one at a time and hands each result to sink(i, result|null). Results are
+  // { type: "svg", svg } (mounted, format "svg") or { type: "png", blob, w, h, persist }. Never throws.
+  // Mounted png: native 2x, light only, accepted at 2x the frame size +-4 px, else the cold 1x crop.
+  async function frameImages({ uid, drawing, mounted, items, format, alive, sink }) {
+    const out = { renderFailed: false };
+    let coldState;
+    const ensureCold = async () => {
+      if (coldState !== undefined) return coldState;
+      coldState = null;
+      if (!drawing) return null;
+      try {
+        const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
+        coldState = (await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS })) || null;
+      } catch (error) {
+        console.warn("[plexus] cold render failed", error);
+      }
+      if (!coldState) out.renderFailed = true;
+      return coldState;
+    };
+    const cropFrame = async (frame) => {
+      const rendered = await ensureCold();
+      if (!rendered || !alive()) return null;
+      const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "" };
+      const box = regionSceneBBox(region, drawing.elements, drawing.appState);
+      if (box.error) return null;
+      const crop = viewPngCropRect({ elements: drawing.elements, appState: drawing.appState, bbox: box.bbox, naturalWidth: rendered.naturalWidth, naturalHeight: rendered.naturalHeight });
+      if (crop.error) return null;
+      const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
+      return { type: "png", blob, w: crop.sw, h: crop.sh, persist: rendered.settled !== false };
+    };
+    const native2x = async (frame) => {
+      if (typeof native.captureSelectionPng !== "function") return null;
+      try {
+        const blob = await native.captureSelectionPng(mounted.app, [frame.id], { scale: 2, dark: false });
+        if (!blob) return null;
+        const size = await pngSizeOf(blob);
+        if (!size || Math.abs(size.w - 2 * frame.width) > 4 || Math.abs(size.h - 2 * frame.height) > 4) return null;
+        return { type: "png", blob, w: size.w / 2, h: size.h / 2, persist: false };
+      } catch (error) {
+        console.warn("[plexus] frame png2x failed", error);
+        return null;
+      }
+    };
+    for (const { frame, i } of items) {
+      if (!alive()) break;
+      let result = null;
+      const live = mounted && native.activeEditor(doc)?.app === mounted.app;
+      try {
+        if (live && format === "svg") {
+          const svg = await captureSafe(mounted.app, [frame.id]);
+          result = svg ? { type: "svg", svg: normalizeSvgSize(svg) } : null;
+        } else if (live) {
+          result = (await native2x(frame)) ?? (await cropFrame(frame));
+        } else {
+          result = await cropFrame(frame);
+        }
+      } catch (error) {
+        console.warn("[plexus] frame render failed", error);
+        result = null;
+      }
+      if (!alive()) break;
+      await sink(i, result);
+    }
+    return out;
+  }
+
+  // ---- presenting ----
+
+  function laserNow() {
+    const s = settingsNow();
+    const color = typeof s.laserColor === "string" && /^#[0-9a-f]{6}$/i.test(s.laserColor.trim()) ? s.laserColor.trim().toLowerCase() : "#e03131";
+    const n = Number(s.laserDecay);
+    return { color, decay: Number.isFinite(n) ? Math.min(3000, Math.max(300, n)) : 1000 };
+  }
+
+  // Owned object URLs for one deck: revoked on close and on dispose(), never the cache's own URLs.
+  function urlBag() {
+    const held = new Set();
+    let gone = false;
+    const revoke = () => {
+      gone = true;
+      for (const url of held) safe(() => urls.revokeObjectURL(url));
+      held.clear();
+      revokers.delete(revoke);
+    };
+    revokers.add(revoke);
+    return {
+      make(blob) {
+        if (gone) return null;
+        const url = urls.createObjectURL(blob);
+        held.add(url);
+        return url;
+      },
+      revoke,
+    };
+  }
+
+  function notesFor(regions, frameId) {
+    const cands = regions
+      .filter((r) => r?.region?.supported && (r.region.kind === "cframe" || r.region.kind === "frame") && r.region.frameId === frameId)
+      .sort((a, b) => KIND_RANK[a.region.kind] - KIND_RANK[b.region.kind]);
+    const kids = (r) => safe(() => host.pullBlock?.(r.uid)?.children?.length) || 0;
+    return cands.find((r) => kids(r) > 0) ?? cands[0] ?? null;
+  }
+
+  // Idempotent: re-reads the notes first, so a second press (or a note written meanwhile) adds nothing. No toasts:
+  // the presenter is open while this runs.
+  function addNotesForFrame(drawingUid, frame, added) {
+    return once(`notes:${drawingUid}:${frame.id}`, async () => {
+      try {
+        const regions = safe(() => host.regionsOf?.(drawingUid)) ?? [];
+        const found = notesFor(regions, frame.id);
+        let regionUid = found?.uid ?? null;
+        if (regionUid) {
+          const kids = safe(() => host.pullBlock?.(regionUid)?.children) ?? [];
+          if (kids.length) return { regionUid, childUid: kids[0].uid };
+        } else {
+          regionUid = await host.createRegion(drawingUid, serializeRegion({ kind: "cframe", drawingUid, frameId: frame.id, caption: String(frame.name ?? "").trim() }));
+        }
+        const childUid = await host.createBlock({ parentUid: regionUid, string: "" });
+        emitChange(regionUid);
+        added.push(regionUid);
+        return { regionUid, childUid };
+      } catch (error) {
+        console.warn("[plexus] add notes failed", error);
+        return null;
+      }
+    });
+  }
+
+  function afterPresent(added) {
+    if (!added.length || disposed) return;
+    if (!native.activeEditor(doc)) {
+      safe(() => host.openBlock?.(added[0], { sidebar: true }));
+    } else {
+      toaster.show("Notes added: Outline › regions");
+    }
+  }
+
+  async function presentOnce(requestedUid, release, { from = "start", at } = {}) {
     const editor = native.activeEditor(doc);
     const uid = requestedUid || editor?.drawingUid;
     if (!isId(uid) || !presenter) {
@@ -2570,16 +3063,37 @@ export function createActions({
       toaster.show("Drawing not found", { kind: "error" });
       return null;
     }
+    // Where to start (A9). "here" needs the mounted drawing; an unknown frame id starts at 0 with a notice.
+    let start = 0;
+    let startNotice = null;
+    if (from === "here") {
+      if (mounted) {
+        const scene = sceneElements(mounted.app);
+        const pick = (Number.isFinite(at?.x) && Number.isFinite(at?.y) ? frameAt(frames, at) : null)
+          ?? frames.find((f) => f.id === selectedFrameOf(scene, native.selectedElementIds(mounted.app)))
+          ?? nearestFrame(frames, viewCentre(mounted.app));
+        start = Math.max(0, frames.indexOf(pick));
+      }
+    } else if (from !== "start" && from != null) {
+      const at0 = frames.findIndex((f) => f.id === from);
+      if (at0 >= 0) start = at0;
+      else startNotice = "That frame was not found; starting at the first slide";
+    }
     // Mounted slides are captured from the live scene, so key them on the live scene, not the last saved hash.
     const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
-    const slides = frames.map((frame) => {
+    const regions = safe(() => host.regionsOf?.(uid)) ?? [];
+    const added = [];
+    const slides = frames.map((frame, idx) => {
       const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "" };
       const gk = geometryKey(region);
+      const found = notesFor(regions, frame.id);
+      const hasKids = !!found && (safe(() => host.pullBlock?.(found.uid)?.children?.length) || 0) > 0;
       return {
         frame,
         region,
-        name: frame.name || `Frame ${frames.indexOf(frame) + 1}`,
+        name: frame.name || `Frame ${idx + 1}`,
         url: null,
+        notes: { rootUid: found?.uid ?? null, ...(hasKids ? {} : { onAdd: () => addNotesForFrame(uid, frame, added) }) },
         svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
         pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" }),
       };
@@ -2589,53 +3103,189 @@ export function createActions({
       const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
       slide.url = entry?.url ?? null;
     }
-    const handle = presenter.open({ slides: slides.map(({ name, url }) => ({ name, url })), index: 0, onClose: release });
+    const handle = presenter.open({
+      slides: slides.map(({ name, url, notes }) => ({ name, url, notes })),
+      index: start,
+      onClose: () => { release?.(); afterPresent(added); },
+      laser: laserNow(),
+    });
+    const notice = (text) => { if (handle.isOpen()) safe(() => handle.notice?.(text)); };
+    if (startNotice) notice(startNotice);
     const missing = slides.map((s, i) => [s, i]).filter(([s]) => !s.url);
     if (!missing.length) return uid;
     const fail = (i) => { if (handle.isOpen()) handle.setSlide(i, { error: true }); };
     const fill = (i, entry) => { if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url }); };
+    // From the start slide forward, then the ones before it.
+    const rank = (i) => (i >= start ? i - start : slides.length + i);
+    const items = missing.sort((a, b) => rank(a[1]) - rank(b[1])).map(([slide, i]) => ({ frame: slide.frame, i }));
     try {
-      if (mounted) {
-        for (const [slide, i] of missing) {
-          if (disposed || !handle.isOpen()) break;
-          let svg = await captureSafe(mounted.app, [slide.frame.id]);
-          if (!svg) continue;
-          svg = normalizeSvgSize(svg);
-          await cache.put(slide.svgKey, new Blob([svg], { type: "image/svg+xml" }), svgSize(svg));
-          fill(i, cache.peek?.(slide.svgKey) || (await cache.get(slide.svgKey)));
-        }
-      } else {
-        const hasImage = drawing.elements.some((el) => !el.isDeleted && (el.type === "image" || el.fileId));
-        const rendered = await cold.renderDrawing(uid, { settleMs: hasImage ? IMAGE_SETTLE_MS : PLAIN_SETTLE_MS });
-        if (!rendered || disposed || !handle.isOpen()) {
-          if (!rendered && !disposed && handle.isOpen()) {
-            for (const [, i] of missing) fail(i);
-            toaster.show("Could not render this drawing", { kind: "error" });
+      const result = await frameImages({
+        uid, drawing, mounted, items, format: "svg",
+        alive: () => !disposed && handle.isOpen(),
+        sink: async (i, r) => {
+          const slide = slides[i];
+          if (!r) { fail(i); return; }
+          if (r.type === "svg") {
+            await cache.put(slide.svgKey, new Blob([r.svg], { type: "image/svg+xml" }), svgSize(r.svg));
+            fill(i, cache.peek?.(slide.svgKey) || (await cache.get(slide.svgKey)));
+          } else {
+            await cache.put(slide.pngKey, r.blob, { w: r.w, h: r.h, persist: r.persist });
+            fill(i, cache.peek?.(slide.pngKey) || (await cache.get(slide.pngKey)));
           }
-          return uid;
-        }
-        for (const [slide, i] of missing) {
-          if (disposed || !handle.isOpen()) break;
-          const box = regionSceneBBox(slide.region, drawing.elements, drawing.appState);
-          if (box.error) { fail(i); continue; }
-          const crop = viewPngCropRect({
-            elements: drawing.elements,
-            appState: drawing.appState,
-            bbox: box.bbox,
-            naturalWidth: rendered.naturalWidth,
-            naturalHeight: rendered.naturalHeight,
-          });
-          if (crop.error) { fail(i); continue; }
-          const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
-          await cache.put(slide.pngKey, blob, { w: crop.sw, h: crop.sh, persist: rendered.settled !== false });
-          fill(i, cache.peek?.(slide.pngKey) || (await cache.get(slide.pngKey)));
-        }
-      }
+        },
+      });
+      if (result.renderFailed) notice("Could not render this drawing");
     } catch (error) {
       console.warn("[plexus] present fill failed", error);
       for (const [slide, i] of missing) if (!cache.peek?.(slide.svgKey) && !cache.peek?.(slide.pngKey)) fail(i);
     }
     return uid;
+  }
+
+  // Outline deck: each child of the block that is a region ref (bare or the copyAlias form) is a slide.
+  async function presentOutlineOnce(blockUid, release, { start: startIndex = 0 } = {}) {
+    if (!isId(blockUid) || !presenter) {
+      toaster.show("Could not identify this block", { kind: "error" });
+      return null;
+    }
+    const block = safe(() => host.pullBlock(blockUid));
+    const uidOf = (text) => {
+      for (const re of OUTLINE_REF_RES) {
+        const m = re.exec(String(text ?? "").trim());
+        if (m) return m[1];
+      }
+      return null;
+    };
+    const kids = (block?.children ?? []).map((c) => ({ childUid: c.uid, regionUid: uidOf(c.string) }));
+    const refs = kids.filter((k) => k.regionUid).slice(0, PRESENT_CAP);
+    const slides = [];
+    let skipped = kids.length - kids.filter((k) => k.regionUid).length;
+    for (const { childUid, regionUid } of refs) {
+      const { prep } = cropPrepQuiet(regionUid);
+      if (!prep) { skipped += 1; continue; }
+      slides.push({ regionUid, prep, notes: isId(childUid) ? { rootUid: childUid } : undefined, name: stripBrackets(labelOf(prep.region)) || `Slide ${slides.length + 1}`, url: null });
+    }
+    if (!slides.length) {
+      toaster.show("No region refs under this block", { kind: "error" });
+      return null;
+    }
+    const bag = urlBag();
+    const handle = presenter.open({
+      slides: slides.map(({ name, url, notes }) => ({ name, url, notes })),
+      index: Math.min(Math.max(0, startIndex), slides.length - 1),
+      onClose: () => { bag.revoke(); release?.(); },
+      laser: laserNow(),
+    });
+    const notice = (text) => { if (handle.isOpen()) safe(() => handle.notice?.(text)); };
+    if (skipped) notice(`Skipped ${skipped} child${skipped === 1 ? "" : "ren"} that cannot be presented`);
+    const begin = Math.min(Math.max(0, startIndex), slides.length - 1);
+    const rank = (i) => (i >= begin ? i - begin : slides.length + i);
+    const order = slides.map((_, i) => i).sort((a, b) => rank(a) - rank(b));
+    try {
+      for (const i of order) {
+        if (disposed || !handle.isOpen()) break;
+        try {
+          const blob = await startPngFor(slides[i].prep).promise;
+          if (disposed || !handle.isOpen()) break;
+          const url = bag.make(blob);
+          if (url) handle.setSlide(i, { url });
+        } catch (error) {
+          console.warn("[plexus] outline slide failed", slides[i].regionUid, error);
+          if (handle.isOpen()) handle.setSlide(i, { error: true });
+        }
+      }
+    } finally {
+      if (!handle.isOpen()) bag.revoke();
+    }
+    return blockUid;
+  }
+
+  async function runPresent(fn) {
+    if (presentOwner) return null;
+    const token = {};
+    presentOwner = token;
+    const release = () => { if (presentOwner === token) presentOwner = null; };
+    try {
+      return await fn(release);
+    } finally {
+      release();
+    }
+  }
+
+  // ---- print / PNG per frame ----
+
+  function printSettings() {
+    const s = settingsNow();
+    const size = PRINT_SIZES.includes(String(s.printSize).toLowerCase()) ? String(s.printSize).toLowerCase() : "letter";
+    const n = Number(s.printMargin);
+    return { size, margin: Number.isFinite(n) ? Math.min(30, Math.max(0, n)) : 10 };
+  }
+
+  async function printFramesOnce({ drawingUid, size, margin, mode = "print" } = {}) {
+    const editor = native.activeEditor(doc);
+    const uid = isId(drawingUid) ? drawingUid : editor?.drawingUid;
+    if (!isId(uid)) {
+      toaster.show("Open a drawing or pick a drawing block", { kind: "error" });
+      return null;
+    }
+    const mounted = editor && editor.drawingUid === uid ? editor : null;
+    const drawing = safe(() => host.drawing(uid));
+    let frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
+    if (!drawing && !mounted) {
+      toaster.show("Drawing not found", { kind: "error" });
+      return null;
+    }
+    if (!frames.length) {
+      toaster.show("No frames in this drawing", { kind: "error" });
+      return null;
+    }
+    if (frames.length > PRINT_CAP) {
+      toaster.show(`Using the first ${PRINT_CAP} of ${frames.length} frames`);
+      frames = frames.slice(0, PRINT_CAP);
+    }
+    const defaults = printSettings();
+    const pageSize = PRINT_SIZES.includes(String(size).toLowerCase()) ? String(size).toLowerCase() : defaults.size;
+    const pageMargin = Number.isFinite(Number(margin)) && margin !== null && margin !== undefined ? Math.min(40, Math.max(0, Number(margin))) : defaults.margin;
+    toaster.show(`Preparing ${frames.length} page${frames.length === 1 ? "" : "s"}…`);
+    const bag = urlBag();
+    const job = { dispose: () => { bag.revoke(); safe(() => active?.dispose?.()); } };
+    let active = null;
+    printJob = job;
+    const pages = [];
+    try {
+      const src = safe(() => host.labelSource?.(uid)) ?? { string: "", pageTitle: null };
+      const title = safe(() => drawingTitleOf(src.string, src.pageTitle)) || "Drawing";
+      const result = await frameImages({
+        uid, drawing, mounted, format: "png",
+        items: frames.map((frame, i) => ({ frame, i })),
+        alive: () => !disposed && printJob === job,
+        sink: async (i, r) => {
+          if (!r || r.type !== "png") return;
+          const url = mode === "png" ? null : bag.make(r.blob);
+          if (mode === "png" || url) pages.push({ blob: r.blob, url, name: frames[i].name || `Frame ${i + 1}`, index: i, width: r.w, height: r.h });
+        },
+      });
+      if (disposed || printJob !== job) return null;
+      if (!pages.length) {
+        toaster.show(result.renderFailed ? "Could not render this drawing" : "Could not render any frame", { kind: "error" });
+        return null;
+      }
+      if (pages.length < frames.length) toaster.show(`${frames.length - pages.length} frame${frames.length - pages.length === 1 ? "" : "s"} could not be rendered`, { kind: "error" });
+      if (mode === "png") {
+        active = printKit.downloadPngs({ doc, drawing: title, frames: pages.map(({ blob, name, index }) => ({ blob, name, index })), total: frames.length });
+      } else {
+        active = printKit.printPages({ doc, drawing: title, pages, size: pageSize, margin: pageMargin, print: printWin });
+      }
+      await active?.done;
+      return { pages: pages.length, mode };
+    } catch (error) {
+      console.warn("[plexus] print failed", error);
+      if (!disposed) toaster.show(mode === "png" ? "Could not export the frames" : "Could not print the frames", { kind: "error" });
+      return null;
+    } finally {
+      bag.revoke();
+      if (printJob === job) printJob = null;
+    }
   }
 
   function findRenderedImage(blockUid, index = 0) {

@@ -98,6 +98,7 @@ export function createEmbedOverlay({
   clearTimeout: clearTimer = globalThis.clearTimeout,
   toast = () => {},
   onStateChange = () => {},
+  onLoaded = () => {},
   menuSelector = ROAM_MENU_SELECTOR,
 }) {
   const view = doc.defaultView;
@@ -255,6 +256,7 @@ export function createEmbedOverlay({
     const uid = content?.uid ?? parsed?.uid;
     if (uid) watchUid(portal, uid);
     else if (isToday) releaseWatch(portal);
+    try { onLoaded({ anchorId: portal.id, ref: portal.ref, content }); } catch (error) { console.warn("[plexus] onLoaded failed", error); }
   };
 
   // ---- today embeds: re-resolve at local midnight ----
@@ -311,7 +313,7 @@ export function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false };
+    const portal = { id: el.id, root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false };
     applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);

@@ -271,7 +271,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 25 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 30 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -289,7 +289,7 @@ test("the command list carries all 25 labels and hotkeys, and captures the focus
     assert.deepEqual(commands.map((c) => c.label), [
       "New drawing here", "New drawing below", "New drawing on page", "New drawing on today",
       "Create region from selection", "Create image region", "Regions for all frames", "Mind map", "Mind map from outline",
-      "Embed page or block\u2026", "New note card", "Present open drawing", "Back to previous view", "Toggle regions layer",
+      "Embed page or block\u2026", "New note card", "Present open drawing", "Present from here", "Present this outline", "Print frames\u2026", "PNG per frame", "Make slide", "Back to previous view", "Toggle regions layer",
       "Toggle outline dock", "Outline dock: show parent",
       "Refresh crops for open drawing", "Clear crop cache", "Audit regions on this page", "Audit regions in graph",
       "Restore before last Plexus change", "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)", "Region settings",

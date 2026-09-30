@@ -9,6 +9,8 @@ const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const PLEXUS_START = /^\s*\{\{\[\[plexus-/;
 const MEMO_MS = 500;
 const INFRA_START = /^\s*\{\{\[\[plexus-(?:regions|cards)\]\]\}\}/;
+const ALIAS_REF = /^(?:\(\(([A-Za-z0-9_-]{9})\)\)|\[[^\]]*\]\(\(\(([A-Za-z0-9_-]{9})\)\)\))$/;
+const OUTLINE_CAP = 100;
 const LINK_LABEL = "Plexus: Link caption to source blocks";
 
 const guard = (label, fn) => (...args) => {
@@ -61,7 +63,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     try { captionState = regionref.captionStateOf?.({ blockUid: block, refUid: ref }) ?? "written"; } catch { captionState = "written"; }
     const overrides = getSettings()?.refOverrides || {};
     const kind = parseRegion(string)?.kind;
-    return { supported, mode, captionState, drawingKind: !isImageKind(kind), hasOverride: overrideMode(overrides[overrideKey(block, ref)]) != null };
+    return { supported, mode, captionState, kind, frameKind: kind === "frame" || kind === "cframe", drawingKind: !isImageKind(kind), hasOverride: overrideMode(overrides[overrideKey(block, ref)]) != null };
   });
   const candidateOf = memoize((uid) => {
     try { return actions.regionCaptionCandidate?.(uid) ?? null; } catch { return null; }
@@ -75,9 +77,21 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
       images: parseImageRefs(string).length > 0,
       drawing: DRAWING_START.test(string),
       region: !!region?.supported,
+      frameKind: !!region?.supported && (region.kind === "frame" || region.kind === "cframe"),
       drawingKind,
       needsRepair: drawingKind && needsRepair(region),
     };
+  });
+  // One memoized pull of the child strings: true when some child is a bare ((uid)) or an alias link (A12's pattern).
+  const outlineInfo = memoize((uid) => {
+    try {
+      const raw = api.data.pull("[{:block/children [:block/string]}]", [":block/uid", uid]);
+      const kids = raw?.[":block/children"];
+      const list = (Array.isArray(kids) ? kids : kids ? [kids] : []).slice(0, OUTLINE_CAP);
+      return list.some((k) => typeof k?.[":block/string"] === "string" && ALIAS_REF.test(k[":block/string"].trim()));
+    } catch {
+      return false;
+    }
   });
   const parentString = (uid) => {
     try {
@@ -156,6 +170,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
       regionref.refreshBlock(block);
     });
   }
+  register("blockRefContextMenu", "Plexus: Present from here", refShow((i) => i.frameKind), (e) => actions.presentFromRegion(refOf(e).ref));
   register("blockRefContextMenu", "Plexus: Refresh crop", refShow(), (e) => regionref.refreshRegion(refOf(e).ref));
   const relink = async (uid) => {
     await actions.relinkRegionCaption(uid);
@@ -205,6 +220,10 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
+  register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
+  register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
+  register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));
+  register("blockContextMenu", "Plexus: Present from here", blockShow("frameKind"), (e) => actions.presentFromRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Mind map from outline", () => true, (e) => actions.mindMapFromOutline(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Open region", blockShow("region"), (e) => actions.openRegion(e?.["block-uid"], { sidebar: false }));
   register("blockContextMenu", "Plexus: Refresh crop", blockShow("region"), (e) => regionref.refreshRegion(e?.["block-uid"]));
@@ -440,6 +459,8 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "note", label: "Plexus: New note card", enabled: !!noteAt, kbd: kbd("note"), run: call("note", () => noteAt(point)) },
     { id: "edit-embed", label: "Plexus: Edit embed", enabled: can(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
     { id: "present", label: "Plexus: Present", enabled: can(() => actions.hasFrames()), kbd: kbd("present"), run: call("present", () => actions.presentDrawing()) },
+    { id: "present-here", label: "Plexus: Present from here", enabled: can(() => actions.hasFrames()), run: call("present-here", () => actions.presentDrawing({ from: "here", at: point && toScene ? toScene(point) : undefined })) },
+    { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
     { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
     { id: "copy-drawing", label: "Plexus: Copy ((drawing))", enabled: can(() => drawingUid && noSelection()), run: call("copy-drawing", () => actions.copyDrawingRef()) },

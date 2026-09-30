@@ -100,7 +100,7 @@ test("canvas items keep today's nine in order (P9 adds the picker and note items
 test("nothing selected: copy items always, frames and restore by condition", () => {
   assert.deepEqual(canvas().enabled(), ["embed", "mindmap", "settings", "copy-drawing", "copy-embed"]);
   const c = canvas({ frames: true, snapshot: true });
-  assert.deepEqual(c.enabled(), ["embed", "present", "mindmap", "settings", "copy-drawing", "copy-embed", "frames-regions", "restore"]);
+  assert.deepEqual(c.enabled(), ["embed", "present", "present-here", "mindmap", "settings", "copy-drawing", "copy-embed", "frames-regions", "restore"]);
   for (const id of ["copy-drawing", "copy-embed", "frames-regions", "restore"]) c.run(id);
   assert.deepEqual(c.calls, ["ref", "embed", "frames", "restore"]);
   assert.ok(!canvas({ drawingUid: null }).enabled().includes("copy-drawing"));

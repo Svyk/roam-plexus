@@ -230,7 +230,7 @@ test("settings dialog: new fields, text field commits on close only, read-only S
   openSettingsDialog({ doc, get: () => undefined, set: (id, v) => { writes.push([id, v]); } });
   const dlg = body.children[0];
   const fields = flat(dlg).filter((n) => n.tag === "input" || n.tag === "select");
-  const [paste, home, name] = fields.slice(-3);
+  const [paste, home, name] = fields.slice(13, 16);
   assert.deepEqual([paste.value, home.value, name.value], ["text", "drawing", "Drawing {date}"]);
   paste.value = "embed"; paste.fire("change");
   name.value = "Board {n}"; name.fire("change");

@@ -325,6 +325,20 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Native actions | `wrapSelectionInFrame` present; laser tool works (Phase 7 DATA-5) | AUTH-8 "Slide" uses `wrapSelectionInFrame` |
 | Printing | Not triggered live: in Roam Desktop a native dialog blocks the renderer (Phase 7, `window.confirm`), so live tests stub `print()`. Chrome 145 on CDP `:9224` is available to paginate the print document with `Page.printToPDF` | EXP-3 pagination is verified in Chrome; one real print in Roam Desktop is a user check |
 
+#### Phase 11 live acceptance (2026-09-30, Readwisenotes `1929...`, trusted CDP)
+
+| Item | Result |
+|---|---|
+| EMB-6 | Open and close with current labels (6 s): no change to `:edit/time`, string or props, with and without Plexus. After editing the embedded block outside the drawing: exactly one save 2.5 s after opening, `originalText` = the new label (wrapped over two lines); Cmd+Z right after kept it; reopening saved nothing |
+| Print | `print()` hooked in Roam Desktop (a native dialog would block the renderer). Editor open: one `print()` call, 5 pages at 2x (600x440 for 300x220 frames), title "<drawing> frames". Chromium 148 headless (`Page.printToPDF`, `preferCSSPageSize`): 5 pages, Letter landscape 279.4 x 215.9 mm, no trailing blank page. Editor closed (block menu), 16:9 setting: 5 pages at 1x, 254 x 142.8 mm. The CDP browser on `:9224` rejects `preferCSSPageSize` and cannot check pagination |
+| PNG per frame | Anchor clicks stubbed: 5 files in slide order, `<drawing> - <n> <frame name>.png`, 250 ms apart, `blob:` URLs |
+| Frame presets | A4 794x1123, Letter 816x1056, 16:9 854x480, 4:3 800x600, 1:1 800x800, Mobile 390x844, each one undo step. "Slide" around a selection: "Slide 6", order 6, selection box + 16, the element joins the frame; it takes **two** undo steps (name/order, then the frame); the frame keeps Excalidraw's own id (passes `isId`). "2x2 · Mobile": 4 frames, 40 gap, orders 6-9, one undo step. Layout rows follow the last preset clicked |
+| Presenter | "Present from here" with frame "2 Middle" selected opened at 2 / 5. The notes pane (N) showed the frame's `cframe` child live (edit to pane in 105 ms); a `[[link]]` click in it did nothing (no navigation, editor intact); keys inside the pane did not change slides. Laser: canvas exactly over the slide area (DPR 1.095 backing), trail painted on pointer moves and gone 1.5 s later; `:edit/time` unchanged; clicks with the laser on did not advance |
+| Outline deck | 6 region refs across two drawings (one alias ref to a `cframe`) and a photo region presented as 6 slides in bullet order, all with images; moving a bullet to the top made it slide 1. Found: the "skipped" notice ignored plain-text children, and outline slides had no notes (fixed) |
+| Paste from canvas | One text element pasted as its text; two text elements: the first into the block, the second as the next sibling; an image pasted as `![](https://firebasestorage…)`; a paste inside a code block kept the raw JSON; plain multi-line text was still split into blocks by Roam |
+| Lifecycle | Unload removes the `window` paste listener (1 → 0) and returns `window`/`document` listener counts to their pre-load values; no presenter, notes pane, canvas, print iframe or flyout left |
+| CDP notes | A preset clicked through a stale flyout did nothing (harness, not Plexus). Separate `Input.dispatchMouseEvent` moves from new CDP sessions produced no `pointermove`; moves sent within one session did |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.

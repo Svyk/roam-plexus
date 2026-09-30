@@ -1,4 +1,4 @@
-import { DEFAULT_DRAWING_NAME, HOTKEYS, SETTING_IDS, drawingNameOf, formatHotkey } from "../settings.js";
+import { DEFAULT_DRAWING_NAME, HOTKEYS, SETTING_IDS, drawingNameOf, formatHotkey, laserColorOf } from "../settings.js";
 
 const STOP_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
 const open = new WeakMap();
@@ -32,6 +32,10 @@ const FIELDS = [
   { id: SETTING_IDS.pasteRefs, label: "Paste refs as", type: "select", options: [["text", "Text"], ["embed", "Embed"], ["link", "Link"]] },
   { id: SETTING_IDS.cardHome, label: "New note cards go", type: "select", options: [["drawing", "Under the drawing"], ["page", "On the drawing's page"], ["daily", "On today's page"]] },
   { id: SETTING_IDS.drawingName, label: "New drawing page name", type: "text", fallback: DEFAULT_DRAWING_NAME },
+  { id: SETTING_IDS.printSize, label: "Print page size", type: "select", options: [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]] },
+  { id: SETTING_IDS.printMargin, label: "Print margin (mm)", type: "number", fallback: 10, min: 0, max: 30 },
+  { id: SETTING_IDS.laserColor, label: "Laser pointer color", type: "color" },
+  { id: SETTING_IDS.laserDecay, label: "Laser fade (ms)", type: "number", fallback: 1000, min: 300, max: 3000 },
 ];
 
 // Read-only. Native keys are listed only once measured (spec section 13); at present none are.
@@ -61,12 +65,14 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     if (f.type === "number") return String(clampInt(v, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, v);
     if (f.type === "text") return drawingNameOf(v);
+    if (f.type === "color") return laserColorOf(v);
     return v == null ? f.fallback : !!v;
   };
   const current = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
     if (f.type === "text") return drawingNameOf(input.value);
+    if (f.type === "color") return laserColorOf(input.value);
     return !!input.checked;
   };
 
@@ -87,6 +93,10 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     } else if (f.type === "text") {
       input = el("input", "plexus-settings-input");
       input.type = "text";
+      input.value = stored(f);
+    } else if (f.type === "color") {
+      input = el("input", "plexus-settings-input");
+      input.type = "color";
       input.value = stored(f);
     } else if (f.type === "number") {
       input = el("input", "plexus-settings-input");

@@ -1,4 +1,108 @@
+# Plexus Phase 11: Out the door (binding)
 
+Repo `~/roam-plexus`, HEAD `b355c81` (code 0.10.0, `55cf9bf`). Target 0.11.0. No Compass change.
+
+Scope and designs: [`roadmap-next.md`](roadmap-next.md) §5 P11: EMB-6 (Option C), AUTH-8, EXP-3, PRES-2, PRES-1, PRES-4, PRES-6, EXP-5, and the P11 live gate. This contract adds the measured facts (spec §13 "Phase 11 measured facts"), names, file ownership and decisions. The P6-P10 contracts and amendments still bind:
+- zero dependencies, plain JS, `node --test` fakes, `[plexus]` log prefix;
+- never throw into Roam; remove everything on unload;
+- no `window.confirm` / `alert` / real `print()` in tests;
+- scene writes go through the P8 write guard (`guardedWrite`);
+- no drawing props writes except through Excalidraw;
+- **no new command-palette entries** (P9 L1). New actions go into the "Plexus: Commands…" list, the toolbar, and the canvas and block menus. New hotkeys go through the per-mount document guard, or live inside the presenter dialog;
+- Roam's permanent `.bp3-toast-container` never counts as an open menu (P10 L2).
+
+(Restored 2026-09-30: the committed `c3b465d` lost this body to a truncating append; the units built from the amendments below. Where the build's choices differ from this body, the live amendments at the end record the resolution.)
+
+## Measured facts (2026-09-30)
+
+- **Excalidraw copy.** Cmd+C on selected elements puts only plain text on the clipboard: `{"type":"excalidraw/clipboard","elements":[…],"files":{…}}`. Roam pastes that raw JSON into a block (729 characters for one text element).
+- **Images.** Roam's image elements carry the uploaded URL as `customData.firebaseUrl`. The in-scene file is a data URL.
+- **Embed anchor labels.** `makeEmbedAnchor` writes the block's first line as the anchor's bound text at creation. EMB-6 only has to refresh it. (Amendment A1 corrects this: the label is the whole string, whitespace collapsed, cut to 80.)
+- **Frame regions.** "Regions for all frames" creates `cframe` regions keyed by `frameId`.
+- **Native actions.** `wrapSelectionInFrame` exists and the laser tool works.
+- **Printing.** In Roam Desktop a native dialog blocks the renderer, so live tests stub `print()`. Pagination is verified in Chrome 145 (CDP `:9224`) with `Page.printToPDF` on the same print document. One real print in Roam Desktop is a user check after release.
+- **Existing pieces.**
+  - Presenter: `src/view/present.js`, `createPresenter({doc}).open({slides: [{name, url}], index, onClose})`. A modal `<dialog>` (top layer); keys are handled on the dialog.
+  - `actions.presentDrawing({drawingUid})`. Slide order: `orderFrames` in `src/model/slides.js`.
+  - Crops: the region-ref cache (hot SVG, cold settled PNG, REF-7 2x while mounted).
+  - `host.regionsOf(drawingUid)`, `serializeRegion`, `ensureRegionContainer`.
+
+## Decisions
+
+1. **EMB-6 write rule.** The anchor label refreshes only while the editor is mounted. It compares the target label with the anchor's bound text and writes only on a difference, through `guardedWrite`, with `captureUpdate: "NEVER"`, so the refresh is not an undo step. Opening a drawing whose embeds are current writes nothing (gate 1: `:edit/time` unchanged). Triggers: on mount (once, after the scene settles) and on a pull watch of each embedded block's `:block/string` while mounted, sharing the embed overlay's existing watch.
+2. **Frame presets are fixed sizes in scene units**, drawn at the viewport centre:
+   - A4 794x1123;
+   - Letter 816x1056;
+   - 16:9 854x480;
+   - 4:3 800x600;
+   - 1:1 800x800;
+   - mobile 390x844.
+
+   "Reformat frame" resizes the selected frame about its centre. It never moves children.
+3. **"Slide"** = `wrapSelectionInFrame` when something is selected, else a 16:9 frame at the next free slot to the right of the rightmost frame. Named "Slide N" and ordered by `customData.plexus.order = max + 1`. `orderFrames` honours `customData.plexus.order` first, then its current order.
+4. **Layouts** "2x2" and "strip" add 4 frames of the chosen preset with a 40-unit gap. They are named and ordered like slides.
+5. **Print** builds one document of `<img>` pages (frame slides at 2x when the editor is mounted, else 1x) with `@page { size: <A4|Letter|16:9 landscape>; margin: <mm> }` and page breaks between pages. It prints from a hidden iframe (`contentWindow.print()`, injectable). "PNG per frame" downloads one PNG per frame (`<a download>`), named `<drawing> - <n> <frame name>.png`. No jsPDF, no PPTX.
+6. **Presenter additions.**
+   - **Start index** (PRES-2), from:
+     - a selected frame;
+     - else the frame nearest the viewport centre;
+     - else a frame region ref (block menu "Present from here" on a `cframe` or `frame` region).
+   - **Progress bar** under the HUD.
+   - **Notes pane**:
+     - toggled by N;
+     - holds the current frame's `cframe` or `frame` region's child blocks, rendered with `renderString` of each child string inside the dialog, and unmounted on slide change;
+     - "Add notes" creates the `cframe` region for that frame on demand (the only write).
+   - **Laser (L) and pen (P).** A fixed overlay canvas inside the dialog. rAF runs only while the pointer moves. The laser decays in 1000 ms. Pen strokes clear on slide change. Nothing is persisted. Tool clicks do not advance slides.
+   - Keys typed inside the notes pane never advance slides.
+7. **PRES-4 outline deck.** "Present this outline" (block context menu and the command list, using the focused block) collects the block's direct children, in order, whose strings are a single `((uid))` resolving to a supported region. It skips the rest and toasts the count skipped. Each slide uses the region's crop:
+   - hot, or 2x when that drawing is mounted;
+   - otherwise the cold PNG path;
+   - each slide's notes are that child's children.
+8. **EXP-5 paste.** One `document` capture `paste` listener, installed at load. It is on the paste path, not the typing path. It returns immediately unless the target is a Roam block `TEXTAREA` (`.rm-block-input`) and `clipboardData.getData("text/plain")` starts with `{"type":"excalidraw/clipboard"`. It is also left untouched when the caret sits inside a code block: an odd number of ``` before the caret, or a block string starting with ```.
+   - Otherwise parse, then:
+     - text elements (`originalText`), in reading order (y, then x). One goes into the caret position through `document.execCommand("insertText")`. Several: the first inserted, and the rest created as following siblings in order;
+     - image elements with `customData.firebaseUrl` → `![](url)`;
+     - elements with a Roam `link` (`((uid))`, `[[Title]]`) and no text → the link;
+     - anything else → leave the event to Roam.
+   - Call `preventDefault` only when something was produced.
+
+## Shared names
+
+- **Settings** (unit K, `src/settings.js`):
+  - `print-size` (`"letter"` | `"a4"` | `"16:9"`, default `"letter"`) → `printSize`;
+  - `print-margin` (mm, default `"10"`, clamp 0-30) → `printMargin`;
+  - `laser-color` (default `"#e03131"`) → `laserColor`;
+  - `laser-decay` (ms, default `"1000"`, clamp 300-3000) → `laserDecay`.
+  - All four are listed in the Region settings dialog.
+- **`src/model/frames.js`** (new, A): `FRAME_PRESETS`, `presetFrame({preset, center, name, order})` → frame element (complete base fields, as `embeds.js` builds them), `nextSlideSlot(elements, preset)`, `layoutFrames({preset, layout, origin})`.
+- **Actions** (A, `src/actions.js`):
+  - `addFrame({preset})`, `reformatFrame({preset})`, `makeSlide()`, `addFrameLayout({preset, layout})`;
+  - `presentDrawing({drawingUid, from})` with `from` = `"start"` | `"here"` | a frameId;
+  - `presentOutline(blockUid)`;
+  - `notesForFrame(drawingUid, frameId)` → `{regionUid, children: [uid]} | null`;
+  - `addNotesForFrame(drawingUid, frameId)` → regionUid;
+  - `printFrames({size, margin, mode: "print" | "png"})`;
+  - `refreshEmbedLabels(app)`.
+- **`src/view/present.js`** (P): `open({slides: [{name, url, notes?}], index, laser: {color, decay}})`.
+- **`src/view/print.js`** (new, P): `buildPrintDocument({pages: [{url, name}], size, margin})` → HTML string (pure); `printPages({doc, html, print})`; `downloadPngs({doc, files: [{name, blob|url}]})`.
+- **`src/view/canvas-paste.js`** (new, E): `installCanvasPaste({doc, api, createSibling})` → dispose; pure `excalidrawClipboardToText(json)`.
+
+## Units and ownership (parallel; only targeted `node --test <files> < /dev/null`; never `npm run check` / `npm test` / build)
+
+| Unit | Owns | Items |
+|---|---|---|
+| A | `src/actions.js`, `src/host/roam.js`, `src/model/frames.js`, `src/model/slides.js`, `test/actions-p11.test.js`, `test/frames.test.js`, `test/slides.test.js`, `test/host-roam-p11.test.js` | EMB-6 refresh, AUTH-8 frames, PRES-2 index, PRES-4 outline, PRES-1 notes data, EXP-3 page capture |
+| P | `src/view/present.js`, `src/view/print.js`, their tests, CSS snippet `/tmp/wo/p11-css-present.css` | presenter start, progress, notes pane, laser/pen; print document, print, PNG download |
+| E | `src/view/canvas-paste.js`, `test/view-canvas-paste.test.js` | EXP-5 |
+| K | `src/view/toolbar.js`, `src/view/context-menus.js`, `src/settings.js`, `src/view/settings-dialog.js`, their tests, CSS snippet `/tmp/wo/p11-css-ui.css` | Frame flyout (presets, Reformat, Slide, 2x2, strip), canvas menu "Present from here" / "Add notes", block menu "Present this outline" and "Present from here" on region refs, settings |
+| I | `src/extension.js`, `src/extension.css` (merge snippets under `/* == p11:<unit> == */`), `test/extension.test.js`, `test/build.test.js`, `package.json` 0.11.0, `CHANGELOG.md`, `README.md` | wiring (command-list rows "Present from here", "Present this outline", "Print frames…", "PNG per frame", "Make slide"; embed label refresh on mount/watch; canvas paste install); runs last with `npm run check` |
+
+## Gate
+
+The roadmap-next P11 live gate, items 1-6, with Decision 5's verification route for item 2: pagination via Chrome `printToPDF` of the generated document, `print()` stubbed in Roam Desktop, and a real Roam Desktop print left as a user check. Plus:
+- typing +0 with the editor closed;
+- a paste of non-Excalidraw text into a block is untouched;
+- unload leaves no presenter, notes pane, overlay canvas, print iframe or paste listener.
 
 ## Amendments (critic, binding)
 
@@ -359,3 +463,7 @@ These amendments override the body wherever the two conflict. Code references po
 - The dock's blocks convert pasted elements.
 - After unload, `getEventListeners` paste counts on `window` and `document` are back to baseline.
 - Typing costs +0 ms with the editor closed, on the P10 bench.
+
+## Live amendments (acceptance, binding)
+
+- **R1.** The body above was restored after a truncating append (`open(p, "w").write(open(p).read() + …)` empties the file before reading it). The units built from the amendments; the build is aligned to the body: presets A4 794x1123 and Letter 816x1056 (portrait), 16:9 854x480, 4:3 800x600, 1:1 800x800, Mobile 390x844; laser decay default 1000 ms (clamp 300-3000); print margin clamp 0-30 mm.

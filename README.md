@@ -35,7 +35,7 @@ Regions live as children of one collapsed `{{[[plexus-regions]]}}` block, the la
 
 The command palette holds two Plexus entries:
 
-- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, audits, cache, settings).
+- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, present from here or an outline, print frames, PNG per frame, make slide, audits, cache, settings).
 - Plexus: Mind map (Alt+Shift+M).
 
 The list exists because each palette entry costs every keystroke you type in Roam: Roam's key handler walks all registered commands, about 0.055 ms each, so 23 entries added about 1.3 ms per key.
@@ -47,6 +47,13 @@ Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E
 - Outline dock: the toolbar "Outline" button, Alt+Shift+O, or "Toggle outline dock" in the command list docks the drawing block's children beside the full-screen canvas, so you can type bullets while drawing. "Outline dock: show parent" (command list) shows the parent block's children instead. The dock width is dragged from its left edge and remembered.
 - Drag a bullet from the dock onto the canvas to place it: no modifier embeds it, Alt links it, Shift places a plain label. Dragging the dock header places the page or block itself.
 - Cmd-click (Ctrl-click off macOS) a `[[page]]`, `#tag` or `((block))` written in canvas text to open it; add Shift for the sidebar. Text with several links offers a chooser.
+
+## Frames, slides and printing
+
+- Toolbar "Frames": add a frame (A4, Letter, 16:9, 4:3, 1:1, Mobile), reformat the selected frame, "Slide" (wrap the selection), or add a 2x2 grid or a strip of four.
+- Present from here (canvas menu, command list, region and frame refs) starts at a chosen frame. "Present this outline" turns a block's child refs into a deck. Press N for speaker notes ("Add notes" creates the notes block). The laser pointer and pen follow the laser color and fade settings.
+- "Print frames..." prints one page per frame; "PNG per frame" downloads one PNG per frame. Page size and margin are in the settings dialog. Real printing in Roam Desktop is worth a check on your machine.
+- Embed labels on the canvas follow the source block after a short delay. Pasting canvas elements into a Roam block pastes their text, one bullet per line.
 
 ## Development
 

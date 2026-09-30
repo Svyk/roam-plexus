@@ -23,7 +23,7 @@ export function parseEmbedRef(text) {
 // First 80 chars of plain text: strips {}, backticks and [[ ]] brackets.
 export function embedLabel(text, max = 80) {
   const plain = String(text ?? "").replace(/[{}`]/g, "").replace(/\[\[|\]\]/g, "").replace(/\s+/g, " ").trim();
-  return plain.slice(0, max);
+  return plain.slice(0, max).trimEnd();
 }
 
 // Merge a plexus payload into existing customData without dropping other keys (e.g. Roam's firebaseUrl).
@@ -36,7 +36,7 @@ export function mergePlexusData(customData, patch) {
 const rnd = () => Math.floor(Math.random() * 2 ** 31);
 const rid = (prefix) => `${prefix}${Math.random().toString(36).slice(2, 12)}`;
 
-function base(id, type, x, y, width, height) {
+export function baseElement(id, type, x, y, width, height) {
   return {
     id, type, x, y, width, height, angle: 0,
     strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid",
@@ -65,20 +65,32 @@ function wrapLines(text, perLine) {
   return lines;
 }
 
-export function makeEmbedAnchor({ ref, link = ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
-  const rectId = rid(idPrefix);
-  const textId = rid(idPrefix);
-  const text = embedLabel(label) || embedLabel(ref);
-  const fontSize = 16;
-  const lineHeight = 1.25;
+// Wrapped, centred label for an anchor box. x/y/width/height in the result are the bound text element's.
+// Shared by creation and refresh so the two cannot drift; long labels are cut to the lines that fit, ending in "...".
+export function layoutAnchorLabel({ label = "", x = 0, y = 0, width = 360, height = 200, fontSize = 16, lineHeight = 1.25 } = {}) {
+  const text = embedLabel(label);
   const perLine = Math.max(4, Math.floor((width - 16) / (fontSize * 0.6)));
-  const lines = wrapLines(text, perLine);
-  const wrapped = lines.join("\n");
+  let lines = wrapLines(text, perLine);
+  const maxLines = Math.max(1, Math.floor((height - 8) / (fontSize * lineHeight)));
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    const last = lines[maxLines - 1];
+    lines[maxLines - 1] = `${last.length >= perLine ? last.slice(0, Math.max(0, perLine - 1)) : last}\u2026`;
+  }
   const longest = Math.max(1, ...lines.map((l) => l.length));
   const tw = Math.min(width - 16, Math.max(10, Math.ceil(longest * fontSize * 0.6)));
   const th = Math.ceil(lines.length * fontSize * lineHeight);
+  return { text: lines.join("\n"), originalText: text, x: x + (width - tw) / 2, y: y + (height - th) / 2, width: tw, height: th };
+}
+
+export function makeEmbedAnchor({ ref, link = ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
+  const rectId = rid(idPrefix);
+  const textId = rid(idPrefix);
+  const fontSize = 16;
+  const lineHeight = 1.25;
+  const laid = layoutAnchorLabel({ label: embedLabel(label) || embedLabel(ref), x, y, width, height, fontSize, lineHeight });
   const rect = {
-    ...base(rectId, "rectangle", x, y, width, height),
+    ...baseElement(rectId, "rectangle", x, y, width, height),
     strokeStyle: "dashed",
     backgroundColor: "transparent",
     link,
@@ -86,8 +98,8 @@ export function makeEmbedAnchor({ ref, link = ref, label = "", x = 0, y = 0, wid
     customData: { plexus: { embed: ref } },
   };
   const t = {
-    ...base(textId, "text", x + (width - tw) / 2, y + (height - th) / 2, tw, th),
-    text: wrapped, originalText: text, fontSize, fontFamily: 1, textAlign: "center", verticalAlign: "middle",
+    ...baseElement(textId, "text", laid.x, laid.y, laid.width, laid.height),
+    text: laid.text, originalText: laid.originalText, fontSize, fontFamily: 1, textAlign: "center", verticalAlign: "middle",
     containerId: rectId, autoResize: true, lineHeight,
   };
   return [rect, t];

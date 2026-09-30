@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { installRoamMenus, installCanvasMenu } from "../src/view/context-menus.js";
+import { installRoamMenus, installCanvasMenu, plexusCanvasItems } from "../src/view/context-menus.js";
 
 const REGION = "{{[[plexus-region]]: k=area d=abc123XYZ ids=rect-a,text_a pad=10}} Region A";
 
@@ -48,13 +48,14 @@ test("every label is registered and removed on dispose", () => {
   const { api, dispose } = setup();
   assert.deepEqual([...api.commands.blockRefContextMenu.keys()], [
     "Plexus: Open region", "Plexus: Open region in sidebar", "Plexus: Show as image", "Plexus: Show as thumbnail",
-    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Refresh crop",
+    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Present from here", "Plexus: Refresh crop",
     "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG",
     "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Region settings…",
     "Plexus: Copy region link",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
-    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Mind map from outline", "Plexus: Open region",
+    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
+    "Plexus: Present from here", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
     "Plexus: Select on drawing", "Plexus: Update region from selection", "Plexus: Repair region", "Plexus: Copy region link",
@@ -387,4 +388,106 @@ test("Name region does nothing when the prompt is cancelled", async () => {
   api.commands.blockContextMenu.get("Plexus: Name region").callback({ "block-uid": "reg000001" });
   await tick();
   assert.deepEqual(calls, []);
+});
+
+const FRAME = "{{[[plexus-region]]: k=frame d=abc123XYZ fr=frame1 pad=0}} Slide 1";
+const CFRAME = "{{[[plexus-region]]: k=cframe d=abc123XYZ fr=frame2}} Slide 2";
+
+test("Present from here shows for frame and cframe regions only, on refs and blocks, and calls presentFromRegion", async () => {
+  const api = fakeApi({ fr0000001: FRAME, cf0000001: CFRAME, reg000001: REGION });
+  const calls = [];
+  installRoamMenus({
+    api, host: {}, actions: { presentFromRegion: (u) => { calls.push(["from", u]); }, regionCaptionCandidate: () => null },
+    regionref: { modeOf: () => "thumbnail" }, setRefOverride() {}, openSettings() {}, now: () => 0,
+  });
+  const ref = (u) => ({ "ref-uid": u, "block-uid": "blk000001" });
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Present from here", ref("fr0000001")), true);
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Present from here", ref("cf0000001")), true);
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Present from here", ref("reg000001")), false);
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Present from here", ref("missing01")), false);
+  assert.equal(show(api, "blockContextMenu", "Plexus: Present from here", { "block-uid": "fr0000001" }), true);
+  assert.equal(show(api, "blockContextMenu", "Plexus: Present from here", { "block-uid": "reg000001" }), false);
+  api.commands.blockRefContextMenu.get("Plexus: Present from here").callback(ref("fr0000001"));
+  api.commands.blockContextMenu.get("Plexus: Present from here").callback({ "block-uid": "cf0000001" });
+  await tick();
+  assert.deepEqual(calls, [["from", "fr0000001"], ["from", "cf0000001"]]);
+});
+
+test("Print frames, PNG per frame and Present this outline call their actions", async () => {
+  const api = fakeApi({ dr0000001: "{{[[excalidraw]]}} sketch", plain0001: "hello" });
+  const calls = [];
+  installRoamMenus({
+    api, host: {}, actions: { printFrames: (a) => { calls.push(["print", a]); }, presentOutline: (u) => { calls.push(["outline", u]); } },
+    regionref: {}, setRefOverride() {}, openSettings() {}, now: () => 0,
+  });
+  const pull = api.data.pull;
+  api.data.pull = (pat, ref) => (String(pat).includes(":block/children") ? { ":block/children": [{ ":block/string": "((abcdefghi))" }] } : pull(pat, ref));
+  const e = (u) => ({ "block-uid": u });
+  for (const label of ["Plexus: Print frames", "Plexus: PNG per frame"]) {
+    assert.equal(show(api, "blockContextMenu", label, e("dr0000001")), true, label);
+    assert.equal(show(api, "blockContextMenu", label, e("plain0001")), false, label);
+  }
+  api.commands.blockContextMenu.get("Plexus: Print frames").callback(e("dr0000001"));
+  api.commands.blockContextMenu.get("Plexus: PNG per frame").callback(e("dr0000001"));
+  api.commands.blockContextMenu.get("Plexus: Present this outline").callback(e("plain0001"));
+  await tick();
+  assert.deepEqual(calls, [
+    ["print", { drawingUid: "dr0000001", mode: "print" }],
+    ["print", { drawingUid: "dr0000001", mode: "png" }],
+    ["outline", "plain0001"],
+  ]);
+});
+
+test("Present this outline: shows for a ((ref)) or alias-link child, not for text; one memoized pull; throw is false", () => {
+  const api = fakeApi({});
+  installRoamMenus({ api, host: {}, actions: {}, regionref: {}, setRefOverride() {}, openSettings() {}, now: () => 0 });
+  let pulls = 0;
+  let kids = [{ ":block/string": "notes" }, { ":block/string": "  [slide](((abcdefghi)))  " }];
+  api.data.pull = () => { pulls++; return { ":block/children": kids }; };
+  const label = "Plexus: Present this outline";
+  assert.equal(show(api, "blockContextMenu", label, { "block-uid": "p00000001" }), true);
+  assert.equal(show(api, "blockContextMenu", label, { "block-uid": "p00000001" }), true);
+  assert.equal(pulls, 1);
+  kids = [{ ":block/string": "see ((abcdefghi)) here" }, { ":block/string": "[[Page]]" }, {}];
+  assert.equal(show(api, "blockContextMenu", label, { "block-uid": "p00000002" }), false);
+  kids = { ":block/string": "((abcdefghi))" };
+  assert.equal(show(api, "blockContextMenu", label, { "block-uid": "p00000003" }), true);
+  api.data.pull = () => { throw new Error("boom"); };
+  assert.equal(show(api, "blockContextMenu", label, { "block-uid": "p00000004" }), false);
+});
+
+test("canvas menu: Present from here needs frames and passes the scene point; Add notes needs a selected frame", async () => {
+  const calls = [];
+  let frames = true;
+  let selected = null;
+  const actions = {
+    hasFrames: () => frames, selectedFrameId: () => selected,
+    presentDrawing: (a) => { calls.push(["present", a]); },
+    addNotesForFrame: (a) => { calls.push(["notes", a]); },
+  };
+  const native = { selectedElementIds: () => [] };
+  const build = (extra = {}) => plexusCanvasItems({ app: {}, native, actions, openSettings() {}, drawingUid: "drw000001", mac: false, ...extra });
+  const item = (items, id) => items.find((i) => i.id === id);
+  let items = build({ point: { x: 3, y: 4 }, toScene: (p) => ({ x: p.x * 10, y: p.y * 10 }) });
+  assert.equal(item(items, "present-here").label, "Plexus: Present from here");
+  assert.equal(item(items, "present-here").enabled, true);
+  assert.equal(item(items, "add-notes").label, "Plexus: Add notes");
+  assert.equal(item(items, "add-notes").enabled, false);
+  item(items, "present-here").run();
+  selected = "frameA";
+  items = build();
+  assert.equal(item(items, "add-notes").enabled, true);
+  item(items, "add-notes").run();
+  item(items, "present-here").run();
+  frames = false;
+  assert.equal(item(build(), "present-here").enabled, false);
+  actions.selectedFrameId = () => { throw new Error("x"); };
+  assert.equal(item(build(), "add-notes").enabled, false);
+  await tick();
+  assert.deepEqual(calls, [
+    ["present", { from: "here", at: { x: 30, y: 40 } }],
+    ["notes", { drawingUid: "drw000001", frameId: "frameA" }],
+    ["present", { from: "here", at: undefined }],
+  ]);
+  assert.equal(items.filter((i) => i.id === "present").length, 1, "the plain Present entry stays");
 });

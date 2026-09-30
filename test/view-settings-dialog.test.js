@@ -151,7 +151,7 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
 test("show backlinks checkbox defaults on and saves a boolean", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  assert.equal(all.length, 16);
+  assert.equal(all.length, 20);
   const box = all[5];
   assert.equal(box.checked, true);
   box.checked = false; box.fire("change");
@@ -180,7 +180,7 @@ test("caption and pin fields show stored values, unknown values show the default
 test("P8 fields: zoom limit, animation, region landing read defaults and save changes", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  const [zoom, anim, landing] = all.slice(-6, -3);
+  const [zoom, anim, landing] = all.slice(10, 13);
   assert.deepEqual([zoom.value, anim.value, landing.checked], ["100", "system", false]);
   const labels = flat(dlg).filter((n) => n.tag === "span").map((n) => n.textContent);
   for (const l of ["Zoom limit", "Animation", "Open region links in the drawing"]) assert.ok(labels.includes(l), l);
@@ -190,6 +190,40 @@ test("P8 fields: zoom limit, animation, region landing read defaults and save ch
   await tick();
   assert.deepEqual(writes, [["zoom-cap", "150"], ["animation", "off"], ["region-landing", true]]);
   const bad = setup({ "zoom-cap": "999", animation: "zz" });
-  const [z2, a2] = inputs(bad.dlg).slice(-6, -3);
+  const [z2, a2] = inputs(bad.dlg).slice(10, 13);
   assert.deepEqual([z2.value, a2.value], ["100", "system"]);
+});
+
+test("P11 fields: print size select, margin number, laser color and decay read defaults, clamp and save", async () => {
+  const { dlg, writes } = setup();
+  const [size, margin, color, decay] = inputs(dlg).slice(-4);
+  assert.deepEqual([size.value, margin.value, color.value, decay.value], ["letter", "10", "#e03131", "1000"]);
+  assert.equal(color.type, "color");
+  assert.deepEqual(size.children.map((o) => [o.value, o.textContent]), [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]]);
+  const labels = flat(dlg).filter((n) => n.tag === "span").map((n) => n.textContent);
+  for (const l of ["Print page size", "Print margin (mm)", "Laser pointer color", "Laser fade (ms)"]) assert.ok(labels.includes(l), l);
+  size.value = "a4"; size.fire("change");
+  margin.value = "99"; margin.fire("change");
+  color.value = "#00AAFF"; color.fire("change");
+  decay.value = "10"; decay.fire("change");
+  assert.equal(margin.value, "30");
+  assert.equal(decay.value, "300");
+  await tick();
+  assert.deepEqual(writes, [["print-size", "a4"], ["print-margin", "30"], ["laser-color", "#00aaff"], ["laser-decay", "300"]]);
+});
+
+test("P11 color field: an invalid stored color shows the default and is not rewritten; empty input falls back, no drawing-name path", async () => {
+  const { dlg, writes } = setup({ "laser-color": "not-a-color", "print-size": "tabloid" });
+  const [size, , color] = inputs(dlg).slice(-4);
+  assert.equal(color.value, "#e03131");
+  assert.equal(size.value, "letter");
+  color.value = ""; color.fire("change");
+  await tick();
+  assert.deepEqual(writes, []);
+  assert.doesNotMatch(color.value, /Drawing/);
+  const upper = setup({ "laser-color": "#ABCDEF" });
+  assert.equal(inputs(upper.dlg).slice(-4)[2].value, "#abcdef");
+  upper.handle.close();
+  await tick();
+  assert.deepEqual(upper.writes, []);
 });

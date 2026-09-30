@@ -4,6 +4,18 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.11.0]
+
+- Frames and slides: a toolbar "Frames" flyout with six presets (A4, Letter, 16:9, 4:3, 1:1, Mobile), "Reformat selected frame", "Slide" (wrap the selection in a new frame) and 2x2 or strip layouts. Each action is one write. Frame order is kept in step with new frames.
+- Print and PNG: "Print frames..." and "PNG per frame" (command list, drawing block menu) render each frame to a page or a PNG. Settings: print page size (letter, a4, 16:9) and margin (0-40 mm).
+- Present from here: canvas menu, command list, and the region or frame ref and block menus start the presenter at a chosen frame. "Present this outline" builds a deck from a block's child refs (capped at 100). The presenter has a progress bar, a notes pane (N; "Add notes" is idempotent) and a laser and pen (settings: laser color and fade).
+- Embed labels refresh: an embed anchor's label follows its source block. The refresh is debounced, waits while you edit, and is written with `captureUpdate: "NEVER"` so it adds no undo step and Cmd+Z does not revert it. An undo or redo of an older step can bring back an old label; the next refresh corrects it. Only the first 150 embed anchors in a drawing are watched; the rest refresh when the drawing opens.
+- Paste from canvas: pasting Excalidraw elements into a Roam block inserts their text (first line in the block, the rest as sibling blocks, capped at 100 lines). Code blocks are left alone. Siblings are created through the Roam API, so Cmd+Z removes the pasted first line but the siblings survive it.
+- The command list gains "Present from here", "Present this outline", "Print frames...", "PNG per frame" and "Make slide". The command palette still holds exactly two entries.
+- Measured live: "Make slide" takes two undo steps (the first removes the name and order, the second the frame and the children's frame membership). Frames made by "Slide" keep Excalidraw's own id.
+- Unverified live: real Roam Desktop printing (iframe print, CSP on the inline style, multiple-download prompt), undo counts for "Make slide" and a preset, whether the wrap-in-frame action updates the scene synchronously, native 2x frame export size, the `rm-block-input` class used by paste, and gate 1 (label writes) and gate 2 (page size via `Page.printToPDF` with `preferCSSPageSize`).
+- Not implemented (measure first): the CSP fallback for the print style, the `body > .plexus-print` fallback, the zip fallback for PNG downloads.
+
 ## [0.10.0]
 
 - Outline dock (NAV-7): a toolbar "Outline" toggle, Alt+Shift+O, and command-list rows "Toggle outline dock" and "Outline dock: show parent". The dock lists the drawing block's direct children (or its parent's), each in its own Roam editor, beside the full-screen canvas, which is narrowed by the dock width. Width is dragged from the left edge and kept in the `dock-width` setting (240-640, not in the settings dialog). Open state is remembered like the regions layer: a new mount reopens it, the close button clears it. Esc leaves editing, keeps the canvas selection, and leaves no Roam block selection. A footer "+ Add a block" adds a child.

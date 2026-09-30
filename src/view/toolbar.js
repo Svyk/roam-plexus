@@ -9,7 +9,21 @@ export function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
+export const FRAME_PRESETS = Object.freeze([
+  Object.freeze({ id: "a4", label: "A4" }),
+  Object.freeze({ id: "letter", label: "Letter" }),
+  Object.freeze({ id: "16:9", label: "16:9" }),
+  Object.freeze({ id: "4:3", label: "4:3" }),
+  Object.freeze({ id: "1:1", label: "1:1" }),
+  Object.freeze({ id: "mobile", label: "Mobile" }),
+]);
+const DEFAULT_PRESET = "16:9";
+const presetLabel = (id) => (FRAME_PRESETS.find((p) => p.id === id) ?? FRAME_PRESETS[2]).label;
+const POPOVER_STOP = ["keydown", "keyup", "keypress", "pointerdown", "pointerup", "mousedown", "click", "wheel"];
+
+// Frame flyout callbacks (wired by unit I): onAddFrame(presetId), onReformatFrame(presetId), canReformat(), onMakeSlide(),
+// onLayout(kind, presetId) with kind "2x2" or "strip". Preset ids are FRAME_PRESETS ids.
+export function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeSlide, onLayout, doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onToggleDock, dockOpen, dockInset, onBack, canBack }) {
   const view = doc.defaultView;
   const mac = /mac|iphone|ipad/i.test(String(view?.navigator?.platform ?? ""));
   const withKey = (name, id) => {
@@ -21,6 +35,28 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
   let gated = [];
   let pressed = [];
   let refreshTimer = null;
+  let popover = null;
+  let popoverButton = null;
+  let lastPreset = DEFAULT_PRESET;
+  const inside = (root, t) => !!root && !!t && (root === t || !!root.contains?.(t));
+  const onDocPointerDown = (e) => {
+    if (inside(popover, e?.target) || inside(popoverButton, e?.target)) return;
+    closePopover();
+  };
+  const onDocKeyDown = (e) => {
+    if (e?.key !== "Escape") return;
+    e.preventDefault?.();
+    e.stopPropagation?.();
+    closePopover();
+  };
+  function closePopover() {
+    if (!popover) return;
+    doc.removeEventListener?.("pointerdown", onDocPointerDown, true);
+    doc.removeEventListener?.("keydown", onDocKeyDown, true);
+    popover.remove?.();
+    popover = null;
+    popoverButton?.setAttribute?.("aria-expanded", "false");
+  }
 
   const refresh = () => {
     refreshTimer = null;
@@ -70,7 +106,71 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
     return b;
   };
 
+  const openPopover = (anchor) => {
+    const row = (label, run, { disabled = false, title } = {}) => {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "plexus-toolbar-button plexus-frames-row";
+      b.textContent = label;
+      if (title) b.title = title;
+      b.disabled = disabled;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (b.disabled) return;
+        closePopover();
+        Promise.resolve()
+          .then(run)
+          .catch((error) => console.warn("[plexus] frame action failed", error));
+      });
+      return b;
+    };
+    const heading = (text) => {
+      const h = doc.createElement("div");
+      h.className = "plexus-frames-heading";
+      h.textContent = text;
+      return h;
+    };
+    const rows = [heading("Add frame")];
+    for (const p of FRAME_PRESETS) rows.push(row(p.label, () => { lastPreset = p.id; return onAddFrame?.(p.id); }));
+    if (onReformatFrame) {
+      let can = false;
+      try { can = !!canReformat?.(); } catch { can = false; }
+      rows.push(heading("Reformat selected frame"));
+      for (const p of FRAME_PRESETS) rows.push(row(p.label, () => { lastPreset = p.id; return onReformatFrame(p.id); }, { disabled: !can }));
+    }
+    if (onMakeSlide || onLayout) rows.push(heading("Slides"));
+    if (onMakeSlide) rows.push(row("Slide", () => onMakeSlide()));
+    if (onLayout) {
+      const name = presetLabel(lastPreset);
+      const preset = lastPreset;
+      rows.push(row(`2x2 \u00b7 ${name}`, () => onLayout("2x2", preset)));
+      rows.push(row(`Strip \u00b7 ${name}`, () => onLayout("strip", preset)));
+    }
+    const pop = doc.createElement("div");
+    pop.className = "plexus-portal plexus-frames-popover";
+    pop.setAttribute?.("role", "menu");
+    pop.style.zIndex = String((Number.parseInt(bar?.style?.zIndex, 10) || 1000) + 1);
+    for (const type of POPOVER_STOP) pop.addEventListener(type, (e) => e?.stopPropagation?.());
+    pop.addEventListener("mousedown", (e) => e?.preventDefault?.());
+    pop.append(...rows);
+    doc.body.append(pop);
+    popover = pop;
+    popoverButton = anchor;
+    anchor.setAttribute?.("aria-expanded", "true");
+    try {
+      const r = anchor.getBoundingClientRect();
+      const h = pop.getBoundingClientRect().height || 0;
+      const vw = view?.innerWidth ?? 0;
+      pop.style.left = `${Math.max(8, vw ? Math.min(r.left, vw - 220) : r.left)}px`;
+      pop.style.top = `${Math.max(8, r.top - h - 6)}px`;
+    } catch { /* placed by CSS */ }
+    doc.addEventListener?.("pointerdown", onDocPointerDown, true);
+    doc.addEventListener?.("keydown", onDocKeyDown, true);
+  };
+
   const hide = () => {
+    closePopover();
+    popoverButton = null;
     view?.removeEventListener("resize", place);
     if (refreshTimer != null) { clearTimeout(refreshTimer); refreshTimer = null; }
     outer?.removeEventListener?.("pointerup", scheduleRefresh, true);
@@ -94,6 +194,12 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       const presentButton = button("Present", onPresent, "present");
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
       const controls = [button("Region", onAreaRegion, "region"), button("Image region", onImageRegion, "image"), frameButton, cropButton];
+      if (onAddFrame) {
+        const framesButton = button("Frames \u25be", () => (popover ? closePopover() : openPopover(framesButton)));
+        framesButton.setAttribute?.("aria-haspopup", "menu");
+        framesButton.setAttribute?.("aria-expanded", "false");
+        controls.push(framesButton);
+      }
       controls.push(onEmbedPicker ? button("Embed\u2026", onEmbedPicker, "embed") : button("Embed block", onEmbed));
       if (onNote) controls.push(button("Note", onNote, "note"));
       if (onEditEmbed) {

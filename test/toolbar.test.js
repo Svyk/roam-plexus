@@ -235,3 +235,117 @@ test("place() caps the bar at the visible canvas width minus 24px, dock inset in
   assert.equal(bar.style.maxWidth, "0px");
   tb.hide();
 });
+
+function flyoutDoc() {
+  const mk = (tag) => {
+    const n = {
+      tag, style: {}, className: "", textContent: "", disabled: false, children: [], attrs: {}, handlers: {}, removed: false,
+      append(...c) { for (const x of c) { x.parentNode = this; this.children.push(x); } },
+      remove() { this.removed = true; if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); },
+      addEventListener(t, f) { (this.handlers[t] ||= []).push(f); },
+      removeEventListener() {},
+      setAttribute(k, v) { this.attrs[k] = v; },
+      contains(x) { for (let c = x; c; c = c.parentNode) if (c === this) return true; return false; },
+      getBoundingClientRect: () => ({ left: 100, top: 600, width: 80, height: 30 }),
+      fire(t, e = {}) { for (const f of this.handlers[t] || []) f({ stopPropagation() {}, preventDefault() {}, target: this, ...e }); },
+    };
+    return n;
+  };
+  const docListeners = {};
+  const body = mk("body");
+  const doc = {
+    defaultView: { getComputedStyle: () => ({ zIndex: "50" }), addEventListener() {}, removeEventListener() {}, innerWidth: 1200 },
+    body,
+    createElement: mk,
+    addEventListener(t, f, cap) { (docListeners[t] ||= []).push([f, cap]); },
+    removeEventListener(t, f) { docListeners[t] = (docListeners[t] || []).filter(([g]) => g !== f); },
+  };
+  const all = (n) => [n, ...n.children.flatMap(all)];
+  return { doc, body, docListeners, all: () => all(body) };
+}
+
+test("Frames flyout: presets, gated Reformat group, layouts with the last preset, and popover lifecycle", async () => {
+  const f = flyoutDoc();
+  const calls = [];
+  let canR = false;
+  const tb = createEditorToolbar({
+    doc: f.doc, onAreaRegion() {}, onImageRegion() {},
+    onAddFrame: (p) => calls.push(["add", p]), onReformatFrame: (p) => calls.push(["reformat", p]), canReformat: () => canR,
+    onMakeSlide: () => calls.push(["slide"]), onLayout: (k, p) => calls.push(["layout", k, p]),
+  });
+  tb.show(outerEl);
+  const btn = () => f.all().find((n) => n.tag === "button" && n.textContent === "Frames ▾");
+  const openIt = async () => { btn().fire("click"); await new Promise((r) => setTimeout(r, 5)); return f.all().find((n) => n.className.includes("plexus-frames-popover")); };
+  let pop = await openIt();
+  assert.ok(pop, "popover opens");
+  assert.equal(pop.style.zIndex, "52");
+  assert.equal(btn().attrs["aria-expanded"], "true");
+  const rows = () => pop.children.filter((n) => n.tag === "button");
+  assert.deepEqual(rows().map((r) => r.textContent), [
+    "A4", "Letter", "16:9", "4:3", "1:1", "Mobile", "A4", "Letter", "16:9", "4:3", "1:1", "Mobile", "Slide", "2x2 · 16:9", "Strip · 16:9",
+  ]);
+  assert.deepEqual(rows().slice(6, 12).map((r) => r.disabled), Array(6).fill(true));
+  // Disabled reformat rows do nothing and keep the popover open.
+  rows()[6].fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(calls, []);
+  assert.equal(pop.removed, false);
+  rows()[3].fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(calls, [["add", "4:3"]]);
+  assert.equal(pop.removed, true, "closes after an action");
+  assert.equal(btn().attrs["aria-expanded"], "false");
+  canR = true;
+  pop = await openIt();
+  assert.deepEqual(rows().slice(6, 12).map((r) => r.disabled), Array(6).fill(false));
+  assert.equal(rows()[13].textContent, "2x2 · 4:3");
+  rows()[13].fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  pop = await openIt();
+  rows()[10].fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  pop = await openIt();
+  assert.equal(rows()[14].textContent, "Strip · 1:1");
+  rows()[14].fire("click");
+  pop = await openIt();
+  rows()[12].fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(calls.slice(1), [["layout", "2x2", "4:3"], ["reformat", "1:1"], ["layout", "strip", "1:1"], ["slide"]]);
+  tb.hide();
+});
+
+test("Frames flyout closes on outside pointerdown, Esc and hide; inside pointerdown keeps it; listeners removed", async () => {
+  const f = flyoutDoc();
+  const tb = createEditorToolbar({ doc: f.doc, onAreaRegion() {}, onImageRegion() {}, onAddFrame() {} });
+  tb.show(outerEl);
+  const btn = () => f.all().find((n) => n.tag === "button" && n.textContent === "Frames ▾");
+  const open = async () => { btn().fire("click"); await new Promise((r) => setTimeout(r, 5)); return f.all().find((n) => n.className.includes("plexus-frames-popover")); };
+  const fireDoc = (t, e) => { for (const [fn] of [...(f.docListeners[t] || [])]) fn(e); };
+  let pop = await open();
+  fireDoc("pointerdown", { target: pop.children[0] });
+  assert.equal(pop.removed, false);
+  fireDoc("pointerdown", { target: f.body });
+  assert.equal(pop.removed, true);
+  assert.deepEqual([f.docListeners.pointerdown, f.docListeners.keydown].map((l) => l.length), [0, 0]);
+  pop = await open();
+  let prevented = false;
+  fireDoc("keydown", { key: "a" });
+  assert.equal(pop.removed, false);
+  fireDoc("keydown", { key: "Escape", preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(pop.removed, true);
+  assert.equal(prevented, true);
+  pop = await open();
+  btn().fire("click");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(pop.removed, true, "second click on the button toggles it closed");
+  pop = await open();
+  tb.hide();
+  assert.equal(pop.removed, true);
+  assert.deepEqual([f.docListeners.pointerdown, f.docListeners.keydown].map((l) => l.length), [0, 0]);
+});
+
+test("Frames button and Reformat group are absent without their callbacks", () => {
+  const f = flyoutDoc();
+  createEditorToolbar({ doc: f.doc, onAreaRegion() {}, onImageRegion() {} }).show(outerEl);
+  assert.equal(f.all().some((n) => n.textContent === "Frames ▾"), false);
+});
