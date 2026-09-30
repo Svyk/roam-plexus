@@ -1,11 +1,13 @@
 import { directGuard } from "./host/guard.js";
 import { drawingTitleOf, imageAltAt, isImageKind, regionLabel } from "./model/label.js";
+import { linksIn } from "./model/links.js";
+import { framesIn } from "./model/frames.js";
 import { createBuilder } from "./model/build.js";
 import { chartToElements } from "./model/ce.js";
 import { parseRegion } from "./model/region.js";
 import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport, viewportToScene } from "./model/scene.js";
 
-export const API_VERSION = 5;
+export const API_VERSION = 6;
 
 const GONE = "Scene is no longer open";
 const NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
@@ -291,7 +293,18 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
       try { emitter?.emit?.({ uid: result?.uid, kind: "drawing" }); } catch (error) { console.warn("[plexus] change emit failed", error); }
       return result;
     },
-    open(uid, { region, sidebar = false } = {}) {
+    open(uid, { region, frame, sidebar = false } = {}) {
+      const frameId = typeof frame === "string" ? frame.trim() : "";
+      if (frameId) {
+        return Promise.resolve(api.whenOpen(uid, { sidebar })).then((scene) => {
+          try {
+            scene?.zoomTo?.([frameId]);
+          } catch (error) {
+            console.warn("[plexus] frame zoom failed", error);
+          }
+          return scene;
+        });
+      }
       let isRegion = region;
       if (isRegion == null) isRegion = !!parseRegion(host.pullBlock?.(uid)?.string);
       return isRegion ? actions.openRegion(uid, { sidebar }) : host.openBlock(uid, { sidebar });
@@ -302,7 +315,7 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
       let src = { string: "", pageTitle: null };
       try { src = host.labelSource?.(uid) ?? src; } catch (error) { console.warn("[plexus] labelSource failed", error); }
       return entries.map(({ uid: regionUid, region }) => {
-        let label = "Region";
+        let label = "Drawing · region";
         try {
           label = regionLabel({
             kind: region.kind,
@@ -312,8 +325,27 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
             resolveBlock: (u) => host.pullBlock?.(u)?.string,
           });
         } catch (error) { console.warn("[plexus] region label failed", error); }
+        if (label == null || String(label).trim() === "Region") label = "Drawing · region";
         return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
       });
+    },
+    linksOf(uid) {
+      try {
+        const drawing = host.drawing(uid);
+        if (drawing == null) return [];
+        return linksIn(drawing.elements);
+      } catch {
+        return [];
+      }
+    },
+    framesOf(uid) {
+      try {
+        const drawing = host.drawing(uid);
+        if (drawing == null) return [];
+        return framesIn(drawing.elements);
+      } catch {
+        return [];
+      }
     },
     drawingsOn(pageUid) { return host.drawingsOn(pageUid); },
     scene(uid) { return scenes?.sceneOf?.(uid) ?? null; },

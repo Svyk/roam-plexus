@@ -90,7 +90,7 @@ export function regionLabel(input) {
   try {
     const { kind, caption, drawingTitle, imageAlt, resolveBlock } = input || {};
     const own = plainCaption(caption, resolveBlock);
-    if (own) return cut(own, MAX_LABEL);
+    if (own && own !== PLACEHOLDER_REGION) return cut(own, MAX_LABEL);
     const image = isImageKind(kind);
     if (image) {
       const alt = collapseSeparators(stripMarkup(imageAlt));
@@ -99,7 +99,7 @@ export function regionLabel(input) {
     const title = collapseSeparators(stripMarkup(drawingTitle)) || (image ? "Image" : "Drawing");
     return cut(`${title} · ${KIND_WORDS[kind] || "region"}`, MAX_LABEL);
   } catch {
-    return "Region";
+    return "Drawing · region";
   }
 }
 

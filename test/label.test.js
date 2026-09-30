@@ -70,11 +70,25 @@ test("cap at 80 characters on a word boundary", () => {
   assert.equal(noSpace.length, 80);
 });
 
-test("never throws; bad input gives Region", () => {
+test("plain caption Region is empty", () => {
+  assert.equal(regionLabel({ kind: "area", caption: "Region", drawingTitle: "Map" }), "Map · area");
+  assert.equal(regionLabel({ kind: "frame", caption: "Region" }), "Drawing · frame");
+  assert.equal(regionLabel({ kind: "imgrect", caption: "Region", imageAlt: "Rinse station", drawingTitle: "Photo" }), "Rinse station");
+  assert.equal(regionLabel({ kind: "imgpoly", caption: "Region", drawingTitle: "Photo" }), "Photo · image lasso");
+  assert.equal(regionLabel({ kind: "rect", caption: "**Region**", drawingTitle: "Map" }), "Map · crop");
+  assert.equal(regionLabel({ kind: "area", caption: " Region " }), "Drawing · area");
+  assert.equal(regionLabel({ kind: "weird", caption: "Region" }), "Drawing · region");
+  assert.equal(regionLabel({ kind: "area", caption: "Image region" }), "Image region");
+  assert.equal(regionLabel({ kind: "frame", caption: "Frame" }), "Frame");
+  assert.equal(regionLabel({ kind: "rect", caption: "Image crop" }), "Image crop");
+  assert.equal(regionLabel({ kind: "area", caption: "region" }), "region");
+});
+
+test("never throws; bad input gives Drawing · region", () => {
   assert.equal(regionLabel(), "Drawing · region");
   assert.equal(regionLabel(null), "Drawing · region");
   const hostile = { get caption() { throw new Error("x"); } };
-  assert.equal(regionLabel(hostile), "Region");
+  assert.equal(regionLabel(hostile), "Drawing · region");
   assert.equal(regionLabel({ kind: "area", caption: 5, drawingTitle: {} }).length > 0, true);
 });
 

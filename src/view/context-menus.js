@@ -29,7 +29,7 @@ const cond = (fn) => (e) => {
 
 const overrideMode = (o) => (typeof o === "string" ? o : o?.mode ?? null);
 
-export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, openSettings, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
+export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -215,12 +215,14 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf(e)));
   };
   cropItems("blockRefContextMenu", (e) => { const { ref, block } = refOf(e); return refInfo(`${ref}|${block}`, ref, block); }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
+  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => showInCompass(e["ref-uid"]));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
 
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
+  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));

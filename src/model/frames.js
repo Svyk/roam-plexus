@@ -21,6 +21,14 @@ const orderOf = (el) => {
   return typeof o === "number" && Number.isFinite(o) ? o : null;
 };
 
+export function framesIn(elements) {
+  return orderFrames(elements).map((el) => ({
+    elementId: el.id,
+    name: el.name ?? "",
+    order: orderOf(el),
+  }));
+}
+
 export const frameId = () => `plexus-frame-${Math.random().toString(36).slice(2, 12)}`;
 export const presetSize = (preset) => FRAME_PRESETS[preset] ?? null;
 

@@ -126,15 +126,17 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 
 ## 8. Compass integration contract
 
-`window.RoamPlexus` (frozen, `apiVersion: 5`; v2 to v4 callers are unaffected, since every change is additive):
+`window.RoamPlexus` (frozen, `apiVersion: 6`; v2 to v5 callers are unaffected, since every change is additive):
 
 | Member | Returns | Notes |
 |---|---|---|
 | `isAvailable()` | boolean | K-Plex probe idea |
 | `create({pageUid?, parentUid?, title?})` | `Promise<{uid, pageUid}>` | creates `{{[[excalidraw]]}}` block; with `title` creates page `Drawings/<title>` first |
-| `open(uid, {region?, sidebar?})` | Promise | sidebar via `rightSidebar.addWindow` (d.ts:343; Compass host.js:483) |
+| `open(uid, {region?, frame?, sidebar?})` | Promise | `region: true` means the uid is a region block. A non-empty string `frame` is an element id: `whenOpen` the drawing, then `scene.zoomTo` that one id, and return the scene. `frame` is not a region flag. Other calls keep the current region versus openBlock behavior. sidebar via `rightSidebar.addWindow` (d.ts:343; Compass host.js:483) |
 | `thumbnail(uid, {maxWidth, render=false})` | `Promise<Blob|null>` | cache only unless `render`; never loads the module when `render=false` |
-| `regionsOf(uid)` | `[{uid, kind, caption, label}]` | one pull, no watch. `label` (v3, additive) is a plain one-line name of at most 80 characters: the caption with markup stripped, else the image alt text (image kinds), else `<drawing title> · <kind word>`. `"Region"` if it cannot be computed. Callers should use it only when it is a non-empty string, so v2 entries still work |
+| `regionsOf(uid)` | `[{uid, kind, caption, label}]` | one pull, no watch. `label` (v3, additive) is a plain one-line name of at most 80 characters: the caption with markup stripped, else the image alt text (image kinds), else `<drawing title> · <kind word>`. It starts at `Drawing · region` and is never the bare word Region. If it cannot be computed, the label is `Drawing · region`. Callers should use it only when it is a non-empty string, so v2 entries still work |
+| `linksOf(uid)` | `[{elementId, kind, ref, text}]` | v6. `host.drawing(uid)`, then `linksIn` on its elements. A missing drawing or a throw returns `[]`. No editor and no `app-excalidraw.js` |
+| `framesOf(uid)` | `[{elementId, name, order}]` | v6. `host.drawing(uid)`, then `framesIn` on its elements. A missing drawing or a throw returns `[]`. Regions stay on `regionsOf`. No editor and no `app-excalidraw.js` |
 | `drawingsOn(pageUid)` | `[uid]` | `data.q` over blocks with `:block/props`, capped 50 |
 | `scene(uid).remove(ids, {force})` | | v4. Removals go through the write guard: one that would drop a drawing of more than 10 elements to a fifth or less throws `Not applied: would remove N of M` after offering "Apply anyway" in a toast. `force: true` bypasses the check |
 | `build({style?})` | builder | v5. A pure element builder with a style state (`strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `roughness`, `fontSize`, `fontFamily`). Creators return ids: `rect`, `ellipse`, `diamond`, `text`, `frame`, `line`, `box(text, opts)` (a container with bound text) and `arrow(a, b, {label})` (a real bound arrow; both ends' `boundElements` are updated). `layout(ids, "row" \| "column" \| "grid" \| "tree")` positions elements. `commit(uid?)` appends everything in one guarded write with one undo step and returns every created id in creation order, bound text and labels included. It never goes through paste (which re-ids elements) and never opens a drawing: it throws `Drawing is not open; call RoamPlexus.whenOpen(uid) first` when no editor is open or `uid` is not the open one, and `Already committed` on a second call. It takes a ring snapshot ("before Build") first |

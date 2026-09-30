@@ -1,10 +1,50 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FRAME_PRESETS, presetFrame, nextSlideSlot, layoutFrames, planOrders, applyOrderRewrite, reformatRect, childrenOutside, selectedFrameOf, frameAt, nearestFrame } from "../src/model/frames.js";
+import { FRAME_PRESETS, framesIn, presetFrame, nextSlideSlot, layoutFrames, planOrders, applyOrderRewrite, reformatRect, childrenOutside, selectedFrameOf, frameAt, nearestFrame } from "../src/model/frames.js";
 import { isId } from "../src/model/region.js";
 import { orderFrames } from "../src/model/slides.js";
 
 const fr = (id, x, y, order, extra = {}) => ({ id, type: "frame", x, y, width: 100, height: 50, angle: 0, isDeleted: false, version: 1, name: null, customData: order == null ? undefined : { plexus: { order } }, ...extra });
+
+test("framesIn follows orderFrames: 1 Intro, 2 Middle, 3 Details, 5 Frame A, 6 Slide, 10 End", () => {
+  const els = [
+    fr("end", 0, 40, 10, { name: "End" }),
+    fr("slide", 0, 50, 6, { name: "Slide" }),
+    { id: "region", type: "rectangle", name: "Region", x: 0, y: 0, customData: { plexus: { order: 0 } } },
+    { kind: "frame", frameId: "intro", caption: "Region" },
+    fr("intro", 0, 0, 1, { name: "Intro" }),
+    fr("frame-a", 0, 30, 5, { name: "Frame A" }),
+    fr("gone", 0, 0, 4, { name: "Gone", isDeleted: true }),
+    fr("details", 0, 20, 3, { name: "Details" }),
+    fr("middle", 0, 10, 2, { name: "Middle" }),
+  ];
+  assert.deepEqual(framesIn(els), [
+    { elementId: "intro", name: "Intro", order: 1 },
+    { elementId: "middle", name: "Middle", order: 2 },
+    { elementId: "details", name: "Details", order: 3 },
+    { elementId: "frame-a", name: "Frame A", order: 5 },
+    { elementId: "slide", name: "Slide", order: 6 },
+    { elementId: "end", name: "End", order: 10 },
+  ]);
+});
+
+test("framesIn: empty input is [], non-finite order stays null, empty name stays empty", () => {
+  assert.deepEqual(framesIn([]), []);
+  assert.deepEqual(framesIn(null), []);
+  assert.deepEqual(framesIn(undefined), []);
+  const blank = fr("blank", 0, 0, null, { name: "" });
+  const missing = fr("missing", 0, 1, 0);
+  const nan = fr("nan", 0, 2, Number.NaN, { name: "Nan" });
+  const inf = fr("inf", 0, 3, Number.POSITIVE_INFINITY, { name: "Inf" });
+  const text = fr("text", 0, 4, null, { name: "Text", customData: { plexus: { order: "6" } } });
+  assert.deepEqual(framesIn([text, inf, nan, blank, missing]), [
+    { elementId: "missing", name: "", order: 0 },
+    { elementId: "blank", name: "", order: null },
+    { elementId: "inf", name: "Inf", order: null },
+    { elementId: "nan", name: "Nan", order: null },
+    { elementId: "text", name: "Text", order: null },
+  ]);
+});
 
 test("six presets, complete frame elements with valid ids", () => {
   assert.equal(Object.keys(FRAME_PRESETS).length, 6);

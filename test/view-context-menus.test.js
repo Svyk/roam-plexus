@@ -50,11 +50,11 @@ test("every label is registered and removed on dispose", () => {
     "Plexus: Open region", "Plexus: Open region in sidebar", "Plexus: Show as image", "Plexus: Show as thumbnail",
     "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Present from here", "Plexus: Refresh crop",
     "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG",
-    "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Region settings…",
+    "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Show in Compass", "Plexus: Region settings…",
     "Plexus: Copy region link",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
-    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
+    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
     "Plexus: Present from here", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
@@ -64,6 +64,23 @@ test("every label is registered and removed on dispose", () => {
   dispose();
   assert.equal(api.commands.blockRefContextMenu.size, 0);
   assert.equal(api.commands.blockContextMenu.size, 0);
+});
+
+test("Show in Compass uses ref-uid on a block ref and block-uid on a drawing", () => {
+  const seen = [];
+  const api = fakeApi({ dra000001: "{{[[excalidraw]]}}", txt000001: "hi" });
+  installRoamMenus({
+    api, actions: {}, regionref: {}, setRefOverride() {}, openSettings() {},
+    showInCompass: (uid) => seen.push(uid),
+  });
+  const ref = { "ref-uid": "ref000001", "block-uid": "blk000001" };
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Show in Compass", ref), true);
+  assert.equal(show(api, "blockRefContextMenu", "Plexus: Show in Compass", { "block-uid": "blk000001" }), false);
+  api.commands.blockRefContextMenu.get("Plexus: Show in Compass").callback(ref);
+  assert.equal(show(api, "blockContextMenu", "Plexus: Show in Compass", { "block-uid": "dra000001" }), true);
+  assert.equal(show(api, "blockContextMenu", "Plexus: Show in Compass", { "block-uid": "txt000001" }), false);
+  api.commands.blockContextMenu.get("Plexus: Show in Compass").callback({ "block-uid": "dra000001" });
+  assert.deepEqual(seen, ["ref000001", "dra000001"]);
 });
 
 test("missing menus are skipped and dispose survives a throwing removeCommand", () => {

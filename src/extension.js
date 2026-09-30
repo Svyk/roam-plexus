@@ -117,6 +117,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
+    let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
@@ -132,6 +133,13 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       lifecycle.add(() => cold.dispose());
       const toaster = createToaster({ doc });
       lifecycle.add(() => toaster.dispose());
+      showInCompass = (uid) => {
+        const compass = globalThis.window?.RoamCompass;
+        let available = false;
+        try { available = compass?.isAvailable?.() === true; } catch (error) { console.warn("[plexus] compass unavailable", error); }
+        if (!available) return void toaster.show("Compass is not loaded");
+        compass.focus(uid);
+      };
       const emitter = createEmitter();
       lifecycle.add(() => emitter.clear());
       const toolbar = createEditorToolbar({
@@ -576,6 +584,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         getSettings,
         setRefOverride: (blockUid, refUid, patch) => setRefOverride(extensionAPI, blockUid, refUid, patch),
         openSettings,
+        showInCompass,
         openPrompt: openCaptionPrompt,
         isEncrypted: () => host.isEncrypted(),
         native,
@@ -885,6 +894,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },
+      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;

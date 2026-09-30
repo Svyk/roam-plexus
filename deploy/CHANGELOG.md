@@ -4,6 +4,14 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.14.0]
+
+- `apiVersion` is 6. `linksOf(uid)` and `framesOf(uid)` read `host.drawing(uid)` and return `[]` when the drawing is missing or the pull throws. They do not open an editor and do not load `app-excalidraw.js`.
+- `open(drawingUid, {frame: elementId})` opens the drawing, then zooms to that one element. A non-string `frame` is not a region flag; `open(uid, {region: true, sidebar})` is unchanged.
+- `regionsOf` starts its label at `Drawing · region`. The label is never the bare word Region.
+- Command list gains "Show in Compass", before Region settings. The block-ref menu uses `ref-uid`; the drawing block menu uses `block-uid`. It calls `RoamCompass.focus` when Compass `isAvailable()` is true, otherwise toasts "Compass is not loaded" and writes nothing. The palette stays "Plexus: Commands…" and "Plexus: Mind map".
+- Typing with Plexus 0.14.0 and Compass 0.5.0 loaded measured +0.142 ms/key (five interleaved rounds, 42 keys, 5 s settle, editor closed).
+
 ## [0.13.0]
 
 - Process flows (MM-12): a sixth mind-map layout, "Mind map layout: Flow" (command list, canvas menu). It is not in the Alt+L cycle, and Alt+L on a flow map toasts and writes nothing. The outline is the source of truth:

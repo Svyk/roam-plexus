@@ -1,4 +1,4 @@
-/* Plexus v0.13.0 | MIT | generated; edit src/ */
+/* Plexus v0.14.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -5052,7 +5052,7 @@ function regionLabel(input) {
   try {
     const { kind, caption, drawingTitle, imageAlt, resolveBlock } = input || {};
     const own = plainCaption(caption, resolveBlock);
-    if (own) return cut(own, MAX_LABEL);
+    if (own && own !== PLACEHOLDER_REGION) return cut(own, MAX_LABEL);
     const image = isImageKind(kind);
     if (image) {
       const alt = collapseSeparators(stripMarkup(imageAlt));
@@ -5061,7 +5061,7 @@ function regionLabel(input) {
     const title = collapseSeparators(stripMarkup(drawingTitle)) || (image ? "Image" : "Drawing");
     return cut(`${title} · ${KIND_WORDS[kind] || "region"}`, MAX_LABEL);
   } catch {
-    return "Region";
+    return "Drawing · region";
   }
 }
 function imageAltAt(blockString, index) {
@@ -6038,6 +6038,63 @@ function parseRoamLink(link, graphName) {
   }
   return null;
 }
+var LINK_UID_RE = /^[A-Za-z0-9_-]+$/;
+var MAX_LINKS = 200;
+var MAX_LINK_TEXT = 80;
+function cutLinkText(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return [...text].slice(0, MAX_LINK_TEXT).join("");
+}
+function boundText(el, elements) {
+  if (!el?.id || !Array.isArray(elements)) return "";
+  for (const child of elements) {
+    if (!child || child.isDeleted || child.type !== "text" || child.containerId !== el.id) continue;
+    const text = cutLinkText(child.originalText ?? child.text);
+    if (text) return text;
+  }
+  return "";
+}
+function mindRef(el) {
+  const mm2 = el?.customData?.plexus?.mm;
+  if (!mm2 || typeof mm2 !== "object") return null;
+  if (mm2.edge || mm2.boundary) return false;
+  const uid = mm2.uid;
+  if (typeof uid !== "string" || !LINK_UID_RE.test(uid)) return null;
+  return { kind: "mindmap", ref: `((${uid}))` };
+}
+function roamRef(value, kind) {
+  const parsed = parseRoamLink(value);
+  if (!parsed) return null;
+  if (parsed.type === "block" && parsed.uid) return { kind, ref: `((${parsed.uid}))` };
+  if (parsed.type === "page" && parsed.title) return { kind, ref: `[[${parsed.title}]]` };
+  return null;
+}
+function linksIn(elements) {
+  if (!Array.isArray(elements)) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const el of elements) {
+    if (!el || el.isDeleted) continue;
+    const mind = mindRef(el);
+    if (mind === false) continue;
+    const embed = roamRef(el?.customData?.plexus?.embed, "embed");
+    const hit = mind || embed || roamRef(el.link, "link");
+    if (!hit) continue;
+    const key = `${hit.kind}
+${hit.ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const own = cutLinkText(el.originalText ?? el.text);
+    out.push({
+      elementId: el.id,
+      kind: hit.kind,
+      ref: hit.ref,
+      text: own || boundText(el, elements)
+    });
+    if (out.length >= MAX_LINKS) break;
+  }
+  return out;
+}
 
 // src/host/links.js
 var MAX_MOVE_PX = 6;
@@ -6487,6 +6544,153 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
   };
 }
 
+// src/model/slides.js
+var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+var orderOf = (el) => {
+  const o = el?.customData?.plexus?.order;
+  return typeof o === "number" && Number.isFinite(o) ? o : null;
+};
+function orderFrames(elements) {
+  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
+  return frames.sort((a, b) => {
+    const oa = orderOf(a), ob = orderOf(b);
+    if (oa !== null && ob !== null) {
+      if (oa !== ob) return oa - ob;
+    } else if (oa !== null) return -1;
+    else if (ob !== null) return 1;
+    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+    if (n) return n;
+    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
+  });
+}
+
+// src/model/frames.js
+var FRAME_GAP = 40;
+var FRAME_PRESETS2 = Object.freeze({
+  "A4": Object.freeze({ width: 794, height: 1123 }),
+  "Letter": Object.freeze({ width: 816, height: 1056 }),
+  "16:9": Object.freeze({ width: 854, height: 480 }),
+  "4:3": Object.freeze({ width: 800, height: 600 }),
+  "1:1": Object.freeze({ width: 800, height: 800 }),
+  "Mobile": Object.freeze({ width: 390, height: 844 })
+});
+var DEFAULT_PRESET2 = "16:9";
+var LAYOUTS = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
+var rnd2 = () => Math.floor(Math.random() * 2 ** 31);
+var isFrameLike = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
+var orderOf2 = (el) => {
+  const o = el?.customData?.plexus?.order;
+  return typeof o === "number" && Number.isFinite(o) ? o : null;
+};
+function framesIn(elements) {
+  return orderFrames(elements).map((el) => ({
+    elementId: el.id,
+    name: el.name ?? "",
+    order: orderOf2(el)
+  }));
+}
+var frameId = () => `plexus-frame-${Math.random().toString(36).slice(2, 12)}`;
+var presetSize = (preset) => FRAME_PRESETS2[preset] ?? null;
+function presetFrame({ preset = DEFAULT_PRESET2, x = 0, y = 0, order = null, name = null, id = frameId() } = {}) {
+  const size = presetSize(preset);
+  if (!size) return null;
+  return {
+    ...baseElement(id, "frame", x, y, size.width, size.height),
+    name,
+    customData: { plexus: { order } }
+  };
+}
+function nextSlideSlot(elements, gap = FRAME_GAP) {
+  let best = null;
+  for (const f of liveElements(elements).filter(isFrameLike)) {
+    const right = (Number(f.x) || 0) + (Number(f.width) || 0);
+    if (!best || right > best.right) best = { right, y: Number(f.y) || 0 };
+  }
+  return best ? { x: best.right + gap, y: best.y } : null;
+}
+function layoutFrames({ kind = "grid", preset = DEFAULT_PRESET2, centre = { x: 0, y: 0 }, gap = FRAME_GAP } = {}) {
+  const size = presetSize(preset);
+  const shape = LAYOUTS[kind];
+  if (!size || !shape) return [];
+  const { cols, rows } = shape;
+  const totalW = cols * size.width + (cols - 1) * gap;
+  const totalH = rows * size.height + (rows - 1) * gap;
+  const x0 = centre.x - totalW / 2;
+  const y0 = centre.y - totalH / 2;
+  const out = [];
+  for (let i = 0; i < cols * rows; i++) {
+    out.push({ x: x0 + i % cols * (size.width + gap), y: y0 + Math.floor(i / cols) * (size.height + gap), width: size.width, height: size.height });
+  }
+  return out;
+}
+function bumped(el, patch) {
+  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd2(), updated: Date.now() };
+}
+function planOrders(elements, count) {
+  const frames = orderFrames(elements);
+  const rewrite2 = /* @__PURE__ */ new Map();
+  let next;
+  if (frames.some((f) => orderOf2(f) === null)) {
+    frames.forEach((f, i) => rewrite2.set(f.id, i + 1));
+    next = frames.length + 1;
+  } else {
+    next = frames.reduce((m, f) => Math.max(m, orderOf2(f)), 0) + 1;
+  }
+  return { rewrite: rewrite2, orders: Array.from({ length: count }, (_, i) => next + i) };
+}
+function withOrder(el, order) {
+  return bumped(el, { customData: mergePlexusData(el.customData, { order }) });
+}
+function applyOrderRewrite(elements, rewrite2) {
+  if (!rewrite2.size) return elements;
+  return elements.map((el) => el && rewrite2.has(el.id) && orderOf2(el) !== rewrite2.get(el.id) ? withOrder(el, rewrite2.get(el.id)) : el);
+}
+function reformatRect(frame, preset) {
+  const size = presetSize(preset);
+  if (!size) return null;
+  const cx = (Number(frame.x) || 0) + (Number(frame.width) || 0) / 2;
+  const cy = (Number(frame.y) || 0) + (Number(frame.height) || 0) / 2;
+  return { x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height };
+}
+var intersects = (b, r) => b[0] < r.x + r.width && b[2] > r.x && b[1] < r.y + r.height && b[3] > r.y;
+function childrenOutside(elements, frame, rect) {
+  return liveElements(elements).filter((el) => el.frameId === frame.id && !intersects(elementBounds(el), rect));
+}
+function selectedFrameOf(elements, ids) {
+  const live3 = new Map(liveElements(elements).map((el) => [el.id, el]));
+  const picked = (ids || []).map((id) => live3.get(id)).filter(Boolean);
+  if (!picked.length) return null;
+  const frames = picked.filter(isFrameLike);
+  if (frames.length === 1 && picked.length === 1) return frames[0].id;
+  if (frames.length === 1 && picked.every((el) => el === frames[0] || el.frameId === frames[0].id)) return frames[0].id;
+  if (frames.length) return null;
+  const owners = new Set(picked.map((el) => el.frameId ?? null));
+  if (owners.size !== 1) return null;
+  const owner = [...owners][0];
+  return owner && live3.get(owner) && isFrameLike(live3.get(owner)) ? owner : null;
+}
+function frameAt(frames, point) {
+  let best = null;
+  for (const f of frames) {
+    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
+    if (point.x < x || point.x > x + w || point.y < y || point.y > y + h) continue;
+    if (!best || w * h < best.area) best = { f, area: w * h };
+  }
+  return best?.f ?? null;
+}
+function nearestFrame(frames, point) {
+  let best = null;
+  for (const f of frames) {
+    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
+    const dx = Math.max(x - point.x, 0, point.x - (x + w));
+    const dy = Math.max(y - point.y, 0, point.y - (y + h));
+    const d = Math.hypot(dx, dy);
+    const area = w * h;
+    if (!best || d < best.d || d === best.d && area < best.area) best = { f, d, area };
+  }
+  return best?.f ?? null;
+}
+
 // src/model/arrowlabel.js
 function arrowLabelRect({ x, y, points }, w, h) {
   const p0 = points[0];
@@ -6862,7 +7066,7 @@ var MAX_DISPLAY = 280;
 var REF_MAX = 60;
 var ROOT_COLOR = "#ffec99";
 var BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
-var LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
+var LAYOUTS2 = Object.freeze(["right", "down", "left", "up", "radial"]);
 var CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
 var isCauseLayout = (layout) => layout === "cause" || layout === "fishbone";
 var EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
@@ -7980,7 +8184,7 @@ function chartToElements(input, { layout = "tree", origin = { x: 0, y: 0 }, meas
 }
 
 // src/api.js
-var API_VERSION = 5;
+var API_VERSION = 6;
 var GONE = "Scene is no longer open";
 var NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
 var FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
@@ -8296,7 +8500,18 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
       }
       return result;
     },
-    open(uid, { region, sidebar = false } = {}) {
+    open(uid, { region, frame, sidebar = false } = {}) {
+      const frameId2 = typeof frame === "string" ? frame.trim() : "";
+      if (frameId2) {
+        return Promise.resolve(api.whenOpen(uid, { sidebar })).then((scene) => {
+          try {
+            scene?.zoomTo?.([frameId2]);
+          } catch (error) {
+            console.warn("[plexus] frame zoom failed", error);
+          }
+          return scene;
+        });
+      }
       let isRegion = region;
       if (isRegion == null) isRegion = !!parseRegion(host.pullBlock?.(uid)?.string);
       return isRegion ? actions.openRegion(uid, { sidebar }) : host.openBlock(uid, { sidebar });
@@ -8313,7 +8528,7 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
         console.warn("[plexus] labelSource failed", error);
       }
       return entries.map(({ uid: regionUid, region }) => {
-        let label = "Region";
+        let label = "Drawing · region";
         try {
           label = regionLabel({
             kind: region.kind,
@@ -8325,8 +8540,27 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
         } catch (error) {
           console.warn("[plexus] region label failed", error);
         }
+        if (label == null || String(label).trim() === "Region") label = "Drawing · region";
         return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
       });
+    },
+    linksOf(uid) {
+      try {
+        const drawing = host.drawing(uid);
+        if (drawing == null) return [];
+        return linksIn(drawing.elements);
+      } catch {
+        return [];
+      }
+    },
+    framesOf(uid) {
+      try {
+        const drawing = host.drawing(uid);
+        if (drawing == null) return [];
+        return framesIn(drawing.elements);
+      } catch {
+        return [];
+      }
     },
     drawingsOn(pageUid) {
       return host.drawingsOn(pageUid);
@@ -8539,7 +8773,7 @@ var chipTextId = (root, uid, n) => `${chipId(root, uid, n)}-t`;
 var mergeId = (root, tailUid) => `pmm-${root}-${tailUid}-m`;
 var loopId = (root, refUid) => `pmm-${root}-${refUid}-l`;
 var CHIP_FILLS = Object.freeze({ ccp: "#ffc9c9", hazard: "#ffd8a8" });
-var rnd2 = () => Math.floor(Math.random() * 2147483646) + 1;
+var rnd3 = () => Math.floor(Math.random() * 2147483646) + 1;
 var mmOf = (el) => el && el.customData && el.customData.plexus && el.customData.plexus.mm || void 0;
 function withMM(customData, mm2) {
   const cd = customData && typeof customData === "object" ? customData : {};
@@ -8555,7 +8789,7 @@ function withoutMM(customData) {
   return Object.keys(cd).length ? cd : null;
 }
 function bump2(el, patch) {
-  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd2(), updated: Date.now() };
+  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd3(), updated: Date.now() };
 }
 function patchMarker(el, mmPatch) {
   const next = { ...mmOf(el) || {}, ...mmPatch };
@@ -8582,9 +8816,9 @@ function base(id, type, x, y, width, height, extra) {
     frameId: null,
     index: null,
     roundness: null,
-    seed: rnd2(),
+    seed: rnd3(),
     version: 1,
-    versionNonce: rnd2(),
+    versionNonce: rnd3(),
     isDeleted: false,
     boundElements: null,
     updated: Date.now(),
@@ -10428,7 +10662,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         toast(FLOW_LAYOUT_HINT);
         return null;
       }
-      const next = LAYOUTS[(LAYOUTS.indexOf(cur) + 1) % LAYOUTS.length];
+      const next = LAYOUTS2[(LAYOUTS2.indexOf(cur) + 1) % LAYOUTS2.length];
       commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: next }) : e), [sel.root]);
       toast(`Layout: ${next}`);
       return null;
@@ -10443,7 +10677,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function setLayout(layout) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout)) return false;
+      if (!rootEl || ![...LAYOUTS2, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout)) return false;
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout }) : e), [sel.root]);
       if (done2) toast(`Layout: ${layout} (${CHANGE_BACK})`);
       return done2;
@@ -11706,26 +11940,6 @@ function openChartDialog({ doc, zIndex = 1e5, onInsert = () => {
   return { el: root, close: close2, isOpen: () => !handle.done };
 }
 
-// src/model/slides.js
-var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-var orderOf = (el) => {
-  const o = el?.customData?.plexus?.order;
-  return typeof o === "number" && Number.isFinite(o) ? o : null;
-};
-function orderFrames(elements) {
-  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
-  return frames.sort((a, b) => {
-    const oa = orderOf(a), ob = orderOf(b);
-    if (oa !== null && ob !== null) {
-      if (oa !== ob) return oa - ob;
-    } else if (oa !== null) return -1;
-    else if (ob !== null) return 1;
-    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
-    if (n) return n;
-    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
-  });
-}
-
 // src/model/outline.js
 var isFrame = (el) => el.type === "frame" || el.type === "magicframe";
 var mmOf2 = (el) => el?.customData?.plexus?.mm;
@@ -11835,9 +12049,9 @@ function elementsToOutline(elements, { selection = null, today } = {}) {
   const frameIds = new Set(frames.map((f) => f.id));
   const frameName = new Map(frames.map((f, i) => [f.id, String(f.name ?? "").trim() || `Frame ${i + 1}`]));
   const byId = new Map(live3.map((el) => [el.id, el]));
-  const boundText = /* @__PURE__ */ new Map();
+  const boundText2 = /* @__PURE__ */ new Map();
   for (const el of live3) {
-    if (el.type === "text" && el.containerId && byId.has(el.containerId)) boundText.set(el.containerId, el);
+    if (el.type === "text" && el.containerId && byId.has(el.containerId)) boundText2.set(el.containerId, el);
   }
   const itemIdOf = (id) => {
     const el = byId.get(id);
@@ -11875,7 +12089,7 @@ function elementsToOutline(elements, { selection = null, today } = {}) {
       continue;
     }
     if (allowed && !allowed.has(el.id)) continue;
-    const textOf = (e) => boundText.get(e.id) ? boundText.get(e.id).originalText ?? boundText.get(e.id).text : e.type === "text" ? e.originalText ?? e.text : "";
+    const textOf = (e) => boundText2.get(e.id) ? boundText2.get(e.id).originalText ?? boundText2.get(e.id).text : e.type === "text" ? e.originalText ?? e.text : "";
     const string = itemString(el, textOf, today);
     if (string) items.push(makeItem(el, string));
   }
@@ -12320,126 +12534,6 @@ function createOutlineActions({
       closePreview();
     }
   };
-}
-
-// src/model/frames.js
-var FRAME_GAP = 40;
-var FRAME_PRESETS2 = Object.freeze({
-  "A4": Object.freeze({ width: 794, height: 1123 }),
-  "Letter": Object.freeze({ width: 816, height: 1056 }),
-  "16:9": Object.freeze({ width: 854, height: 480 }),
-  "4:3": Object.freeze({ width: 800, height: 600 }),
-  "1:1": Object.freeze({ width: 800, height: 800 }),
-  "Mobile": Object.freeze({ width: 390, height: 844 })
-});
-var DEFAULT_PRESET2 = "16:9";
-var LAYOUTS2 = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
-var rnd3 = () => Math.floor(Math.random() * 2 ** 31);
-var isFrameLike = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
-var orderOf2 = (el) => {
-  const o = el?.customData?.plexus?.order;
-  return typeof o === "number" && Number.isFinite(o) ? o : null;
-};
-var frameId = () => `plexus-frame-${Math.random().toString(36).slice(2, 12)}`;
-var presetSize = (preset) => FRAME_PRESETS2[preset] ?? null;
-function presetFrame({ preset = DEFAULT_PRESET2, x = 0, y = 0, order = null, name = null, id = frameId() } = {}) {
-  const size = presetSize(preset);
-  if (!size) return null;
-  return {
-    ...baseElement(id, "frame", x, y, size.width, size.height),
-    name,
-    customData: { plexus: { order } }
-  };
-}
-function nextSlideSlot(elements, gap = FRAME_GAP) {
-  let best = null;
-  for (const f of liveElements(elements).filter(isFrameLike)) {
-    const right = (Number(f.x) || 0) + (Number(f.width) || 0);
-    if (!best || right > best.right) best = { right, y: Number(f.y) || 0 };
-  }
-  return best ? { x: best.right + gap, y: best.y } : null;
-}
-function layoutFrames({ kind = "grid", preset = DEFAULT_PRESET2, centre = { x: 0, y: 0 }, gap = FRAME_GAP } = {}) {
-  const size = presetSize(preset);
-  const shape = LAYOUTS2[kind];
-  if (!size || !shape) return [];
-  const { cols, rows } = shape;
-  const totalW = cols * size.width + (cols - 1) * gap;
-  const totalH = rows * size.height + (rows - 1) * gap;
-  const x0 = centre.x - totalW / 2;
-  const y0 = centre.y - totalH / 2;
-  const out = [];
-  for (let i = 0; i < cols * rows; i++) {
-    out.push({ x: x0 + i % cols * (size.width + gap), y: y0 + Math.floor(i / cols) * (size.height + gap), width: size.width, height: size.height });
-  }
-  return out;
-}
-function bumped(el, patch) {
-  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd3(), updated: Date.now() };
-}
-function planOrders(elements, count) {
-  const frames = orderFrames(elements);
-  const rewrite2 = /* @__PURE__ */ new Map();
-  let next;
-  if (frames.some((f) => orderOf2(f) === null)) {
-    frames.forEach((f, i) => rewrite2.set(f.id, i + 1));
-    next = frames.length + 1;
-  } else {
-    next = frames.reduce((m, f) => Math.max(m, orderOf2(f)), 0) + 1;
-  }
-  return { rewrite: rewrite2, orders: Array.from({ length: count }, (_, i) => next + i) };
-}
-function withOrder(el, order) {
-  return bumped(el, { customData: mergePlexusData(el.customData, { order }) });
-}
-function applyOrderRewrite(elements, rewrite2) {
-  if (!rewrite2.size) return elements;
-  return elements.map((el) => el && rewrite2.has(el.id) && orderOf2(el) !== rewrite2.get(el.id) ? withOrder(el, rewrite2.get(el.id)) : el);
-}
-function reformatRect(frame, preset) {
-  const size = presetSize(preset);
-  if (!size) return null;
-  const cx = (Number(frame.x) || 0) + (Number(frame.width) || 0) / 2;
-  const cy = (Number(frame.y) || 0) + (Number(frame.height) || 0) / 2;
-  return { x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height };
-}
-var intersects = (b, r) => b[0] < r.x + r.width && b[2] > r.x && b[1] < r.y + r.height && b[3] > r.y;
-function childrenOutside(elements, frame, rect) {
-  return liveElements(elements).filter((el) => el.frameId === frame.id && !intersects(elementBounds(el), rect));
-}
-function selectedFrameOf(elements, ids) {
-  const live3 = new Map(liveElements(elements).map((el) => [el.id, el]));
-  const picked = (ids || []).map((id) => live3.get(id)).filter(Boolean);
-  if (!picked.length) return null;
-  const frames = picked.filter(isFrameLike);
-  if (frames.length === 1 && picked.length === 1) return frames[0].id;
-  if (frames.length === 1 && picked.every((el) => el === frames[0] || el.frameId === frames[0].id)) return frames[0].id;
-  if (frames.length) return null;
-  const owners = new Set(picked.map((el) => el.frameId ?? null));
-  if (owners.size !== 1) return null;
-  const owner = [...owners][0];
-  return owner && live3.get(owner) && isFrameLike(live3.get(owner)) ? owner : null;
-}
-function frameAt(frames, point) {
-  let best = null;
-  for (const f of frames) {
-    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
-    if (point.x < x || point.x > x + w || point.y < y || point.y > y + h) continue;
-    if (!best || w * h < best.area) best = { f, area: w * h };
-  }
-  return best?.f ?? null;
-}
-function nearestFrame(frames, point) {
-  let best = null;
-  for (const f of frames) {
-    const x = Number(f.x) || 0, y = Number(f.y) || 0, w = Number(f.width) || 0, h = Number(f.height) || 0;
-    const dx = Math.max(x - point.x, 0, point.x - (x + w));
-    const dy = Math.max(y - point.y, 0, point.y - (y + h));
-    const d = Math.hypot(dx, dy);
-    const area = w * h;
-    if (!best || d < best.d || d === best.d && area < best.area) best = { f, d, area };
-  }
-  return best?.f ?? null;
 }
 
 // src/model/templates.js
@@ -20495,7 +20589,7 @@ var cond = (fn) => (e) => {
   }
 };
 var overrideMode = (o) => typeof o === "string" ? o : o?.mode ?? null;
-function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, openSettings, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
+function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -20693,11 +20787,13 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     const { ref, block } = refOf(e);
     return refInfo(`${ref}|${block}`, ref, block);
   }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
+  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => showInCompass(e["ref-uid"]));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
+  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));
@@ -23992,6 +24088,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
+    let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
@@ -24007,6 +24104,17 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       lifecycle.add(() => cold.dispose());
       const toaster = createToaster({ doc });
       lifecycle.add(() => toaster.dispose());
+      showInCompass = (uid) => {
+        const compass = globalThis.window?.RoamCompass;
+        let available = false;
+        try {
+          available = compass?.isAvailable?.() === true;
+        } catch (error) {
+          console.warn("[plexus] compass unavailable", error);
+        }
+        if (!available) return void toaster.show("Compass is not loaded");
+        compass.focus(uid);
+      };
       const emitter = createEmitter();
       lifecycle.add(() => emitter.clear());
       const toolbar = createEditorToolbar({
@@ -24543,6 +24651,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         getSettings,
         setRefOverride: (blockUid, refUid, patch) => setRefOverride(extensionAPI, blockUid, refUid, patch),
         openSettings,
+        showInCompass,
         openPrompt: openCaptionPrompt,
         isEncrypted: () => host.isEncrypted(),
         native: native_exports,
@@ -24916,6 +25025,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },
+      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
     let commandListHandle = null;
