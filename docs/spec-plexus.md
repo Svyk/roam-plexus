@@ -232,6 +232,18 @@ Roam's `app-excalidraw.js` (7.7 MB) embeds `PKG_VERSION:"0.18.0"`. With the draw
 | `searchMatches` in appState | Not re-measured in P7 (earlier source: `roadmap-next.md`, search item) | Runtime feature check stays |
 | Flowchart keys | Not re-measured in P7 (earlier source: `phase4-contract.md:230-232`, live in Roam's build) | Same |
 
+#### Phase 7 gate 11: encrypted graph (svy, owner-approved read-only, 2026-09-29)
+
+| Check | Result |
+|---|---|
+| Cold thumbnail of a drawing (`RoamPlexus.thumbnail(uid, {maxWidth: 480, render: true})`) | PNG blob 480x268 in about 210 ms |
+| IndexedDB `plexus-cache` after thumbnails and open/close | 182 entries, all Readwisenotes; 0 svy entries (encrypted graphs stay memory-only) |
+| Region refs | none exist in svy yet; nothing to paint |
+| Open and close a migrated drawing, no edits, **Plexus unloaded** | `:edit/time`, `instance-id` and `state-json` change; 4 elements' `boundElements` normalized. Roam/Excalidraw re-save migrated drawings once on first open. |
+| Same with Plexus 0.7.0 loaded | No Plexus writes: the only state change at mount comes from Excalidraw's own `syncActionResult`. The one-time re-save above is the same. |
+| `RoamPlexus.open(uid)` on a drawing uid | Navigates to the block by design (regions open full screen); not an editor open |
+
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.

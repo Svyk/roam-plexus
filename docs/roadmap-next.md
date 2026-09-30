@@ -112,7 +112,7 @@ Backbone: the Fable judge's phasing. Where the Opus judge disagreed or flagged a
 
 **Standing gate (every phase, not repeated below):** Readwisenotes over trusted CDP; typing bench +0; unload leaves no nodes, listeners or watches; `npm run check`; published `extension.js` matches the local build (`cmp`); no production-graph writes without the owner's approval at that moment; view operations leave `:edit/time` unchanged (per DATA-5). A phase that changes Compass also builds, publishes and `cmp`s Compass, as the roadmap.md P2 precedent did ("both repos green and published"). Release paperwork (README, CHANGELOG, Depot listing, the KB session learning and the roadmap.md phase row) follows the loop in [`roadmap.md`](roadmap.md) steps 8-9, so there is one release checklist, not two.
 
-### P7: Quiet regions
+### P7: Quiet regions — done 2026-09-29, v0.7.0 (`8bb54f2`)
 
 **Goal.** Captions are honest (real text or nothing, never a placeholder), labels derive at render time, alias refs carry per-reference wording, whole images need no region, crops refresh when the editor closes, pins drop with an inline caption, and crops copy out as PNG. Plexus plus a small Compass release (Compass reads the derived label through `RoamPlexus.regionsOf()` when present and keeps "Region" otherwise; section 2, change 2).
 
