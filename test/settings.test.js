@@ -180,3 +180,13 @@ test("P11 settings ids exist and HOTKEYS is unchanged", async () => {
   assert.equal(api.store["laser-color"], "#e03131");
   assert.equal(api.store["print-size"], "letter");
 });
+
+test("mm-tag-colors parses into a lowercase Map and drops bad colours", async () => {
+  const { parseTagColors, readSettings } = await import("../src/settings.js");
+  const m = parseTagColors("Urgent=#FFC9C9, #done=#b2f, bad=red, =#fff, nocolour, x=#12345");
+  assert.deepEqual([...m], [["urgent", "#FFC9C9"], ["done", "#b2f"]]);
+  assert.equal(parseTagColors(undefined).size, 0);
+  const api = { settings: { get: (id) => (id === "mm-tag-colors" ? "a=#000" : undefined) } };
+  assert.equal(readSettings(api).mmTagColors.get("a"), "#000");
+  assert.equal(readSettings({ settings: { get: () => undefined } }).mmTagColors.size, 0);
+});

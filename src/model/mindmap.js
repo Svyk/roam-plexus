@@ -13,9 +13,25 @@ export const REF_MAX = 60;
 export const ROOT_COLOR = "#ffec99";
 export const BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
 export const LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
+export const CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
+export const isCauseLayout = (layout) => layout === "cause" || layout === "fishbone";
 
 const EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
 export const isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);
+
+// Better Tasks attribute blocks: never drawn (rendering only; the writer still moves and deletes them with their task).
+const HIDDEN_RE = /^\s*BT_attr[A-Za-z0-9_]*::/;
+export const isHiddenString = (s) => typeof s === "string" && HIDDEN_RE.test(s);
+
+const TASK_RE = /^\{\{\[\[(TODO|DONE)\]\]\}\} ?/;
+/** `{state: "TODO"|"DONE"|null, prefix, rest}`; the prefix is the macro plus at most one following space. */
+export function taskParts(s) {
+  if (typeof s !== "string") return { state: null, prefix: "", rest: "" };
+  const m = TASK_RE.exec(s);
+  if (!m) return { state: null, prefix: "", rest: s };
+  return { state: m[1], prefix: m[0], rest: s.slice(m[0].length) };
+}
+export const taskState = (s) => taskParts(s).state;
 
 export const fontSizeForDepth = (depth) => (depth === 0 ? 24 : depth === 1 ? 20 : 16);
 
@@ -41,6 +57,7 @@ export function treeFromPull(pull, opts = {}) {
     const string = pick(p, "string");
     const str = typeof string === "string" ? string : "";
     if (isExcludedString(str)) return null;
+    if (!isRoot && isHiddenString(str)) return null;
     if (!isRoot && prune && prune.has(uid)) return null;
     if (visible >= cap) { truncated = true; return null; }
     visible += 1;
@@ -190,10 +207,102 @@ function rewrite(s, resolveRef, depthLimit) {
 /** Block string -> display text. Pure; resolveRef(uid) returns the referenced block's string or null. */
 export function plainText(s, resolveRef) {
   if (typeof s !== "string" || s === "") return "·";
-  let t = rewrite(s, resolveRef, 1);
+  const tp = taskParts(s);
+  let t;
+  if (tp.state) {
+    const glyph = tp.state === "DONE" ? "☑" : "☐";
+    t = tp.rest === "" ? glyph : `${glyph} ${rewrite(tp.rest, resolveRef, 1)}`;
+  } else t = rewrite(s, resolveRef, 1);
   if (t.length > MAX_DISPLAY) t = `${t.slice(0, MAX_DISPLAY - 1)}…`;
   if (t === "") return "·";
   return t;
+}
+
+// ---- tags, editing, attribute carriers (Phase 12) ----
+
+const RE_TAG_SCAN = /#\[\[([^\]]+)\]\]|(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
+
+/** First `#tag`, `#[[tag]]` or task macro (tag todo / done) in text order that has a colour in `map` (lowercase keys). */
+export function tagColor(s, map) {
+  if (typeof s !== "string" || !map || typeof map.get !== "function" || map.size === 0) return undefined;
+  const tp = taskParts(s);
+  if (tp.state) {
+    const c = map.get(tp.state.toLowerCase());
+    if (c) return c;
+  }
+  const re = new RegExp(RE_TAG_SCAN.source, "gu");
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const name = (m[1] !== undefined ? m[1] : m[3]).toLowerCase();
+    const c = map.get(name);
+    if (c) return c;
+  }
+  return undefined;
+}
+
+/**
+ * New block string for a node whose bound text now shows `displayed`, or null when it cannot be written back
+ * (markup in the block, empty text, unchanged). Strips the fold suffix, a leading star and a task glyph; puts the
+ * task prefix back.
+ */
+export function editableText(node, displayed, { star = false } = {}) {
+  if (!node || typeof displayed !== "string") return null;
+  let text = displayed;
+  if (isFolded(node)) {
+    const suffix = ` (+${countHidden(node)})`;
+    if (!text.endsWith(suffix)) return null;
+    text = text.slice(0, -suffix.length);
+  }
+  if (star && text.startsWith("★ ")) text = text.slice(2);
+  const tp = taskParts(node.string);
+  if (tp.state) {
+    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
+    else if (text === "☐" || text === "☑") text = "";
+  }
+  if (hasMarkup(tp.rest)) return null;
+  if (text === "" || text === "·") return null;
+  const next = tp.prefix + text;
+  return next === node.string ? null : next;
+}
+
+const CARRIER_RE = /^([^:\n`{]{1,60})::$/;
+const carrierName = (s) => {
+  if (typeof s !== "string") return null;
+  const m = CARRIER_RE.exec(s.trim());
+  if (!m) return null;
+  const name = m[1].trim();
+  return name === "" || name.startsWith("BT_attr") ? null : name;
+};
+
+/**
+ * Attribute-edge transform (MM-7): a `Name::` child with drawable children and an open state is not drawn; its
+ * children are spliced into its parent's children at its position with `edgeLabel` and `via`. Pure; returns the
+ * input tree itself when off. Folded nodes keep their raw children.
+ */
+export function visualTree(tree, { attrEdges = false } = {}) {
+  if (!tree || !attrEdges) return tree;
+  function conv(node) {
+    if (node.open === false || node.children.length === 0) return node;
+    const out = [];
+    let changed = false;
+    for (const c of node.children) {
+      const name = c.open !== false && c.children.length > 0 ? carrierName(c.string) : null;
+      if (name !== null) {
+        changed = true;
+        const label = plainText(name);
+        for (const k of c.children) {
+          const kk = conv(k);
+          out.push({ ...kk, edgeLabel: label, via: c.uid });
+        }
+      } else {
+        const cc = conv(c);
+        if (cc !== c) changed = true;
+        out.push(cc);
+      }
+    }
+    return changed ? { ...node, children: out } : node;
+  }
+  return conv(tree);
 }
 
 // ---- wrapping and sizing ----
@@ -222,9 +331,9 @@ export function wrapLines(text, maxWidth, measure) {
 }
 
 /** measure(str, fontSize) -> width. Returns container and bound-text geometry. */
-export function nodeSize(text, fontSize, measure) {
+export function nodeSize(text, fontSize, measure, maxWidth = MAX_TEXT_WIDTH) {
   const m = (s) => measure(s, fontSize);
-  const lines = wrapLines(text, MAX_TEXT_WIDTH, m);
+  const lines = wrapLines(text, maxWidth, m);
   let tw = 0;
   for (const l of lines) tw = Math.max(tw, m(l));
   const textWidth = Math.max(1, Math.ceil(tw));
@@ -245,14 +354,16 @@ export function nodeSize(text, fontSize, measure) {
  * Pure O(n) layout. sizes: uid -> {width, height}; pinned: uid -> {x, y} (subtrees lay out relative to them);
  * root: top-left the root keeps. Returns uid -> {x, y} (top-left, scene coordinates) for visible nodes only.
  */
-export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 } }) {
+export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
   const pos = {};
   if (!tree) return pos;
   const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
   const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
   if (layout === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
+  if (layout === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
+  const dirL = layout === "cause" ? "left" : layout;
 
-  const horizontal = layout === "right" || layout === "left";
+  const horizontal = dirL === "right" || dirL === "left";
   const cross = (n) => (horizontal ? sz(n).height : sz(n).width);
   const ext = new Map();
   const free = (n) => visibleChildren(n).filter((k) => !isPinned(k));
@@ -275,12 +386,13 @@ export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = 
       const ks = sz(k);
       const e = ext.get(k).e;
       const c = cursor + (e - cross(k)) / 2;
+      const gap = gapOf(k.uid);
       let kx;
       let ky;
-      if (layout === "right") { kx = x + s.width + LEVEL_GAP; ky = c; }
-      else if (layout === "left") { kx = x - LEVEL_GAP - ks.width; ky = c; }
-      else if (layout === "down") { kx = c; ky = y + s.height + LEVEL_GAP; }
-      else { kx = c; ky = y - LEVEL_GAP - ks.height; }
+      if (dirL === "right") { kx = x + s.width + gap; ky = c; }
+      else if (dirL === "left") { kx = x - gap - ks.width; ky = c; }
+      else if (dirL === "down") { kx = c; ky = y + s.height + gap; }
+      else { kx = c; ky = y - gap - ks.height; }
       place(k, kx, ky);
       cursor += e + SIBLING_GAP;
     }
@@ -289,6 +401,73 @@ export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = 
   extent(tree);
   place(tree, root.x, root.y);
   return pos;
+}
+
+export const FISH_BONE_OFFSET = 50;
+export const FISH_SLOT_PAD = 60;
+export const FISH_RIB_GAP = 40;
+
+/**
+ * Fishbone (MM-11): the root is the head at `root`; the spine runs left from the middle of its left edge. Level-1
+ * causes alternate above (even) and below (odd); each subtree lays out as `left` and sits wholly on one side.
+ * Returns {positions, spine: {x1, x2, y} | null, slotX: uid -> spine x of that bone}.
+ */
+export function fishboneLayout({ tree, sizes, pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+  const positions = {};
+  const slotX = {};
+  if (!tree) return { positions, spine: null, slotX };
+  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
+  const rs = sz(tree.uid);
+  positions[tree.uid] = { x: root.x, y: root.y };
+  const spineY = root.y + rs.height / 2;
+  const kids = visibleChildren(tree);
+  if (kids.length === 0) return { positions, spine: null, slotX };
+  const isPinned = (k) => pinned[k.uid] && Number.isFinite(pinned[k.uid].x) && Number.isFinite(pinned[k.uid].y);
+  const free = kids.filter((k) => !isPinned(k));
+  const parts = free.map((k) => {
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: { x: 0, y: 0 } });
+    const abs = new Set();
+    const mark = (n, inside) => {
+      for (const c of visibleChildren(n)) {
+        const p = inside || isPinned(c);
+        if (p) abs.add(c.uid);
+        mark(c, p);
+      }
+    };
+    mark(k, false);
+    let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+    for (const uid of Object.keys(rel)) {
+      if (abs.has(uid)) continue;
+      const s = sz(uid);
+      minX = Math.min(minX, rel[uid].x); maxX = Math.max(maxX, rel[uid].x + s.width);
+      minY = Math.min(minY, rel[uid].y); maxY = Math.max(maxY, rel[uid].y + s.height);
+    }
+    return { k, rel, abs, minX, maxX, minY, maxY, width: maxX - minX };
+  });
+  let cursor = root.x;
+  for (let j = 0; j * 2 < parts.length; j++) {
+    const above = parts[2 * j];
+    const below = parts[2 * j + 1];
+    const maxw = Math.max(above.width, below ? below.width : 0);
+    const spineX = cursor - 20;
+    const right = spineX - FISH_RIB_GAP;
+    for (const part of [above, below]) {
+      if (!part) continue;
+      const dx = right - part.maxX;
+      const dy = part === above ? spineY - FISH_BONE_OFFSET - part.maxY : spineY + FISH_BONE_OFFSET - part.minY;
+      for (const uid of Object.keys(part.rel)) positions[uid] = part.abs.has(uid) ? { ...part.rel[uid] } : { x: part.rel[uid].x + dx, y: part.rel[uid].y + dy };
+      slotX[part.k.uid] = spineX;
+    }
+    cursor -= maxw + FISH_SLOT_PAD;
+  }
+  const x1 = free.length ? cursor : root.x - 80;
+  for (const k of kids) {
+    if (!isPinned(k)) continue;
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: pinned[k.uid] });
+    for (const uid of Object.keys(rel)) positions[uid] = rel[uid];
+    slotX[k.uid] = Math.min(root.x, Math.max(x1, pinned[k.uid].x + sz(k.uid).width));
+  }
+  return { positions, spine: { x1, x2: root.x, y: spineY }, slotX };
 }
 
 function radial(tree, sz, isPinned, pinned, rootPos, pos) {

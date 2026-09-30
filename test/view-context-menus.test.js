@@ -491,3 +491,36 @@ test("canvas menu: Present from here needs frames and passes the scene point; Ad
   ]);
   assert.equal(items.filter((i) => i.id === "present").length, 1, "the plain Present entry stays");
 });
+
+test("canvas menu: P12 items call the tools, and the mind-map items follow mapOptions", async () => {
+  const calls = [];
+  const tools = {
+    restore: () => calls.push("restore"),
+    chart: () => calls.push("chart"),
+    outline: (ctx) => calls.push(["outline", ctx]),
+    copyMarkdown: (ctx) => calls.push(["md", ctx]),
+  };
+  let opts = null;
+  const mindmap = {
+    mapOptions: () => opts,
+    setLayout: (app, layout) => calls.push(["layout", layout]),
+    setAttrEdges: (app, on) => calls.push(["attr", on]),
+  };
+  const native = { selectedElementIds: () => [] };
+  const build = (extra = {}) => plexusCanvasItems({ app: {}, native, actions: {}, openSettings() {}, drawingUid: "drw000001", mac: false, tools, mindmap, ...extra });
+  const item = (items, id) => items.find((i) => i.id === id);
+  let items = build();
+  for (const id of ["restore-version", "chart-json", "to-outline", "copy-markdown"]) assert.equal(item(items, id).enabled, true, id);
+  assert.equal(item(items, "mm-layout-cause").enabled, false);
+  assert.equal(item(items, "mm-attr-edges").enabled, false);
+  assert.equal(item(build({ tools: undefined }), "restore-version").enabled, false);
+  assert.equal(item(build({ drawingUid: undefined }), "chart-json").enabled, false);
+  opts = { root: "r", layout: "cause", attrEdges: false };
+  items = build();
+  assert.match(item(items, "mm-layout-cause").label, /\(current\)/);
+  assert.doesNotMatch(item(items, "mm-layout-right").label, /current/);
+  assert.equal(item(items, "mm-attr-edges").label, "Plexus: Attribute blocks as edges: off");
+  for (const id of ["restore-version", "chart-json", "to-outline", "copy-markdown", "mm-layout-fishbone", "mm-attr-edges"]) item(items, id).run();
+  await tick();
+  assert.deepEqual(calls, ["restore", "chart", ["outline", { focusedUid: "drw000001" }], ["md", { focusedUid: "drw000001" }], ["layout", "fishbone"], ["attr", true]]);
+});

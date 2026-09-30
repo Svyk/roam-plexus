@@ -1,4 +1,4 @@
-/* Plexus v0.11.0 | MIT | generated; edit src/ */
+/* Plexus v0.12.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -200,7 +200,8 @@ var SETTING_IDS = Object.freeze({
   printSize: "print-size",
   printMargin: "print-margin",
   laserColor: "laser-color",
-  laserDecay: "laser-decay"
+  laserDecay: "laser-decay",
+  mmTagColors: "mm-tag-colors"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -227,7 +228,8 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.printSize]: "letter",
   [SETTING_IDS.printMargin]: "10",
   [SETTING_IDS.laserColor]: "#e03131",
-  [SETTING_IDS.laserDecay]: "1000"
+  [SETTING_IDS.laserDecay]: "1000",
+  [SETTING_IDS.mmTagColors]: ""
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -305,6 +307,7 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.pasteRefs, name: "Paste refs as", description: "What pasting a single ((block)) or [[page]] ref onto the canvas does. text: Excalidraw's normal paste. embed: a live embed. link: a text node linked to the ref. Shift+Ctrl+V always pastes plain text.", action: wrap({ type: "select", items: ["text", "embed", "link"] }) },
       { id: SETTING_IDS.cardHome, name: "New note cards go", description: "Where the block behind a new note card is created. drawing: a collapsed container under the drawing. page: the last block of the drawing's page. daily: today's daily page.", action: { type: "select", items: ["drawing", "page", "daily"] } },
       { id: SETTING_IDS.drawingName, name: "New drawing page name", description: "Title of a page made by New drawing on a page, after Drawings/. Tokens: {date}, {page}, {n}.", action: { type: "input", placeholder: DEFAULT_DRAWING_NAME } },
+      { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } }
     ]
   };
@@ -317,6 +320,18 @@ var clampNumber = (value, fallback, min, max) => {
 var oneOf = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
 var drawingNameOf = (value) => typeof value === "string" && value.trim() ? value : DEFAULT_DRAWING_NAME;
 var laserColorOf = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : DEFAULT_LASER_COLOR;
+function parseTagColors(raw) {
+  const map = /* @__PURE__ */ new Map();
+  if (typeof raw !== "string") return map;
+  for (const part of raw.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const tag = part.slice(0, eq).trim().replace(/^#/, "").toLowerCase();
+    const colour = part.slice(eq + 1).trim();
+    if (tag && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colour)) map.set(tag, colour);
+  }
+  return map;
+}
 var overridesMemo = { raw: void 0, value: null };
 function memoOverrides(raw) {
   if (overridesMemo.value && overridesMemo.raw === raw) return overridesMemo.value;
@@ -354,7 +369,8 @@ function readSettings(extensionAPI) {
     printSize: oneOf(get(SETTING_IDS.printSize), PRINT_SIZES, "letter"),
     printMargin: clampNumber(get(SETTING_IDS.printMargin), 10, 0, 30),
     laserColor: laserColorOf(get(SETTING_IDS.laserColor)),
-    laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1e3, 300, 3e3)
+    laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1e3, 300, 3e3),
+    mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors))
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -492,8 +508,8 @@ function parseRegion(blockString) {
   const parsePad = () => {
     if (!args.has("pad")) return DEFAULT_PAD;
     const raw = args.get("pad");
-    const pad = /^\d+$/.test(raw) ? Number(raw) : NaN;
-    return pad >= 0 && pad <= 200 ? pad : null;
+    const pad2 = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    return pad2 >= 0 && pad2 <= 200 ? pad2 : null;
   };
   const parseIdToken = (key, field) => {
     if (!args.has(key)) return `missing ${key}`;
@@ -530,25 +546,25 @@ function parseRegion(blockString) {
     if (!args.has("ids")) return fail2("missing ids");
     const ids = args.get("ids").split(",");
     if (!ids.length || ids.some((id) => !ID_RE.test(id))) return fail2("bad ids");
-    const pad = parsePad();
-    if (pad === null) return fail2("bad pad");
+    const pad2 = parsePad();
+    if (pad2 === null) return fail2("bad pad");
     region.ids = ids;
-    region.pad = pad;
+    region.pad = pad2;
   } else if (kind === "rect") {
     err = parseIdToken("el", "el") || parseFrac();
   } else if (kind === "group") {
     err = parseIdToken("g", "groupId");
     if (!err) {
-      const pad = parsePad();
-      if (pad === null) err = "bad pad";
-      else region.pad = pad;
+      const pad2 = parsePad();
+      if (pad2 === null) err = "bad pad";
+      else region.pad = pad2;
     }
   } else if (kind === "frame") {
     err = parseIdToken("fr", "frameId");
     if (!err) {
-      const pad = parsePad();
-      if (pad === null) err = "bad pad";
-      else region.pad = pad;
+      const pad2 = parsePad();
+      if (pad2 === null) err = "bad pad";
+      else region.pad = pad2;
     }
   } else if (kind === "cframe") {
     err = parseIdToken("fr", "frameId");
@@ -577,9 +593,9 @@ function serializeRegion(region) {
   const tokens2 = [`k=${kind}`, `d=${drawingUid}`];
   if (kind === "area") {
     need(Array.isArray(region.ids) && region.ids.length > 0 && region.ids.every((id) => typeof id === "string" && ID_RE.test(id)), "bad ids");
-    const pad = region.pad ?? DEFAULT_PAD;
-    need(Number.isInteger(pad) && pad >= 0 && pad <= 200, "bad pad");
-    tokens2.push(`ids=${region.ids.join(",")}`, `pad=${pad}`);
+    const pad2 = region.pad ?? DEFAULT_PAD;
+    need(Number.isInteger(pad2) && pad2 >= 0 && pad2 <= 200, "bad pad");
+    tokens2.push(`ids=${region.ids.join(",")}`, `pad=${pad2}`);
   } else if (kind === "rect") {
     need(typeof region.el === "string" && ID_RE.test(region.el), "bad el");
     const f = normalizeFrac(region.f);
@@ -591,9 +607,9 @@ function serializeRegion(region) {
     need(typeof id === "string" && ID_RE.test(id), isGroup ? "bad groupId" : "bad frameId");
     tokens2.push(`${isGroup ? "g" : "fr"}=${id}`);
     if (kind !== "cframe") {
-      const pad = region.pad ?? DEFAULT_PAD;
-      need(Number.isInteger(pad) && pad >= 0 && pad <= 200, "bad pad");
-      tokens2.push(`pad=${pad}`);
+      const pad2 = region.pad ?? DEFAULT_PAD;
+      need(Number.isInteger(pad2) && pad2 >= 0 && pad2 <= 200, "bad pad");
+      tokens2.push(`pad=${pad2}`);
     }
   } else if (kind === "poly" || kind === "imgrect" || kind === "imgpoly") {
     if (kind === "poly") {
@@ -701,13 +717,13 @@ function clipPolyToUnit(flat) {
     [(q) => q[1], 1, false]
   ];
   for (const [get, lim, keepAbove] of edges) {
-    const inside = (q) => keepAbove ? get(q) >= lim : get(q) <= lim;
+    const inside2 = (q) => keepAbove ? get(q) >= lim : get(q) <= lim;
     const next = [];
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
-      const ia = inside(a);
-      const ib = inside(b);
+      const ia = inside2(a);
+      const ib = inside2(b);
       if (ia !== ib) {
         const t = (lim - get(a)) / (get(b) - get(a));
         next.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
@@ -791,10 +807,10 @@ var num = (n) => String(Math.round(n * 1e3) / 1e3);
 function clipSvgToPolygon(svgString, localPoints) {
   const pts = normalizePoly(localPoints);
   if (!pts) throw new TypeError("clipSvgToPolygon: bad polygon");
-  const open4 = /<svg\b[^>]*>/.exec(svgString);
+  const open5 = /<svg\b[^>]*>/.exec(svgString);
   const closeIdx = svgString.lastIndexOf("</svg>");
-  if (!open4 || closeIdx < open4.index + open4[0].length) throw new TypeError("clipSvgToPolygon: no <svg> root");
-  const tag = open4[0];
+  if (!open5 || closeIdx < open5.index + open5[0].length) throw new TypeError("clipSvgToPolygon: no <svg> root");
+  const tag = open5[0];
   const vb = /\sviewBox\s*=\s*["']\s*(-?[\d.eE+-]+)[\s,]+(-?[\d.eE+-]+)[\s,]+([\d.eE+-]+)[\s,]+([\d.eE+-]+)\s*["']/.exec(tag);
   let minX = 0, minY = 0, w, h;
   if (vb) [minX, minY, w, h] = vb.slice(1).map(Number);
@@ -807,8 +823,8 @@ function clipSvgToPolygon(svgString, localPoints) {
   for (let i = 0; i < pts.length; i += 2) coords.push(`${num(minX + pts[i] * w)},${num(minY + pts[i + 1] * h)}`);
   const attr = coords.join(" ");
   const id = `plexus-clip-${fnv1a(attr)}`;
-  const head = svgString.slice(0, open4.index + tag.length);
-  const body = svgString.slice(open4.index + tag.length, closeIdx);
+  const head = svgString.slice(0, open5.index + tag.length);
+  const body = svgString.slice(open5.index + tag.length, closeIdx);
   return `${head}<defs><clipPath id="${id}"><polygon points="${attr}"/></clipPath></defs><g clip-path="url(#${id})">${body}</g>${svgString.slice(closeIdx)}`;
 }
 function thumbnailSize({ width, height, maxWidth }) {
@@ -939,9 +955,9 @@ function elementBounds(el) {
   }
 }
 function commonBounds(elements) {
-  const live2 = liveElements(elements);
-  if (!live2.length) return null;
-  const all = live2.map(elementBounds);
+  const live3 = liveElements(elements);
+  if (!live3.length) return null;
+  const all = live3.map(elementBounds);
   return [
     Math.min(...all.map((b) => b[0])),
     Math.min(...all.map((b) => b[1])),
@@ -984,11 +1000,11 @@ function sceneToNatural(el, [sx, sy]) {
   ];
 }
 function regionSceneBBox(region, elements, appState, index) {
-  const live2 = index?.live ?? liveElements(elements);
-  const lookup = (id) => index?.byId ? index.byId.get(id) : live2.find((e) => e.id === id);
-  if (!region || !live2.length) return { error: "no-elements" };
+  const live3 = index?.live ?? liveElements(elements);
+  const lookup = (id) => index?.byId ? index.byId.get(id) : live3.find((e) => e.id === id);
+  if (!region || !live3.length) return { error: "no-elements" };
   if (region.kind === "area") {
-    const byId = index?.byId ?? new Map(live2.map((el) => [el.id, el]));
+    const byId = index?.byId ?? new Map(live3.map((el) => [el.id, el]));
     const found = [];
     const missing = [];
     for (const id of region.ids ?? []) {
@@ -997,8 +1013,8 @@ function regionSceneBBox(region, elements, appState, index) {
     }
     if (!found.length) return { error: "no-elements" };
     const b = commonBounds(found);
-    const pad = region.pad ?? 10;
-    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing };
+    const pad2 = region.pad ?? 10;
+    return { bbox: [b[0] - pad2, b[1] - pad2, b[2] + pad2, b[3] + pad2], missing };
   }
   if (region.kind === "rect" || region.kind === "poly") {
     const el = lookup(region.el);
@@ -1043,16 +1059,16 @@ function regionSceneBBox(region, elements, appState, index) {
     if (index) {
       if (!index.byGroup) {
         index.byGroup = /* @__PURE__ */ new Map();
-        for (const el of live2) for (const gid of Array.isArray(el.groupIds) ? el.groupIds : []) (index.byGroup.get(gid) ?? index.byGroup.set(gid, []).get(gid)).push(el);
+        for (const el of live3) for (const gid of Array.isArray(el.groupIds) ? el.groupIds : []) (index.byGroup.get(gid) ?? index.byGroup.set(gid, []).get(gid)).push(el);
       }
       members = index.byGroup.get(g) ?? [];
     } else {
-      members = live2.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+      members = live3.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
     }
     if (!members.length) return { error: "no-elements" };
     const b = commonBounds(members);
-    const pad = region.pad ?? 10;
-    return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing: [] };
+    const pad2 = region.pad ?? 10;
+    return { bbox: [b[0] - pad2, b[1] - pad2, b[2] + pad2, b[3] + pad2], missing: [] };
   }
   if (region.kind === "frame" || region.kind === "cframe") {
     const id = region.frameId ?? region.fr;
@@ -1060,10 +1076,10 @@ function regionSceneBBox(region, elements, appState, index) {
     if (!frame) return { error: "no-elements" };
     if (frame.type !== "frame" && frame.type !== "magicframe") return { error: "not-frame" };
     const b = elementBounds(frame);
-    const pad = region.kind === "cframe" ? 0 : region.pad ?? 10;
-    let top = b[1] - pad;
-    if (region.kind === "frame" && showsFrameLabel(appState)) top = b[1] - pad - FRAME_LABEL_HEIGHT;
-    return { bbox: [b[0] - pad, top, b[2] + pad, b[3] + pad], missing: [] };
+    const pad2 = region.kind === "cframe" ? 0 : region.pad ?? 10;
+    let top = b[1] - pad2;
+    if (region.kind === "frame" && showsFrameLabel(appState)) top = b[1] - pad2 - FRAME_LABEL_HEIGHT;
+    return { bbox: [b[0] - pad2, top, b[2] + pad2, b[3] + pad2], missing: [] };
   }
   return { error: "unsupported-kind" };
 }
@@ -1130,7 +1146,7 @@ function setAttr(tag, name, value) {
   if (re.test(tag)) return tag.replace(re, `$1"${value}"`);
   return tag.replace(/\s*(\/?)>$/, ` ${name}="${value}"$1>`);
 }
-function cropSvgToFraction(svgString, f, pad = VIEW_EXPORT_PADDING) {
+function cropSvgToFraction(svgString, f, pad2 = VIEW_EXPORT_PADDING) {
   const frac = normalizeFrac(f);
   if (!frac) throw new TypeError("cropSvgToFraction: bad fraction");
   const m = /<svg\b[^>]*>/.exec(svgString);
@@ -1143,11 +1159,11 @@ function cropSvgToFraction(svgString, f, pad = VIEW_EXPORT_PADDING) {
   const hAttr = /\sheight\s*=\s*["']([\d.]+)(?:px)?["']/.exec(tag);
   const sx = wAttr && vw > 0 ? Number(wAttr[1]) / vw : 1;
   const sy = hAttr && vh > 0 ? Number(hAttr[1]) / vh : 1;
-  const ew = vw - 2 * pad;
-  const eh = vh - 2 * pad;
+  const ew = vw - 2 * pad2;
+  const eh = vh - 2 * pad2;
   const [rx, ry, rw, rh] = frac;
-  const nx = minX + pad + rx * ew;
-  const ny = minY + pad + ry * eh;
+  const nx = minX + pad2 + rx * ew;
+  const ny = minY + pad2 + ry * eh;
   const nw = rw * ew;
   const nh = rh * eh;
   let next = setAttr(tag, "viewBox", `${fmt(nx)} ${fmt(ny)} ${fmt(nw)} ${fmt(nh)}`);
@@ -1487,12 +1503,12 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       return null;
     }
   }
-  async function createBlock({ parentUid, order = "last", string = "", uid, open: open4 } = {}) {
+  async function createBlock({ parentUid, order = "last", string = "", uid, open: open5 } = {}) {
     if (!parentUid) throw new Error("[plexus] createBlock needs parentUid");
     const id = uid || api.util.generateUID();
     await api.data.block.create({
       location: { "parent-uid": parentUid, order },
-      block: { uid: id, string, ...open4 === void 0 ? {} : { open: open4 } }
+      block: { uid: id, string, ...open5 === void 0 ? {} : { open: open5 } }
     });
     return id;
   }
@@ -1600,10 +1616,10 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       }
     };
     api.data.addPullWatch(EMBED_PATTERN, ident, handler);
-    let done = false;
+    let done2 = false;
     return () => {
-      if (done) return;
-      done = true;
+      if (done2) return;
+      done2 = true;
       try {
         api.data.removePullWatch(EMBED_PATTERN, ident, handler);
       } catch (error) {
@@ -1704,10 +1720,10 @@ var clipboardBusy = () => capturing > 0;
 function captureSelectionSvg(app, ids, opts = {}) {
   capturing += 1;
   const run = captureTail.then(() => captureOnce(app, ids, opts));
-  const done = () => {
+  const done2 = () => {
     capturing -= 1;
   };
-  run.then(done, done);
+  run.then(done2, done2);
   captureTail = run.catch(() => {
   });
   return run;
@@ -1718,10 +1734,10 @@ function captureSelectionPng(app, ids, opts = {}) {
     console.warn("[plexus] png capture failed", error);
     return null;
   }));
-  const done = () => {
+  const done2 = () => {
     capturing -= 1;
   };
-  run.then(done, done);
+  run.then(done2, done2);
   captureTail = run.catch(() => {
   });
   return run;
@@ -1991,10 +2007,10 @@ function subscribeViewport(app, cb) {
       console.warn("[plexus] could not subscribe to", name, error);
     }
   }
-  let done = false;
+  let done2 = false;
   return () => {
-    if (done) return;
-    done = true;
+    if (done2) return;
+    done2 = true;
     for (const off of offs) {
       try {
         off();
@@ -2037,9 +2053,9 @@ function png2xKey({ regionUid, geometryKey: geometryKey2, drawingHash, dark = fa
 function thumbKey({ uid, hash, maxWidth }) {
   return cropKey({ regionUid: uid, geometryKey: "thumb", drawingHash: `${hash}|${maxWidth}`, tier: "png" });
 }
-var reqPromise = (request) => new Promise((resolve, reject) => {
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
+var reqPromise = (request2) => new Promise((resolve, reject) => {
+  request2.onsuccess = () => resolve(request2.result);
+  request2.onerror = () => reject(request2.error);
 });
 var txPromise = (tx) => new Promise((resolve, reject) => {
   tx.oncomplete = () => resolve();
@@ -2079,18 +2095,18 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
     if (!dbPromise) {
       dbPromise = new Promise((resolve) => {
         try {
-          const request = idb.open(DB_NAME, 1);
-          request.onupgradeneeded = () => {
-            const db = request.result;
+          const request2 = idb.open(DB_NAME, 1);
+          request2.onupgradeneeded = () => {
+            const db = request2.result;
             const store = db.createObjectStore(STORE, { keyPath: "key" });
             store.createIndex("ts", "ts");
           };
-          request.onsuccess = () => {
-            resolve(request.result);
-            purgeStale(request.result).catch((error) => console.warn("[plexus] cache purge failed", error));
+          request2.onsuccess = () => {
+            resolve(request2.result);
+            purgeStale(request2.result).catch((error) => console.warn("[plexus] cache purge failed", error));
           };
-          request.onerror = () => {
-            console.warn("[plexus] cache db unavailable", request.error);
+          request2.onerror = () => {
+            console.warn("[plexus] cache db unavailable", request2.error);
             resolve(null);
           };
         } catch (error) {
@@ -2324,12 +2340,12 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
       let timer = null;
       let poll = null;
       let quiet = null;
-      let done = false;
+      let done2 = false;
       let seenImg = null;
       let seenSrc = null;
       const finish = (img, settled) => {
-        if (done) return;
-        done = true;
+        if (done2) return;
+        done2 = true;
         clearTimeout(timer);
         clearTimeout(quiet);
         clearInterval(poll);
@@ -2341,7 +2357,7 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
       cancel = () => finish(null, false);
       inflight.add(cancel);
       function check() {
-        if (done) return;
+        if (done2) return;
         const img = findImg(host);
         const src = img ? img.src : null;
         if (img !== seenImg || src !== seenSrc) {
@@ -2562,9 +2578,9 @@ function createEditorToolbar({ onAddFrame, onReformatFrame, canReformat, onMakeS
   let popover = null;
   let popoverButton = null;
   let lastPreset = DEFAULT_PRESET;
-  const inside = (root, t) => !!root && !!t && (root === t || !!root.contains?.(t));
+  const inside2 = (root, t) => !!root && !!t && (root === t || !!root.contains?.(t));
   const onDocPointerDown = (e) => {
-    if (inside(popover, e?.target) || inside(popoverButton, e?.target)) return;
+    if (inside2(popover, e?.target) || inside2(popoverButton, e?.target)) return;
     closePopover();
   };
   const onDocKeyDown = (e) => {
@@ -3153,7 +3169,7 @@ function createEmbedOverlay({
       console.warn("[plexus] unwatch failed", error);
     }
   }
-  const todayTitle = () => {
+  const todayTitle2 = () => {
     try {
       const t = api?.util?.dateToPageTitle?.(now());
       return typeof t === "string" && t ? t : null;
@@ -3181,7 +3197,7 @@ function createEmbedOverlay({
     let ref = portal.ref;
     let today = null;
     if (isToday) {
-      const title = todayTitle();
+      const title = todayTitle2();
       today = { title };
       ref = title ? `[[${title}]]` : null;
       if (portal.todayTitle !== title) releaseWatch(portal);
@@ -3214,7 +3230,7 @@ function createEmbedOverlay({
   };
   const recheckToday = () => {
     if (disposed) return;
-    const title = todayTitle();
+    const title = todayTitle2();
     for (const portal of portals.values()) {
       if (portal.dead || parseEmbedRef(portal.ref)?.kind !== "today") continue;
       if (portal.todayTitle !== title || portal.missing) void load(portal);
@@ -3225,19 +3241,19 @@ function createEmbedOverlay({
     armMidnight();
   };
   function armMidnight() {
-    const need2 = !disposed && hasToday();
-    if (!need2 && midnightTimer != null) {
+    const need3 = !disposed && hasToday();
+    if (!need3 && midnightTimer != null) {
       clearTimer(midnightTimer);
       midnightTimer = null;
     }
-    if (need2 && !visListening && typeof doc.addEventListener === "function") {
+    if (need3 && !visListening && typeof doc.addEventListener === "function") {
       doc.addEventListener("visibilitychange", onVisibility);
       visListening = true;
-    } else if (!need2 && visListening) {
+    } else if (!need3 && visListening) {
       doc.removeEventListener?.("visibilitychange", onVisibility);
       visListening = false;
     }
-    if (!need2 || midnightTimer != null) return;
+    if (!need3 || midnightTimer != null) return;
     const d = now();
     const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
     const delay = Math.max(1e3, Math.min(HOUR_MS, midnight - d.getTime()));
@@ -3291,9 +3307,9 @@ function createEmbedOverlay({
   };
   let lastNonce;
   const sync = () => {
-    const nonce3 = app.scene?.getSceneNonce?.();
-    if (!portals.size && nonce3 !== void 0 && nonce3 === lastNonce) return;
-    lastNonce = nonce3;
+    const nonce4 = app.scene?.getSceneNonce?.();
+    if (!portals.size && nonce4 !== void 0 && nonce4 === lastNonce) return;
+    lastNonce = nonce4;
     const anchors = embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []);
     const ids = new Set(anchors.map((el) => el.id));
     for (const id of [...portals.keys()]) if (!ids.has(id)) remove(id);
@@ -3386,12 +3402,12 @@ function createEmbedOverlay({
   const defaultQuiet = (el) => new Promise((resolve) => {
     const MO = view2?.MutationObserver ?? globalThis.MutationObserver;
     let frames = 0;
-    let done = false;
+    let done2 = false;
     let mo = null;
     let cap = null;
     const finish = () => {
-      if (done) return;
-      done = true;
+      if (done2) return;
+      done2 = true;
       try {
         mo?.disconnect();
       } catch {
@@ -3407,7 +3423,7 @@ function createEmbedOverlay({
       mo.observe(el, { childList: true, subtree: true, attributes: true, characterData: true });
     }
     const tick = () => {
-      if (done) return;
+      if (done2) return;
       frames += 1;
       if (frames >= 2) finish();
       else requestFrame(tick);
@@ -3660,13 +3676,13 @@ function createEmbedOverlay({
     }
   }
   async function runLeave(s, trigger) {
-    const { portal, inner } = s;
+    const { portal, inner: inner2 } = s;
     for (const off of s.globalOffs.splice(0)) off();
     for (const off of s.pointerOffs.splice(0)) off();
     portal.root.style.pointerEvents = "none";
     notify();
     const active = doc.activeElement;
-    if (active && within(active, inner)) {
+    if (active && within(active, inner2)) {
       try {
         active.blur?.();
       } catch (error) {
@@ -3683,11 +3699,11 @@ function createEmbedOverlay({
     }
     await sleep2(LEAVE_WAIT_MS);
     try {
-      api?.ui?.components?.unmountNode?.({ el: inner });
+      api?.ui?.components?.unmountNode?.({ el: inner2 });
     } catch (error) {
       console.warn("[plexus] unmount failed", error);
     }
-    inner.remove?.();
+    inner2.remove?.();
     if (typeof s.onLeave === "function") {
       try {
         Promise.resolve(s.onLeave({ trigger })).catch((error) => console.warn("[plexus] onLeave failed", error));
@@ -3718,10 +3734,10 @@ function createEmbedOverlay({
     }
     await clearMountSelection(s);
     if (keyboard && !disposed && s.prev) {
-      const live2 = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
+      const live3 = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((e) => !e.isDeleted).map((e) => e.id));
       const now2 = app.state || {};
       const untouched = !Object.keys(now2.selectedElementIds || {}).length && !Object.keys(now2.selectedGroupIds || {}).length;
-      if (untouched && Object.keys(s.prev.ids).every((id) => live2.has(id))) updateSelection(s.prev.ids, s.prev.groups);
+      if (untouched && Object.keys(s.prev.ids).every((id) => live3.has(id))) updateSelection(s.prev.ids, s.prev.groups);
     }
     notify();
   }
@@ -3858,12 +3874,12 @@ function createCanvasBacklinks({
     const container = el?.containerId ? byId.get(el.containerId) : null;
     return container?.customData?.plexus?.mm?.uid ?? null;
   }
-  function regionNodeUid(region, live2, byId) {
+  function regionNodeUid(region, live3, byId) {
     let members = [];
     if (region.kind === "area") members = (region.ids ?? []).map((id) => byId.get(id)).filter(Boolean);
     else if (region.kind === "group") {
       const g = region.groupId ?? region.g;
-      members = live2.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+      members = live3.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
     }
     if (!members.length) return null;
     const uids = new Set(members.map((el) => nodeUidOf(el, byId)));
@@ -3872,8 +3888,8 @@ function createCanvasBacklinks({
   function collectTargets() {
     const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
     const appState = app.state;
-    const live2 = liveElements(elements);
-    const byId = new Map(live2.map((el) => [el.id, el]));
+    const live3 = liveElements(elements);
+    const byId = new Map(live3.map((el) => [el.id, el]));
     const byAnchor = /* @__PURE__ */ new Map();
     const add = (anchor, uid, bbox) => {
       const prev = byAnchor.get(anchor);
@@ -3887,12 +3903,12 @@ function createCanvasBacklinks({
       if (!region || IMAGE_KINDS.has(region.kind)) continue;
       try {
         const out = regionSceneBBox({ ...region, pad: 0 }, elements, appState);
-        if (out?.bbox) add(regionNodeUid(region, live2, byId) ?? uid, uid, out.bbox);
+        if (out?.bbox) add(regionNodeUid(region, live3, byId) ?? uid, uid, out.bbox);
       } catch (error) {
         warn7("backlinks region bbox failed", error);
       }
     }
-    for (const el of live2) {
+    for (const el of live3) {
       const uid = el?.customData?.plexus?.mm?.uid;
       if (!uid) continue;
       try {
@@ -4003,7 +4019,7 @@ function createCanvasBacklinks({
     };
   }
   function render() {
-    const live2 = /* @__PURE__ */ new Map();
+    const live3 = /* @__PURE__ */ new Map();
     for (const g of groups()) {
       const refs = refsOf(g.uids);
       if (!refs.length) continue;
@@ -4022,11 +4038,11 @@ function createCanvasBacklinks({
         badge.el.textContent = String(refs.length);
         badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
       }
-      live2.set(key, badge);
+      live3.set(key, badge);
       if (changed && popover?.key === key) repaintPopover();
     }
     for (const [key, badge] of [...badges]) {
-      if (live2.has(key)) continue;
+      if (live3.has(key)) continue;
       badges.delete(key);
       if (popover?.key === key) closePopover();
       badge.detach();
@@ -4094,7 +4110,7 @@ function createCanvasBacklinks({
   function onKey(e) {
     if (e?.key === "Escape") closePopover();
   }
-  const inside = (target) => {
+  const inside2 = (target) => {
     for (let n = target; n; n = n.parentNode ?? n.parentElement) {
       if (n === popover?.el) return true;
       if (n?.classList?.contains?.("plexus-backlink-badge") || n?.className === "plexus-backlink-badge") return true;
@@ -4102,7 +4118,7 @@ function createCanvasBacklinks({
     return false;
   };
   const onOutside = (e) => {
-    if (!inside(e?.target)) closePopover();
+    if (!inside2(e?.target)) closePopover();
   };
   function openPopover(key) {
     closePopover();
@@ -4251,7 +4267,7 @@ var within2 = (node, root) => {
 };
 var hasText = (children) => (children || []).some((c) => String(c?.string ?? "").trim() || hasText(c?.children));
 function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTimer }) {
-  let current2 = null;
+  let current4 = null;
   const view2 = doc.defaultView;
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
@@ -4260,9 +4276,9 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
   const later = setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const unlater = clearTimer ?? ((id) => clearTimeout(id));
   const close2 = () => {
-    const state = current2;
+    const state = current4;
     if (!state) return;
-    current2 = null;
+    current4 = null;
     state.teardown();
     state.dialog.removeEventListener?.("keydown", state.onKey);
     state.dialog.removeEventListener?.("keyup", state.onKeyUp);
@@ -4283,7 +4299,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
     }
   };
   return {
-    isOpen: () => !!current2,
+    isOpen: () => !!current4,
     close: close2,
     dispose: close2,
     // slides: [{ name, url|null, notes?: { rootUid, onAdd? } }]. Returns a handle; setSlide fills a slide that was not ready yet.
@@ -4359,7 +4375,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
       let cssW = 0;
       let cssH = 0;
       const ctx = safe(() => canvas.getContext?.("2d")) ?? null;
-      const live2 = () => current2?.dialog === dialog;
+      const live3 = () => current4?.dialog === dialog;
       const unmountNotes = () => {
         for (const el of noteHosts) {
           try {
@@ -4385,7 +4401,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
         unmountNotes();
       };
       const notice = (text) => {
-        if (!live2()) return;
+        if (!live3()) return;
         status.textContent = String(text ?? "");
         status.hidden = !status.textContent;
         if (noticeTimer != null) unlater(noticeTimer);
@@ -4424,7 +4440,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
                 warn("add notes failed", error);
                 notice("Could not add notes");
               }
-              if (live2() && notesOpen && list[at] === slide) renderNotes();
+              if (live3() && notesOpen && list[at] === slide) renderNotes();
             });
             pane.append(add);
           }
@@ -4459,7 +4475,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
         const rootUid = slide.notes?.rootUid;
         if (rootUid && host?.watchEmbed) {
           watchOff = host.watchEmbed(rootUid, () => {
-            if (gen !== myGen || !live2() || list[at] !== slide) return;
+            if (gen !== myGen || !live3() || list[at] !== slide) return;
             paintNotes(slide);
           });
         }
@@ -4517,7 +4533,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
       };
       const tickFrame = () => {
         frame = null;
-        if (!live2()) return;
+        if (!live3()) return;
         const t = clock();
         while (trail.length && t - trail[0].t >= decay) trail.shift();
         draw(t);
@@ -4582,14 +4598,14 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
       canvas.addEventListener("pointerup", onPointerUp);
       canvas.addEventListener("pointercancel", onPointerUp);
       const onResize = () => {
-        if (live2()) sizeCanvas();
+        if (live3()) sizeCanvas();
       };
       view2?.addEventListener?.("resize", onResize);
-      const setNotes = (open4) => {
-        notesOpen = open4;
-        pane.hidden = !open4;
-        notesBtn.setAttribute("aria-pressed", String(open4));
-        if (open4) dialog.setAttribute("data-notes", "1");
+      const setNotes = (open5) => {
+        notesOpen = open5;
+        pane.hidden = !open5;
+        notesBtn.setAttribute("aria-pressed", String(open5));
+        if (open5) dialog.setAttribute("data-notes", "1");
         else dialog.removeAttribute("data-notes");
         sizeCanvas();
         renderNotes();
@@ -4672,26 +4688,26 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
         }
         view2?.removeEventListener?.("resize", onResize);
       };
-      current2 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
+      current4 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
       doc.body.append(dialog);
       show();
       dialog.showModal();
       sizeCanvas();
       dialog.focus?.();
-      const state = current2;
+      const state = current4;
       return {
         setSlide(i, patch) {
-          if (current2 !== state || !list[i]) return;
+          if (current4 !== state || !list[i]) return;
           Object.assign(list[i], patch);
           if (i === at || i === at + 1) show();
           if (i === at && patch && "notes" in patch) renderNotes();
         },
-        isOpen: () => current2 === state,
+        isOpen: () => current4 === state,
         close: () => {
-          if (current2 === state) close2();
+          if (current4 === state) close2();
         },
         notice: (text) => {
-          if (current2 === state) notice(text);
+          if (current4 === state) notice(text);
         }
       };
     }
@@ -5721,14 +5737,14 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       info.disposers.push(getPopover().hoverOn(anchor, hoverEntry));
       stopHover(anchor, info);
       const plain = (e) => (e.button ?? 0) === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
-      const capture = (open4) => (e) => {
+      const capture = (open5) => (e) => {
         try {
           const u = currentUid();
           if (!plain(e) || !u || !regionOf(u)) return;
           e.preventDefault();
           e.stopPropagation();
           info.uid = u;
-          if (open4) onOpen(u, { sidebar: !!getSettings().openInSidebar });
+          if (open5) onOpen(u, { sidebar: !!getSettings().openInSidebar });
         } catch (error) {
           console.warn("[plexus] alias open failed", error);
         }
@@ -5948,11 +5964,11 @@ function showSpotlight({ rect, doc, durationMs = 1400, motion = true }) {
   el.style.height = `${rect.height}px`;
   doc.body.append(el);
   const events = ["wheel", "pointerdown", "keydown"];
-  let done = false;
+  let done2 = false;
   let timer = null;
   const remove = () => {
-    if (done) return;
-    done = true;
+    if (done2) return;
+    done2 = true;
     if (timer != null) clearTimeout(timer);
     for (const type of events) doc.removeEventListener(type, remove, { capture: true });
     el.remove();
@@ -6263,6 +6279,8 @@ var directGuard = Object.freeze({
     return true;
   },
   restoreLast: () => 0,
+  restoreTo: () => 0,
+  list: () => [],
   hasSnapshot: () => false,
   dispose() {
   }
@@ -6281,20 +6299,21 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
   const dropPending = (token) => {
     if (!token || pending === token) pending = null;
   };
+  let nextId = 1;
   function push(drawingUid, entry) {
     const ring = rings.get(drawingUid) ?? [];
-    ring.push(entry);
+    ring.push({ ...entry, id: nextId++ });
     while (ring.length > ringSize) ring.shift();
     rings.delete(drawingUid);
     rings.set(drawingUid, ring);
     while (rings.size > maxDrawings) rings.delete(rings.keys().next().value);
   }
-  function deltaOf(current2, nextEls) {
+  function deltaOf(current4, nextEls) {
     const nextById = new Map(nextEls.map((e) => [e?.id, e]));
     const curIds = /* @__PURE__ */ new Set();
     const before = [];
     let removed = 0;
-    for (const el of current2) {
+    for (const el of current4) {
       if (!el) continue;
       curIds.add(el.id);
       if (el.isDeleted) continue;
@@ -6309,26 +6328,26 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
   function guardedWrite(app, opts = {}) {
     if (disposed || !app) return false;
     const { drawingUid, next, label = "Change", captureUpdate, appState, force = false } = opts;
-    const current2 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const nextEls = typeof next === "function" ? next(current2) : next;
+    const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const nextEls = typeof next === "function" ? next(current4) : next;
     if (!Array.isArray(nextEls)) return false;
-    const before = liveCount(current2);
+    const before = liveCount(current4);
     const after = liveCount(nextEls);
     if (!force && before > 10 && after * 5 <= before) {
-      refuse(app, opts, before - after, before, current2);
+      refuse2(app, opts, before - after, before, current4);
       return false;
     }
-    const delta = captureUpdate !== "NEVER" ? deltaOf(current2, nextEls) : null;
+    const delta = captureUpdate !== "NEVER" ? deltaOf(current4, nextEls) : null;
     app.updateScene({ elements: nextEls, ...appState ? { appState } : {}, ...captureUpdate !== void 0 ? { captureUpdate } : {} });
     if (delta && delta.removed > 0 && drawingUid) push(drawingUid, { drawingUid, time: now(), label, before: delta.before, added: delta.added });
     return true;
   }
-  function refuse(app, opts, n, m, current2) {
+  function refuse2(app, opts, n, m, current4) {
     const { drawingUid, next, label = "Change", captureUpdate, appState, onApplyAnyway } = opts;
     const key = `${drawingUid}|${label}|${n}|${m}`;
     if (pending && pending.key === key && now() < pending.until) return;
     const token = { key, until: now() + ACTION_MS };
-    const sig = signature(current2);
+    const sig = signature(current4);
     const run = () => {
       dropPending(token);
       if (disposed) return;
@@ -6354,30 +6373,48 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
     pending = token;
     toast(`Not applied: would remove ${n} of ${m}`, { kind: "error", action: { label: "Apply anyway", run }, onHide: () => dropPending(token) });
   }
-  function restoreLast(app, drawingUid) {
+  function list(drawingUid) {
+    const ring = rings.get(drawingUid) ?? [];
+    return ring.map((entry, i) => ({ id: entry.id, index: ring.length - 1 - i, label: entry.label, time: entry.time, count: entry.before.length })).reverse();
+  }
+  function restoreTo(app, drawingUid, index = 0) {
     if (disposed) return 0;
     if (!app || !isActive(app, drawingUid)) {
       toast("Drawing is no longer open");
       return 0;
     }
     const ring = rings.get(drawingUid);
-    const entry = ring?.[ring.length - 1];
-    if (!entry) {
+    let at = Number.isInteger(index) && index >= 0 ? index : 0;
+    if (index && typeof index === "object") {
+      const found = ring ? ring.findIndex((e) => e.id === index.id) : -1;
+      if (found === -1) {
+        toast("The list changed; reopen it");
+        return 0;
+      }
+      at = ring.length - 1 - found;
+    }
+    const entries = ring && ring.length > at ? ring.slice(ring.length - 1 - at).reverse() : [];
+    if (!entries.length) {
       toast("Nothing to restore");
       return 0;
     }
-    const current2 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const byId = new Map(current2.map((e) => [e?.id, e]));
-    const before = new Map(entry.before.map((e) => [e.id, e]));
-    const added = new Set(entry.added);
+    const before = /* @__PURE__ */ new Map();
+    const added = /* @__PURE__ */ new Set();
+    for (const entry of entries) {
+      for (const old of entry.before) before.set(old.id, old);
+      for (const id of entry.added) added.add(id);
+    }
+    for (const id of added) before.delete(id);
+    const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const byId = new Map(current4.map((e) => [e?.id, e]));
     const stamp = Date.now();
-    const elements = current2.map((el) => {
+    const elements = current4.map((el) => {
       const old = before.get(el?.id);
       if (old) return { ...old, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
       if (el && added.has(el.id) && !el.isDeleted) return { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
       return el;
     });
-    for (const old of entry.before) {
+    for (const old of before.values()) {
       if (!byId.has(old.id)) elements.push({ ...old, version: (old.version || 0) + 1, versionNonce: nonce(), updated: stamp });
     }
     try {
@@ -6388,20 +6425,23 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
       return 0;
     }
     const after = new Map((app.getSceneElementsIncludingDeleted?.() ?? []).map((e) => [e?.id, e]));
-    if (entry.before.some((old) => after.get(old.id)?.isDeleted !== false)) {
-      console.warn("[plexus] restore was not applied by the drawing", entry.before.length);
+    if ([...before.values()].some((old) => after.get(old.id)?.isDeleted !== false)) {
+      console.warn("[plexus] restore was not applied by the drawing", before.size);
       toast("Could not restore the drawing", { kind: "error" });
       return 0;
     }
-    ring.pop();
+    ring.splice(ring.length - 1 - at, at + 1);
     if (!ring.length) rings.delete(drawingUid);
-    const n = entry.before.length;
+    const n = before.size;
     toast(`Restored ${plural(n, "element")}; Undo reverses this`);
     return n;
   }
+  const restoreLast = (app, drawingUid) => restoreTo(app, drawingUid, 0);
   return {
     guardedWrite,
     restoreLast,
+    restoreTo,
+    list,
     hasSnapshot: (drawingUid) => (rings.get(drawingUid)?.length ?? 0) > 0,
     dispose() {
       disposed = true;
@@ -6411,390 +6451,14 @@ function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, i
   };
 }
 
-// src/api.js
-var API_VERSION = 4;
-var GONE = "Scene is no longer open";
-var FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
-var DRAWING_RE2 = /^\s*\{\{(\[\[excalidraw\]\]|excalidraw)\}\}/;
-var isPlain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
-var nonce2 = () => Math.floor(Math.random() * 2 ** 31);
-var bump = (el, extra = {}) => ({ ...el, ...extra, version: (el.version || 0) + 1, versionNonce: nonce2(), updated: Date.now() });
-function invisible(el) {
-  if (el.isDeleted) return true;
-  if (["line", "arrow", "draw", "freedraw"].includes(el.type)) return !Array.isArray(el.points) || el.points.length < 2;
-  if (el.type === "text") return !el.text;
-  return el.width === 0 && el.height === 0;
+// src/model/arrowlabel.js
+function arrowLabelRect({ x, y, points }, w, h) {
+  const p0 = points[0];
+  const p1 = points[points.length - 1];
+  return { x: x + (p0[0] + p1[0]) / 2 - w / 2, y: y + (p0[1] + p1[1]) / 2 - h / 2 };
 }
-function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard } = {}) {
-  let disposed = false;
-  const scenes = /* @__PURE__ */ new WeakMap();
-  const subs = /* @__PURE__ */ new Map();
-  const disposeHooks = /* @__PURE__ */ new Set();
-  const frame = typeof raf === "function" ? (fn) => raf(fn) : (fn) => setTimeout(fn, 16);
-  function build(app, uid) {
-    let released = false;
-    const live2 = () => !released && !disposed && native.activeEditor(doc)?.app === app && native.activeEditor(doc)?.drawingUid === uid;
-    const guard2 = () => {
-      if (!live2()) throw new Error(GONE);
-    };
-    const all = () => app.getSceneElementsIncludingDeleted?.() || [];
-    const write = (next, label, { force = false } = {}) => writeGuard.guardedWrite(app, { drawingUid: uid, next, label, captureUpdate: "IMMEDIATELY", force });
-    const scene = {
-      uid,
-      elements() {
-        guard2();
-        return structuredClone(liveElements(all()));
-      },
-      appState() {
-        guard2();
-        const s = app.state || {};
-        return { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom?.value ?? s.zoom, selectedElementIds: { ...s.selectedElementIds || {} }, theme: s.theme, width: s.width, height: s.height };
-      },
-      add(elements, { select = true, at = "keep" } = {}) {
-        guard2();
-        if (!Array.isArray(elements) || !elements.length) throw new Error("add needs a non-empty array");
-        if (elements.some((e) => e?.type === "image")) throw new Error("image elements are not supported");
-        const inputs = elements.map((e) => structuredClone(e));
-        const kept = [];
-        const copies = [];
-        inputs.forEach((el, i) => {
-          if (invisible(el)) return;
-          const cd = isPlain(el.customData) ? el.customData : {};
-          copies.push({ ...el, customData: { ...cd, plexus: { ...isPlain(cd.plexus) ? cd.plexus : {}, addKey: i } } });
-          kept.push(i);
-        });
-        const ids = inputs.map(() => null);
-        if (!copies.length) return ids;
-        const prevSel = { ...app.state?.selectedElementIds || {} };
-        const prevGroups = { ...app.state?.selectedGroupIds || {} };
-        let position = "center";
-        if (at === "keep") {
-          const bounds = commonBounds(copies);
-          if (bounds) {
-            const [x1, y1, x2, y2] = bounds;
-            const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
-            position = { clientX: p.x, clientY: p.y };
-          }
-        }
-        native.addViaPaste(app, copies, { position });
-        const byKey = /* @__PURE__ */ new Map();
-        for (const el of all()) {
-          const k = el.customData?.plexus?.addKey;
-          if (!el.isDeleted && Number.isInteger(k) && kept.includes(k) && !byKey.has(k)) byKey.set(k, el.id);
-        }
-        const keyOf = new Map([...byKey].map(([k, id]) => [id, k]));
-        const next = all().map((el) => {
-          const k = keyOf.get(el.id);
-          if (k === void 0) return el;
-          const orig = elements[k];
-          const out = { ...el };
-          if (orig.customData === void 0) delete out.customData;
-          else out.customData = structuredClone(orig.customData);
-          if (orig.frameId == null) out.frameId = null;
-          return bump(out);
-        });
-        let selection = prevSel;
-        let groups = prevGroups;
-        if (select) {
-          selection = {};
-          groups = {};
-          for (const el of next) if (keyOf.has(el.id) && !el.containerId) selection[el.id] = true;
-        }
-        writeGuard.guardedWrite(app, { drawingUid: uid, next, label: "Add", appState: { selectedElementIds: selection, selectedGroupIds: groups } });
-        for (const [k, id] of byKey) ids[k] = id;
-        return ids;
-      },
-      update(id, patch) {
-        guard2();
-        if (!isPlain(patch)) throw new Error("patch must be an object");
-        for (const key of FORBIDDEN_PATCH_KEYS) if (key in patch) throw new Error(`Cannot patch ${key}`);
-        const el = all().find((e) => e.id === id);
-        if (!el) throw new Error(`No element ${id}`);
-        const extra = { ...patch };
-        if (patch.customData !== void 0) {
-          const merged = { ...el.customData || {}, ...patch.customData };
-          if (isPlain(patch.customData.plexus) && isPlain(el.customData?.plexus)) merged.plexus = { ...el.customData.plexus, ...patch.customData.plexus };
-          extra.customData = merged;
-        }
-        if (typeof patch.text === "string" && patch.originalText === void 0) extra.originalText = patch.text;
-        const updated = bump(el, extra);
-        if (!write(all().map((e) => e.id === id ? updated : e), "Update")) throw new Error("Not applied: update was refused");
-        return structuredClone(updated);
-      },
-      remove(ids, { force = false } = {}) {
-        guard2();
-        const set = new Set(Array.isArray(ids) ? ids : [ids]);
-        const els = all();
-        const hit = new Set(els.filter((e) => set.has(e.id)).map((e) => e.id));
-        const doomed = /* @__PURE__ */ new Set([...hit, ...els.filter((e) => e.containerId && hit.has(e.containerId)).map((e) => e.id)]);
-        if (!doomed.size) return 0;
-        const n = els.filter((e) => doomed.has(e.id) && !e.isDeleted).length;
-        const applied = write(els.map((e) => doomed.has(e.id) && !e.isDeleted ? bump(e, { isDeleted: true }) : e), "Remove", { force: force === true });
-        if (!applied) throw new Error(`Not applied: would remove ${n} of ${els.filter((e) => !e.isDeleted).length}`);
-        return hit.size;
-      },
-      select(ids) {
-        guard2();
-        const selection = {};
-        for (const id of ids || []) selection[id] = true;
-        app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {} } });
-      },
-      zoomTo(ids) {
-        guard2();
-        const set = new Set(ids || []);
-        const els = liveElements(all()).filter((e) => set.has(e.id));
-        if (!els.length) throw new Error("No elements to zoom to");
-        native.zoomTo(app, commonBounds(els));
-      },
-      async exportSvg(ids) {
-        guard2();
-        const list = ids?.length ? ids : liveElements(all()).map((e) => e.id);
-        const svg = await native.captureSelectionSvg(app, list);
-        guard2();
-        return normalizeSvgSize(svg);
-      },
-      onChange(cb) {
-        guard2();
-        if (typeof cb !== "function") throw new Error("callback required");
-        const emitter = app.onChangeEmitter;
-        let pending = false;
-        let off = null;
-        let closed = false;
-        const close2 = () => {
-          if (closed) return;
-          closed = true;
-          try {
-            off?.();
-          } catch (error) {
-            console.warn("[plexus] unsubscribe failed", error);
-          }
-          subs.get(app)?.delete(close2);
-        };
-        off = emitter?.on?.(() => {
-          if (pending || closed) return;
-          pending = true;
-          frame(() => {
-            pending = false;
-            if (closed || !live2()) return;
-            try {
-              cb({ uid });
-            } catch (error) {
-              console.error("[plexus] onChange failed", error);
-            }
-          });
-        });
-        if (!subs.has(app)) subs.set(app, /* @__PURE__ */ new Set());
-        subs.get(app).add(close2);
-        return close2;
-      }
-    };
-    const frozen = Object.freeze(scene);
-    return { scene: frozen, release() {
-      released = true;
-    } };
-  }
-  const registry = {
-    sceneFor(app, uid) {
-      if (disposed || !app || !uid) return null;
-      const cur = scenes.get(app);
-      if (cur && cur.uid === uid && !cur.released) return cur.scene;
-      cur?.release();
-      const made = build(app, uid);
-      const entry = { uid, scene: made.scene, release: made.release, released: false };
-      const rel = made.release;
-      entry.release = () => {
-        entry.released = true;
-        rel();
-      };
-      scenes.set(app, entry);
-      return entry.scene;
-    },
-    sceneOf(uid) {
-      if (disposed) return null;
-      const ed = native.activeEditor(doc);
-      return ed?.app && ed.drawingUid === uid ? registry.sceneFor(ed.app, uid) : null;
-    },
-    activeApp() {
-      return native.activeEditor(doc)?.app ?? null;
-    },
-    activeUid() {
-      return native.activeEditor(doc)?.drawingUid ?? null;
-    },
-    ready(app, timeoutMs) {
-      return native.waitNotLoading(app, timeoutMs, { doc });
-    },
-    release(app) {
-      scenes.get(app)?.release();
-      scenes.delete(app);
-      for (const close2 of [...subs.get(app) || []]) close2();
-      subs.delete(app);
-    },
-    onDispose(cb) {
-      disposeHooks.add(cb);
-      return () => disposeHooks.delete(cb);
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      for (const set of subs.values()) for (const close2 of [...set]) close2();
-      subs.clear();
-      for (const cb of [...disposeHooks]) {
-        try {
-          cb();
-        } catch (error) {
-          console.warn("[plexus] dispose hook failed", error);
-        }
-      }
-      disposeHooks.clear();
-    }
-  };
-  return registry;
-}
-function subscribe(emitter, type, cb) {
-  if (typeof emitter?.on === "function") return emitter.on(type, cb);
-  if (typeof emitter?.addEventListener === "function") return emitter.addEventListener(type, cb);
-  return void 0;
-}
-function unsubscribe(emitter, type, cb) {
-  if (typeof emitter?.off === "function") return emitter.off(type, cb);
-  if (typeof emitter?.removeEventListener === "function") return emitter.removeEventListener(type, cb);
-  return void 0;
-}
-function createPublicApi({ host, actions, emitter, version, scenes, openDrawing } = {}) {
-  const listeners = /* @__PURE__ */ new Map();
-  const opening = /* @__PURE__ */ new Map();
-  const api = {
-    apiVersion: API_VERSION,
-    version: String(version ?? ""),
-    isAvailable() {
-      try {
-        return !!host?.graphName?.();
-      } catch {
-        return false;
-      }
-    },
-    async create(args) {
-      const result = await host.createDrawing(args || {});
-      try {
-        emitter?.emit?.({ uid: result?.uid, kind: "drawing" });
-      } catch (error) {
-        console.warn("[plexus] change emit failed", error);
-      }
-      return result;
-    },
-    open(uid, { region, sidebar = false } = {}) {
-      let isRegion = region;
-      if (isRegion == null) isRegion = !!parseRegion(host.pullBlock?.(uid)?.string);
-      return isRegion ? actions.openRegion(uid, { sidebar }) : host.openBlock(uid, { sidebar });
-    },
-    thumbnail(uid, opts) {
-      return actions.thumbnail(uid, opts || {});
-    },
-    regionsOf(uid) {
-      const entries = host.regionsOf(uid);
-      let src = { string: "", pageTitle: null };
-      try {
-        src = host.labelSource?.(uid) ?? src;
-      } catch (error) {
-        console.warn("[plexus] labelSource failed", error);
-      }
-      return entries.map(({ uid: regionUid, region }) => {
-        let label = "Region";
-        try {
-          label = regionLabel({
-            kind: region.kind,
-            caption: region.caption ?? "",
-            drawingTitle: drawingTitleOf(src.string, src.pageTitle),
-            imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
-            resolveBlock: (u) => host.pullBlock?.(u)?.string
-          });
-        } catch (error) {
-          console.warn("[plexus] region label failed", error);
-        }
-        return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
-      });
-    },
-    drawingsOn(pageUid) {
-      return host.drawingsOn(pageUid);
-    },
-    scene(uid) {
-      return scenes?.sceneOf?.(uid) ?? null;
-    },
-    whenOpen(uid, { timeoutMs = 1e4, sidebar = false } = {}) {
-      if (opening.has(uid)) return opening.get(uid).promise;
-      if (opening.size) return Promise.reject(new Error(`Busy opening ${[...opening.keys()][0]}`));
-      let timer = null;
-      let offDispose = null;
-      const promise = new Promise((resolve, reject) => {
-        const fail2 = (message) => reject(new Error(message));
-        timer = setTimeout(() => fail2("Timed out"), timeoutMs);
-        offDispose = scenes?.onDispose?.(() => fail2("Plexus unloaded"));
-        (async () => {
-          if (!scenes) throw new Error("Scenes unavailable");
-          if (!DRAWING_RE2.test(String(host.pullBlock?.(uid)?.string ?? ""))) throw new Error("Not a drawing");
-          let app = scenes.sceneOf(uid) ? scenes.activeApp() : null;
-          if (!app) {
-            const active = scenes.activeUid?.();
-            if (active && active !== uid) throw new Error("Another drawing is open");
-            const opened = await openDrawing?.(uid, { sidebar });
-            if (!opened?.app) throw new Error("Could not open drawing");
-            app = opened.app;
-          }
-          if (!await scenes.ready(app, timeoutMs)) throw new Error("Timed out");
-          const scene = scenes.sceneFor(app, uid);
-          if (!scene) throw new Error("Plexus unloaded");
-          return scene;
-        })().then(resolve, reject);
-      });
-      const entry = { promise };
-      opening.set(uid, entry);
-      const done = () => {
-        clearTimeout(timer);
-        offDispose?.();
-        if (opening.get(uid) === entry) opening.delete(uid);
-      };
-      promise.then(done, done);
-      return promise;
-    },
-    addEventListener(type, cb) {
-      if (type !== "change" || typeof cb !== "function" || listeners.has(cb)) return;
-      const wrapped = (detail) => {
-        try {
-          cb(detail);
-        } catch (error) {
-          console.error("[plexus] listener failed", error);
-        }
-      };
-      listeners.set(cb, wrapped);
-      subscribe(emitter, "change", wrapped);
-    },
-    removeEventListener(type, cb) {
-      if (type !== "change") return;
-      const wrapped = listeners.get(cb);
-      if (!wrapped) return;
-      listeners.delete(cb);
-      unsubscribe(emitter, "change", wrapped);
-    }
-  };
-  return Object.freeze(api);
-}
-var fire = (win, type, detail, Ctor) => {
-  try {
-    const C = Ctor ?? win.CustomEvent ?? globalThis.CustomEvent;
-    if (C) win.dispatchEvent(new C(type, { detail }));
-  } catch (error) {
-    console.warn("[plexus] event dispatch failed", error);
-  }
-};
-function installPublicApi(api, { win = globalThis.window ?? globalThis, CustomEventCtor } = {}) {
-  win.RoamPlexus = api;
-  fire(win, "roam-plexus:ready", { apiVersion: API_VERSION }, CustomEventCtor);
-}
-function uninstallPublicApi(api, { win = globalThis.window ?? globalThis, CustomEventCtor } = {}) {
-  const ours = win.RoamPlexus === api;
-  if (ours) delete win.RoamPlexus;
-  fire(win, "roam-plexus:unload", { apiVersion: API_VERSION }, CustomEventCtor);
-  return ours;
+function arrowLabelWrapWidth(arrowWidth, fontSize) {
+  return Math.max(0.7 * arrowWidth, 11 * fontSize);
 }
 
 // src/model/mindmap.js
@@ -6811,8 +6475,20 @@ var REF_MAX = 60;
 var ROOT_COLOR = "#ffec99";
 var BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
 var LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
+var CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
+var isCauseLayout = (layout) => layout === "cause" || layout === "fishbone";
 var EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
 var isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);
+var HIDDEN_RE = /^\s*BT_attr[A-Za-z0-9_]*::/;
+var isHiddenString = (s) => typeof s === "string" && HIDDEN_RE.test(s);
+var TASK_RE = /^\{\{\[\[(TODO|DONE)\]\]\}\} ?/;
+function taskParts(s) {
+  if (typeof s !== "string") return { state: null, prefix: "", rest: "" };
+  const m = TASK_RE.exec(s);
+  if (!m) return { state: null, prefix: "", rest: s };
+  return { state: m[1], prefix: m[0], rest: s.slice(m[0].length) };
+}
+var taskState = (s) => taskParts(s).state;
 var fontSizeForDepth = (depth) => depth === 0 ? 24 : depth === 1 ? 20 : 16;
 function pick2(obj, name) {
   if (!obj || typeof obj !== "object") return void 0;
@@ -6830,17 +6506,18 @@ function treeFromPull(pull, opts = {}) {
     const string = pick2(p, "string");
     const str = typeof string === "string" ? string : "";
     if (isExcludedString(str)) return null;
+    if (!isRoot && isHiddenString(str)) return null;
     if (!isRoot && prune && prune.has(uid)) return null;
     if (visible >= cap) {
       truncated = true;
       return null;
     }
     visible += 1;
-    const open4 = pick2(p, "open") !== false;
+    const open5 = pick2(p, "open") !== false;
     const raw = pick2(p, "children");
     const kids2 = Array.isArray(raw) ? raw.slice() : [];
     kids2.sort((a, b) => (pick2(a, "order") ?? 0) - (pick2(b, "order") ?? 0));
-    const node = { uid, string: str, open: open4, children: [] };
+    const node = { uid, string: str, open: open5, children: [] };
     for (const k of kids2) {
       const c = conv(k, false);
       if (c) node.children.push(c);
@@ -6980,10 +6657,84 @@ function rewrite(s, resolveRef, depthLimit) {
 }
 function plainText(s, resolveRef) {
   if (typeof s !== "string" || s === "") return "·";
-  let t = rewrite(s, resolveRef, 1);
+  const tp = taskParts(s);
+  let t;
+  if (tp.state) {
+    const glyph = tp.state === "DONE" ? "☑" : "☐";
+    t = tp.rest === "" ? glyph : `${glyph} ${rewrite(tp.rest, resolveRef, 1)}`;
+  } else t = rewrite(s, resolveRef, 1);
   if (t.length > MAX_DISPLAY) t = `${t.slice(0, MAX_DISPLAY - 1)}…`;
   if (t === "") return "·";
   return t;
+}
+var RE_TAG_SCAN = /#\[\[([^\]]+)\]\]|(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
+function tagColor(s, map) {
+  if (typeof s !== "string" || !map || typeof map.get !== "function" || map.size === 0) return void 0;
+  const tp = taskParts(s);
+  if (tp.state) {
+    const c = map.get(tp.state.toLowerCase());
+    if (c) return c;
+  }
+  const re = new RegExp(RE_TAG_SCAN.source, "gu");
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const name = (m[1] !== void 0 ? m[1] : m[3]).toLowerCase();
+    const c = map.get(name);
+    if (c) return c;
+  }
+  return void 0;
+}
+function editableText(node, displayed, { star = false } = {}) {
+  if (!node || typeof displayed !== "string") return null;
+  let text = displayed;
+  if (isFolded(node)) {
+    const suffix = ` (+${countHidden(node)})`;
+    if (!text.endsWith(suffix)) return null;
+    text = text.slice(0, -suffix.length);
+  }
+  if (star && text.startsWith("★ ")) text = text.slice(2);
+  const tp = taskParts(node.string);
+  if (tp.state) {
+    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
+    else if (text === "☐" || text === "☑") text = "";
+  }
+  if (hasMarkup(tp.rest)) return null;
+  if (text === "" || text === "·") return null;
+  const next = tp.prefix + text;
+  return next === node.string ? null : next;
+}
+var CARRIER_RE = /^([^:\n`{]{1,60})::$/;
+var carrierName = (s) => {
+  if (typeof s !== "string") return null;
+  const m = CARRIER_RE.exec(s.trim());
+  if (!m) return null;
+  const name = m[1].trim();
+  return name === "" || name.startsWith("BT_attr") ? null : name;
+};
+function visualTree(tree, { attrEdges = false } = {}) {
+  if (!tree || !attrEdges) return tree;
+  function conv(node) {
+    if (node.open === false || node.children.length === 0) return node;
+    const out = [];
+    let changed = false;
+    for (const c of node.children) {
+      const name = c.open !== false && c.children.length > 0 ? carrierName(c.string) : null;
+      if (name !== null) {
+        changed = true;
+        const label = plainText(name);
+        for (const k of c.children) {
+          const kk = conv(k);
+          out.push({ ...kk, edgeLabel: label, via: c.uid });
+        }
+      } else {
+        const cc = conv(c);
+        if (cc !== c) changed = true;
+        out.push(cc);
+      }
+    }
+    return changed ? { ...node, children: out } : node;
+  }
+  return conv(tree);
 }
 function wrapLines2(text, maxWidth, measure2) {
   const out = [];
@@ -7021,9 +6772,9 @@ function wrapLines2(text, maxWidth, measure2) {
   }
   return out;
 }
-function nodeSize(text, fontSize, measure2) {
+function nodeSize(text, fontSize, measure2, maxWidth = MAX_TEXT_WIDTH) {
   const m = (s) => measure2(s, fontSize);
-  const lines = wrapLines2(text, MAX_TEXT_WIDTH, m);
+  const lines = wrapLines2(text, maxWidth, m);
   let tw = 0;
   for (const l of lines) tw = Math.max(tw, m(l));
   const textWidth = Math.max(1, Math.ceil(tw));
@@ -7037,13 +6788,15 @@ function nodeSize(text, fontSize, measure2) {
     text: lines.join("\n")
   };
 }
-function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 } }) {
+function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
   const pos = {};
   if (!tree) return pos;
   const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
   const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
   if (layout === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
-  const horizontal = layout === "right" || layout === "left";
+  if (layout === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
+  const dirL = layout === "cause" ? "left" : layout;
+  const horizontal = dirL === "right" || dirL === "left";
   const cross = (n) => horizontal ? sz(n).height : sz(n).width;
   const ext = /* @__PURE__ */ new Map();
   const free = (n) => visibleChildren(n).filter((k) => !isPinned(k));
@@ -7066,20 +6819,21 @@ function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0,
       const ks = sz(k);
       const e = ext.get(k).e;
       const c = cursor + (e - cross(k)) / 2;
+      const gap = gapOf(k.uid);
       let kx;
       let ky;
-      if (layout === "right") {
-        kx = x + s.width + LEVEL_GAP;
+      if (dirL === "right") {
+        kx = x + s.width + gap;
         ky = c;
-      } else if (layout === "left") {
-        kx = x - LEVEL_GAP - ks.width;
+      } else if (dirL === "left") {
+        kx = x - gap - ks.width;
         ky = c;
-      } else if (layout === "down") {
+      } else if (dirL === "down") {
         kx = c;
-        ky = y + s.height + LEVEL_GAP;
+        ky = y + s.height + gap;
       } else {
         kx = c;
-        ky = y - LEVEL_GAP - ks.height;
+        ky = y - gap - ks.height;
       }
       place(k, kx, ky);
       cursor += e + SIBLING_GAP;
@@ -7089,6 +6843,71 @@ function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0,
   extent(tree);
   place(tree, root.x, root.y);
   return pos;
+}
+var FISH_BONE_OFFSET = 50;
+var FISH_SLOT_PAD = 60;
+var FISH_RIB_GAP = 40;
+function fishboneLayout({ tree, sizes, pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+  const positions = {};
+  const slotX = {};
+  if (!tree) return { positions, spine: null, slotX };
+  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
+  const rs = sz(tree.uid);
+  positions[tree.uid] = { x: root.x, y: root.y };
+  const spineY = root.y + rs.height / 2;
+  const kids2 = visibleChildren(tree);
+  if (kids2.length === 0) return { positions, spine: null, slotX };
+  const isPinned = (k) => pinned[k.uid] && Number.isFinite(pinned[k.uid].x) && Number.isFinite(pinned[k.uid].y);
+  const free = kids2.filter((k) => !isPinned(k));
+  const parts = free.map((k) => {
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: { x: 0, y: 0 } });
+    const abs = /* @__PURE__ */ new Set();
+    const mark = (n, inside2) => {
+      for (const c of visibleChildren(n)) {
+        const p = inside2 || isPinned(c);
+        if (p) abs.add(c.uid);
+        mark(c, p);
+      }
+    };
+    mark(k, false);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const uid of Object.keys(rel)) {
+      if (abs.has(uid)) continue;
+      const s = sz(uid);
+      minX = Math.min(minX, rel[uid].x);
+      maxX = Math.max(maxX, rel[uid].x + s.width);
+      minY = Math.min(minY, rel[uid].y);
+      maxY = Math.max(maxY, rel[uid].y + s.height);
+    }
+    return { k, rel, abs, minX, maxX, minY, maxY, width: maxX - minX };
+  });
+  let cursor = root.x;
+  for (let j = 0; j * 2 < parts.length; j++) {
+    const above = parts[2 * j];
+    const below = parts[2 * j + 1];
+    const maxw = Math.max(above.width, below ? below.width : 0);
+    const spineX = cursor - 20;
+    const right = spineX - FISH_RIB_GAP;
+    for (const part of [above, below]) {
+      if (!part) continue;
+      const dx = right - part.maxX;
+      const dy = part === above ? spineY - FISH_BONE_OFFSET - part.maxY : spineY + FISH_BONE_OFFSET - part.minY;
+      for (const uid of Object.keys(part.rel)) positions[uid] = part.abs.has(uid) ? { ...part.rel[uid] } : { x: part.rel[uid].x + dx, y: part.rel[uid].y + dy };
+      slotX[part.k.uid] = spineX;
+    }
+    cursor -= maxw + FISH_SLOT_PAD;
+  }
+  const x1 = free.length ? cursor : root.x - 80;
+  for (const k of kids2) {
+    if (!isPinned(k)) continue;
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: pinned[k.uid] });
+    for (const uid of Object.keys(rel)) positions[uid] = rel[uid];
+    slotX[k.uid] = Math.min(root.x, Math.max(x1, pinned[k.uid].x + sz(k.uid).width));
+  }
+  return { positions, spine: { x1, x2: root.x, y: spineY }, slotX };
 }
 function radial(tree, sz, isPinned, pinned, rootPos, pos) {
   const rs = sz(tree);
@@ -7144,16 +6963,1187 @@ function nearestInDirection(from, candidates, dir) {
   return best;
 }
 
+// src/model/build.js
+var DEFAULT_STYLE = Object.freeze({
+  strokeColor: "#1e1e1e",
+  backgroundColor: "transparent",
+  fillStyle: "solid",
+  strokeWidth: 2,
+  roughness: 1,
+  fontSize: 20,
+  fontFamily: 5
+});
+var LAYOUT_KINDS = Object.freeze(["row", "column", "grid", "tree"]);
+var STYLE_KEYS = Object.keys(DEFAULT_STYLE);
+var GAP2 = 4;
+var LAYOUT_GAP = 40;
+var LABEL_FONT = 16;
+var LABEL_FAMILY = 5;
+var LINE_HEIGHT2 = 1.25;
+var SEALED = "Already committed";
+var BINDABLE = /* @__PURE__ */ new Set(["rectangle", "ellipse", "diamond", "text"]);
+var BOX_TYPES = /* @__PURE__ */ new Set(["rectangle", "ellipse", "diamond"]);
+var isNum = (v) => typeof v === "number" && Number.isFinite(v);
+var need2 = (v, name) => {
+  if (!isNum(v)) throw new Error(`${name} must be a finite number`);
+  return v;
+};
+function createBuilder({ style: initial, measure: measure2, newId } = {}) {
+  const st = { ...DEFAULT_STYLE };
+  const setStyle = (patch) => {
+    if (!patch || typeof patch !== "object") return;
+    for (const k of STYLE_KEYS) if (patch[k] !== void 0) st[k] = patch[k];
+  };
+  setStyle(initial);
+  const genId = typeof newId === "function" ? newId : () => `b${Math.random().toString(36).slice(2, 12)}`;
+  const list = [];
+  const byId = /* @__PURE__ */ new Map();
+  const textOf = /* @__PURE__ */ new Map();
+  const arrows = [];
+  const frames = [];
+  let sealed = false;
+  const open5 = () => {
+    if (sealed) throw new Error(SEALED);
+  };
+  const uniqueId = () => {
+    const id = String(genId());
+    if (byId.has(id)) throw new Error(`Duplicate id ${id}`);
+    return id;
+  };
+  const measurer = (fontSize, family) => (s) => family === 5 && typeof measure2 === "function" ? measure2(s, fontSize) : String(s).length * 0.6 * fontSize;
+  function fit(text, fontSize, family, maxWidth) {
+    const m = measurer(fontSize, family);
+    const lines = maxWidth == null ? String(text).split("\n") : wrapLines2(text, maxWidth, m);
+    let w = 0;
+    for (const l of lines) w = Math.max(w, m(l));
+    return { text: lines.join("\n"), width: Math.ceil(w), height: lines.length * fontSize * LINE_HEIGHT2 };
+  }
+  function make(type, x, y, w, h, o = {}) {
+    open5();
+    const el = baseElement(uniqueId(), type, need2(x, "x"), need2(y, "y"), w, h);
+    el.strokeColor = o.strokeColor ?? st.strokeColor;
+    el.backgroundColor = o.backgroundColor ?? st.backgroundColor;
+    el.fillStyle = o.fillStyle ?? st.fillStyle;
+    el.strokeWidth = o.strokeWidth ?? st.strokeWidth;
+    el.roughness = o.roughness ?? st.roughness;
+    if (o.strokeStyle) el.strokeStyle = o.strokeStyle;
+    if (isNum(o.opacity)) el.opacity = o.opacity;
+    if (Array.isArray(o.groupIds)) el.groupIds = [...o.groupIds];
+    if (typeof o.link === "string") el.link = o.link;
+    if (o.customData && typeof o.customData === "object") el.customData = structuredClone(o.customData);
+    list.push(el);
+    byId.set(el.id, el);
+    return el;
+  }
+  function makeText(x, y, str, o, container) {
+    const fontSize = o.fontSize ?? st.fontSize;
+    const fontFamily = o.fontFamily ?? st.fontFamily;
+    const f = fit(str, fontSize, fontFamily, o.maxWidth ?? null);
+    const el = make("text", x, y, f.width, f.height, { strokeColor: o.textColor ?? o.strokeColor, strokeWidth: 1, roughness: 0 });
+    el.backgroundColor = "transparent";
+    Object.assign(el, {
+      text: f.text,
+      originalText: String(str),
+      fontSize,
+      fontFamily,
+      textAlign: container ? "center" : o.textAlign ?? "left",
+      verticalAlign: container ? "middle" : "top",
+      containerId: container ?? null,
+      autoResize: true,
+      lineHeight: LINE_HEIGHT2
+    });
+    if (o.customData && !container) el.customData = structuredClone(o.customData);
+    return el;
+  }
+  const resolve = (id) => {
+    const el = byId.get(id);
+    if (!el) throw new Error(`Unknown element ${id}`);
+    return el.type === "text" && el.containerId ? byId.get(el.containerId) : el;
+  };
+  const bindTo = (container, entry) => {
+    container.boundElements = [...container.boundElements || [], entry];
+  };
+  function shape(type, x, y, w, h, o = {}) {
+    const el = make(type, x, y, need2(w, "width"), need2(h, "height"), o);
+    el.roundness = type === "rectangle" ? { type: 3 } : type === "diamond" ? { type: 2 } : null;
+    return el.id;
+  }
+  const api = {
+    style(patch) {
+      open5();
+      setStyle(patch);
+      return { ...st };
+    },
+    rect: (x, y, w, h, o) => shape("rectangle", x, y, w, h, o),
+    ellipse: (x, y, w, h, o) => shape("ellipse", x, y, w, h, o),
+    diamond: (x, y, w, h, o) => shape("diamond", x, y, w, h, o),
+    text: (x, y, str, o = {}) => makeText(x, y, String(str ?? ""), o, null).id,
+    box(str, o = {}) {
+      const type = o.type ?? "rectangle";
+      if (!BOX_TYPES.has(type)) throw new Error(`Unknown box type ${type}`);
+      const fontSize = o.fontSize ?? st.fontSize;
+      const fontFamily = o.fontFamily ?? st.fontFamily;
+      const scale = type === "diamond" ? 2 : type === "ellipse" ? 1.42 : 1;
+      let f;
+      let W;
+      let H;
+      if (o.width != null) {
+        f = fit(str, fontSize, fontFamily, Math.max(1, o.width - 10));
+        W = o.width;
+        H = o.height ?? Math.max(f.height + 2 * PAD_Y, o.minHeight ?? 0);
+      } else {
+        f = fit(str, fontSize, fontFamily, MAX_TEXT_WIDTH);
+        W = Math.max((f.width + 2 * PAD_X) * scale, o.minWidth ?? 0);
+        H = o.height ?? Math.max((f.height + 2 * PAD_Y) * scale, o.minHeight ?? 0);
+      }
+      const x = o.x ?? 0;
+      const y = o.y ?? 0;
+      const c = make(type, x, y, W, H, o);
+      c.roundness = type === "rectangle" ? { type: 3 } : type === "diamond" ? { type: 2 } : null;
+      const t = makeText(x + W / 2 - f.width / 2, y + H / 2 - f.height / 2, str, { ...o, maxWidth: o.width != null ? Math.max(1, o.width - 10) : MAX_TEXT_WIDTH, textColor: o.textColor ?? st.strokeColor, fontSize, fontFamily }, c.id);
+      t.groupIds = [...c.groupIds];
+      textOf.set(c.id, t.id);
+      c.boundElements = [{ id: t.id, type: "text" }];
+      return c.id;
+    },
+    frame(x, y, w, h, o = {}) {
+      const el = make("frame", x, y, need2(w, "width"), need2(h, "height"), { strokeColor: "#bbbbbb", strokeWidth: 2, roughness: 0, ...o });
+      el.name = o.name ?? null;
+      const children = [];
+      for (const id of o.children || []) {
+        const c = resolve(id);
+        if (c.type === "frame") throw new Error("A frame cannot hold a frame");
+        if (!children.includes(c.id)) children.push(c.id);
+      }
+      frames.push({ id: el.id, children });
+      return el.id;
+    },
+    line(x, y, points, o = {}) {
+      if (!Array.isArray(points) || points.length < 2 || points.some((p) => !Array.isArray(p) || !isNum(p[0]) || !isNum(p[1]))) throw new Error("line needs at least two [x, y] points");
+      const xs = points.map((p) => p[0]);
+      const ys = points.map((p) => p[1]);
+      const el = make("line", x, y, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), o);
+      Object.assign(el, { points: points.map((p) => [p[0], p[1]]), lastCommittedPoint: null, startBinding: null, endBinding: null, startArrowhead: null, endArrowhead: null });
+      return el.id;
+    },
+    arrow(a, b, o = {}) {
+      open5();
+      const from = resolve(a);
+      const to = resolve(b);
+      for (const el2 of [from, to]) if (!BINDABLE.has(el2.type) || el2.containerId) throw new Error(`Cannot bind an arrow to ${el2.type}`);
+      if (from.id === to.id) throw new Error("Cannot bind an arrow to one element");
+      const el = make("arrow", from.x, from.y, 0, 0, { ...o, backgroundColor: "transparent" });
+      Object.assign(el, {
+        points: [[0, 0], [0, 0]],
+        lastCommittedPoint: null,
+        startBinding: { elementId: from.id, focus: 0, gap: GAP2 },
+        endBinding: { elementId: to.id, focus: 0, gap: GAP2 },
+        startArrowhead: o.startArrowhead ?? null,
+        endArrowhead: o.endArrowhead === void 0 ? "arrow" : o.endArrowhead,
+        elbowed: false,
+        roundness: null
+      });
+      bindTo(from, { id: el.id, type: "arrow" });
+      bindTo(to, { id: el.id, type: "arrow" });
+      if (o.label !== void 0 && o.label !== null && String(o.label) !== "") {
+        const t = makeText(0, 0, String(o.label), { fontSize: LABEL_FONT, fontFamily: LABEL_FAMILY, textColor: o.textColor ?? st.strokeColor }, el.id);
+        textOf.set(el.id, t.id);
+        el.boundElements = [{ id: t.id, type: "text" }];
+      }
+      arrows.push({ id: el.id, from: from.id, to: to.id });
+      return el.id;
+    },
+    size(id) {
+      const el = resolve(id);
+      return { width: el.width, height: el.height };
+    },
+    place(id, x, y) {
+      open5();
+      const el = resolve(id);
+      el.x = need2(x, "x");
+      el.y = need2(y, "y");
+    },
+    layout(ids, kind, o = {}) {
+      open5();
+      if (!LAYOUT_KINDS.includes(kind)) throw new Error(`Unknown layout ${kind}`);
+      if (!Array.isArray(ids)) throw new Error("layout needs an array of ids");
+      const items = [];
+      for (const id of ids) {
+        const el = resolve(id);
+        if (el.type === "arrow" || el.type === "frame") continue;
+        if (!items.includes(el)) items.push(el);
+      }
+      if (!items.length) return;
+      const gap = isNum(o.gap) ? o.gap : LAYOUT_GAP;
+      const ox = Math.min(...items.map((e) => e.x));
+      const oy = Math.min(...items.map((e) => e.y));
+      const maxW = Math.max(...items.map((e) => e.width));
+      const maxH = Math.max(...items.map((e) => e.height));
+      if (kind === "row") {
+        let x = ox;
+        for (const e of items) {
+          e.x = x;
+          e.y = oy + (maxH - e.height) / 2;
+          x += e.width + gap;
+        }
+      } else if (kind === "column") {
+        let y = oy;
+        for (const e of items) {
+          e.y = y;
+          e.x = ox + (maxW - e.width) / 2;
+          y += e.height + gap;
+        }
+      } else if (kind === "grid") {
+        const cols = Math.ceil(Math.sqrt(items.length));
+        items.forEach((e, i) => {
+          e.x = ox + i % cols * (maxW + gap) + (maxW - e.width) / 2;
+          e.y = oy + Math.floor(i / cols) * (maxH + gap) + (maxH - e.height) / 2;
+        });
+      } else {
+        const inSet = new Set(items.map((e) => e.id));
+        const kids2 = new Map(items.map((e) => [e.id, []]));
+        const hasIn = /* @__PURE__ */ new Set();
+        for (const a of arrows) {
+          if (!inSet.has(a.from) || !inSet.has(a.to)) continue;
+          kids2.get(a.from).push(a.to);
+          hasIn.add(a.to);
+        }
+        const seen = /* @__PURE__ */ new Set();
+        const grow = (id) => {
+          seen.add(id);
+          const node = { uid: id, children: [] };
+          for (const k of kids2.get(id)) if (!seen.has(k)) node.children.push(grow(k));
+          return node;
+        };
+        const roots = [];
+        for (const e of items) if (!hasIn.has(e.id) && !seen.has(e.id)) roots.push(grow(e.id));
+        for (const e of items) if (!seen.has(e.id)) roots.push(grow(e.id));
+        const sizes = Object.fromEntries(items.map((e) => [e.id, { width: e.width, height: e.height }]));
+        let cursor = oy;
+        for (const tree of roots) {
+          const pos = layoutTree({ tree, sizes, layout: "right", root: { x: 0, y: 0 } });
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxY = -Infinity;
+          for (const [uid, p] of Object.entries(pos)) {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y + sizes[uid].height);
+          }
+          for (const [uid, p] of Object.entries(pos)) {
+            const e = byId.get(uid);
+            e.x = ox + (p.x - minX);
+            e.y = cursor + (p.y - minY);
+          }
+          cursor += maxY - minY + gap;
+        }
+      }
+    },
+    // Finished elements: bound text centred, arrow ends clipped to the boxes, labels placed, frame children first.
+    elements() {
+      const out = new Map(list.map((e) => [e.id, structuredClone(e)]));
+      for (const [cid, tid] of textOf) {
+        const c = out.get(cid);
+        const t = out.get(tid);
+        if (c.type === "arrow") continue;
+        t.x = c.x + c.width / 2 - t.width / 2;
+        t.y = c.y + c.height / 2 - t.height / 2;
+      }
+      for (const a of arrows) {
+        const el = out.get(a.id);
+        const A = out.get(a.from);
+        const B = out.get(a.to);
+        const ca = { x: A.x + A.width / 2, y: A.y + A.height / 2 };
+        const cb = { x: B.x + B.width / 2, y: B.y + B.height / 2 };
+        const dist = Math.hypot(cb.x - ca.x, cb.y - ca.y);
+        let p0 = ca;
+        let p1 = cb;
+        if (dist > 0) {
+          const ux = (cb.x - ca.x) / dist;
+          const uy = (cb.y - ca.y) / dist;
+          const exit = (b) => Math.min(Math.abs(ux) > 1e-9 ? b.width / 2 / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-9 ? b.height / 2 / Math.abs(uy) : Infinity);
+          const s0 = exit(A) + GAP2;
+          const s1 = exit(B) + GAP2;
+          if (s0 + s1 < dist) {
+            p0 = { x: ca.x + ux * s0, y: ca.y + uy * s0 };
+            p1 = { x: cb.x - ux * s1, y: cb.y - uy * s1 };
+          }
+        }
+        el.x = p0.x;
+        el.y = p0.y;
+        el.points = [[0, 0], [p1.x - p0.x, p1.y - p0.y]];
+        el.width = Math.abs(p1.x - p0.x);
+        el.height = Math.abs(p1.y - p0.y);
+        const tid = textOf.get(a.id);
+        if (tid) {
+          const t = out.get(tid);
+          const f = fit(t.originalText, t.fontSize, t.fontFamily, arrowLabelWrapWidth(el.width, t.fontSize));
+          Object.assign(t, { text: f.text, width: f.width, height: f.height });
+          Object.assign(t, arrowLabelRect(el, f.width, f.height));
+        }
+      }
+      let order = [...out.values()].filter((e) => e.type !== "frame");
+      const frameEls = new Map(frames.map((f) => [f.id, out.get(f.id)]));
+      for (const f of frames) {
+        const members = /* @__PURE__ */ new Set();
+        for (const c of f.children) {
+          members.add(c);
+          if (textOf.has(c)) members.add(textOf.get(c));
+        }
+        for (const e of order) if (members.has(e.id)) e.frameId = f.id;
+        let last = -1;
+        order.forEach((e, i) => {
+          if (members.has(e.id)) last = i;
+        });
+        order.splice(last + 1, 0, frameEls.get(f.id));
+      }
+      const placed = new Set(order.map((e) => e.id));
+      for (const e of frameEls.values()) if (!placed.has(e.id)) order.push(e);
+      return order;
+    },
+    ids: () => list.map((e) => e.id),
+    has: (id) => byId.has(id),
+    seal() {
+      sealed = true;
+    },
+    get sealed() {
+      return sealed;
+    }
+  };
+  return Object.freeze(api);
+}
+
+// src/model/ce.js
+var CE_LAYOUTS = Object.freeze(["tree", "fishbone", "pentagon"]);
+var CE_MAX_NODES = 300;
+var CE_MAX_EDGES = 1e3;
+var CE_MAX_CONNECTIONS = 500;
+var CE_ROLE_COLOR = Object.freeze({ primary: "#7c5cff", action: "#0ea5e9", condition: "#10b981", neutral: "#64748b" });
+var CE_TERM_COLOR = Object.freeze({ end: "#ef4444", question: "#0ea5e9" });
+var CE_CONNECTOR_COLOR = "#f97316";
+var EDGE_COLOR = "#94a3b8";
+var SPINE_COLOR = "#64748b";
+var FONT = 16;
+var MIN_W = 152;
+var MIN_H = 50;
+var H_GAP = 88;
+var V_GAP = 30;
+function tintColor(hex) {
+  const h = String(hex || "#7c5cff").replace("#", "");
+  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const chan = (i, fallback) => {
+    const v = parseInt(n.slice(i, i + 2), 16);
+    return Number.isNaN(v) ? fallback : v;
+  };
+  const r = chan(0, 124);
+  const g = chan(2, 92);
+  const b = chan(4, 255);
+  const mix = (c) => Math.round(c + (255 - c) * 0.78);
+  return `#${[mix(r), mix(g), mix(b)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+function parseChart(input) {
+  let chart = input;
+  if (typeof input === "string") {
+    try {
+      chart = JSON.parse(input);
+    } catch (error) {
+      throw new Error(`Invalid JSON: ${error.message}`);
+    }
+  }
+  if (!chart || typeof chart !== "object" || Array.isArray(chart)) throw new Error("Chart must be an object with a nodes array");
+  if (!Array.isArray(chart.nodes) || !chart.nodes.length) throw new Error("Chart needs a non-empty nodes array");
+  if (chart.nodes.length > CE_MAX_NODES) throw new Error(`Chart has ${chart.nodes.length} nodes; the limit is ${CE_MAX_NODES}`);
+  let skipped2 = 0;
+  const nodes = [];
+  const known = /* @__PURE__ */ new Set();
+  for (const n of chart.nodes) {
+    if (!n || typeof n !== "object" || n.id === void 0 || n.id === null) {
+      skipped2 += 1;
+      continue;
+    }
+    const id = String(n.id);
+    if (known.has(id)) {
+      skipped2 += 1;
+      continue;
+    }
+    known.add(id);
+    const role = Object.hasOwn(CE_ROLE_COLOR, n.role) ? n.role : "neutral";
+    nodes.push({ id, text: String(n.text ?? ""), role, category: n.category, terminator: Object.hasOwn(CE_TERM_COLOR, n.terminator) ? n.terminator : null });
+  }
+  if (!nodes.length) throw new Error("Chart has no usable nodes");
+  const edges = [];
+  const edgeKeys = /* @__PURE__ */ new Set();
+  for (const e of Array.isArray(chart.edges) ? chart.edges : []) {
+    const effect = e && e.effect !== void 0 && e.effect !== null ? String(e.effect) : null;
+    const cause = e && e.cause !== void 0 && e.cause !== null ? String(e.cause) : null;
+    if (!known.has(effect) || !known.has(cause) || effect === cause) {
+      skipped2 += 1;
+      continue;
+    }
+    const key = `${effect}\0${cause}`;
+    if (edgeKeys.has(key)) continue;
+    edgeKeys.add(key);
+    edges.push({ effect, cause });
+    if (edges.length > CE_MAX_EDGES) throw new Error(`Chart has more than ${CE_MAX_EDGES} edges; the limit is ${CE_MAX_EDGES}`);
+  }
+  const connections = [];
+  for (const c of Array.isArray(chart.connections) ? chart.connections : []) {
+    const from = c && c.from !== void 0 && c.from !== null ? String(c.from) : null;
+    const to = c && c.to !== void 0 && c.to !== null ? String(c.to) : null;
+    if (!known.has(from) || !known.has(to) || from === to) {
+      skipped2 += 1;
+      continue;
+    }
+    connections.push({ from, to, label: c.label ? String(c.label) : "" });
+    if (connections.length > CE_MAX_CONNECTIONS) throw new Error(`Chart has more than ${CE_MAX_CONNECTIONS} connections; the limit is ${CE_MAX_CONNECTIONS}`);
+  }
+  const root = (nodes.find((n) => n.role === "primary") || nodes[0]).id;
+  return { nodes, edges, connections, root, skipped: skipped2 };
+}
+function nodeLabel(n) {
+  const star = n.role === "primary" ? "★ " : "";
+  const m = n.text.match(/^([^:]{1,32}:)\s*([\s\S]*)$/);
+  if (m) return m[2] ? `${star}${m[1]}
+${m[2]}` : `${star}${m[1]}`;
+  return star + n.text;
+}
+function treeCentres(nodes, kids2, root, maxW, maxH) {
+  const depthOf = /* @__PURE__ */ new Map();
+  const rowOf = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set();
+  let leaf = 0;
+  const forward = [];
+  const state = /* @__PURE__ */ new Map();
+  const mark = (id) => {
+    state.set(id, 1);
+    for (const k of kids2.get(id) || []) {
+      if (state.get(k) === 1) continue;
+      forward.push([id, k]);
+      if (!state.has(k)) mark(k);
+    }
+    state.set(id, 2);
+  };
+  mark(root);
+  depthOf.set(root, 0);
+  for (let round = 0; round < nodes.length; round++) {
+    let moved = false;
+    for (const [e, c] of forward) {
+      if (!depthOf.has(e)) continue;
+      const d = depthOf.get(e) + 1;
+      if (!(depthOf.get(c) >= d)) {
+        depthOf.set(c, d);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const walk2 = (id) => {
+    if (seen.has(id)) return rowOf.get(id);
+    seen.add(id);
+    const rows = (kids2.get(id) || []).map((k) => walk2(k)).filter((r) => r !== void 0);
+    if (!rows.length) {
+      rowOf.set(id, leaf++);
+      return rowOf.get(id);
+    }
+    rowOf.set(id, (rows[0] + rows[rows.length - 1]) / 2);
+    return rowOf.get(id);
+  };
+  walk2(root);
+  for (const n of nodes) if (!seen.has(n.id)) {
+    seen.add(n.id);
+    depthOf.set(n.id, 0);
+    rowOf.set(n.id, leaf++);
+  }
+  const centres = /* @__PURE__ */ new Map();
+  for (const n of nodes) centres.set(n.id, { x: depthOf.get(n.id) * (maxW + H_GAP) + maxW / 2, y: rowOf.get(n.id) * (maxH + V_GAP) + maxH / 2 });
+  return { centres, lines: [] };
+}
+function fishboneCentres(nodes, kids2, root, sizes, maxW, maxH) {
+  const fy = Math.max(1, (maxH + V_GAP) / 80);
+  const fx = Math.max(0, maxW - MIN_W);
+  const majors = kids2.get(root) || [];
+  const M = Math.max(majors.length, 1);
+  const headX = (M + 1) * 120 + 40;
+  const centres = /* @__PURE__ */ new Map();
+  const lines = [];
+  const placed = /* @__PURE__ */ new Set([root]);
+  centres.set(root, { x: headX + maxW / 2, y: 0 });
+  lines.push({ kind: "spine", from: [0, 0], to: [headX + maxW / 2 - sizes.get(root).width / 2, 0] });
+  const branch = (id, side, ax, ay) => {
+    if (placed.has(id)) return;
+    placed.add(id);
+    const bx = ax - (170 + fx);
+    const by = ay + side * 130 * fy;
+    centres.set(id, { x: bx + maxW / 2, y: by });
+    lines.push({ kind: "bone", from: [ax, ay], to: [bx + maxW / 2 + sizes.get(id).width / 2, by] });
+    (kids2.get(id) || []).forEach((k, j) => branch(k, side, bx + 30, by + side * (70 + j * 80) * fy));
+  };
+  majors.forEach((m, i) => branch(m, i % 2 === 0 ? -1 : 1, headX - (i + 1) * headX / (M + 1), 0));
+  let extra = 0;
+  for (const n of nodes) if (!placed.has(n.id)) {
+    placed.add(n.id);
+    centres.set(n.id, { x: -120 - maxW / 2, y: -300 * fy + extra++ * (maxH + V_GAP) });
+  }
+  return { centres, lines };
+}
+function bboxOf(el) {
+  if (Array.isArray(el.points)) {
+    const xs = el.points.map((p) => el.x + p[0]);
+    const ys = el.points.map((p) => el.y + p[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  return [el.x, el.y, el.x + el.width, el.y + el.height];
+}
+function translateElements(elements, dx, dy) {
+  for (const el of elements) {
+    el.x += dx;
+    el.y += dy;
+  }
+  return elements;
+}
+function chartToElements(input, { layout = "tree", origin = { x: 0, y: 0 }, measure: measure2, newId, random = Math.random } = {}) {
+  if (!CE_LAYOUTS.includes(layout)) throw new Error(`Unknown layout ${layout}`);
+  const { nodes, edges, connections, root, skipped: skipped2 } = parseChart(input);
+  const chartId = `ce-${Array.from({ length: 8 }, () => Math.floor(random() * 16).toString(16)).join("")}`;
+  const mark = (extra) => ({ plexus: { ce: { chart: chartId, ...extra } } });
+  const b = createBuilder({ measure: measure2, newId, style: { fontSize: FONT, fontFamily: 5, roughness: 0 } });
+  const pent = layout === "pentagon";
+  const gid = `g${chartId}`;
+  const boxes = /* @__PURE__ */ new Map();
+  for (const n of nodes) {
+    const color = CE_ROLE_COLOR[n.role];
+    const head = pent && n.id === root;
+    boxes.set(n.id, b.box(nodeLabel(n), {
+      strokeColor: head ? "transparent" : color,
+      backgroundColor: head ? "transparent" : tintColor(color),
+      textColor: "#1e1e1e",
+      minWidth: MIN_W,
+      minHeight: MIN_H,
+      ...head ? { groupIds: [gid] } : {},
+      customData: mark({ node: n.id })
+    }));
+  }
+  const sizes = new Map(nodes.map((n) => [n.id, b.size(boxes.get(n.id))]));
+  const maxW = Math.max(...[...sizes.values()].map((s) => s.width));
+  const maxH = Math.max(...[...sizes.values()].map((s) => s.height));
+  const kids2 = /* @__PURE__ */ new Map();
+  const isEffect = /* @__PURE__ */ new Set();
+  for (const e of edges) {
+    if (!kids2.has(e.effect)) kids2.set(e.effect, []);
+    kids2.get(e.effect).push(e.cause);
+    isEffect.add(e.effect);
+  }
+  const { centres, lines } = layout === "fishbone" ? fishboneCentres(nodes, kids2, root, sizes, maxW, maxH) : treeCentres(nodes, kids2, root, maxW, maxH);
+  const rects = /* @__PURE__ */ new Map();
+  for (const n of nodes) {
+    const c = centres.get(n.id);
+    const s = sizes.get(n.id);
+    rects.set(n.id, { x: c.x - s.width / 2, y: c.y - s.height / 2, w: s.width, h: s.height });
+    b.place(boxes.get(n.id), c.x - s.width / 2, c.y - s.height / 2);
+  }
+  const front = [];
+  if (layout === "fishbone") {
+    for (const ln of lines) {
+      const spine = ln.kind === "spine";
+      b.line(ln.from[0], ln.from[1], [[0, 0], [ln.to[0] - ln.from[0], ln.to[1] - ln.from[1]]], { strokeColor: spine ? SPINE_COLOR : EDGE_COLOR, strokeWidth: spine ? 3 : 2, roughness: 0, customData: mark({ line: ln.kind }) });
+    }
+  } else {
+    for (const e of edges) b.arrow(boxes.get(e.effect), boxes.get(e.cause), { label: "caused by", strokeColor: EDGE_COLOR, roughness: 0, customData: mark({ edge: [e.effect, e.cause] }) });
+  }
+  if (pent) {
+    const r = rects.get(root);
+    const color = CE_ROLE_COLOR[nodes.find((n) => n.id === root).role];
+    const body = r.w * 0.72;
+    front.push(b.line(r.x, r.y, [[0, 0], [body, 0], [r.w, r.h / 2], [body, r.h], [0, r.h], [0, 0]], { strokeColor: color, backgroundColor: tintColor(color), roughness: 0, groupIds: [gid], customData: mark({ line: "pentagon" }) }));
+    let maxRight = -Infinity;
+    for (const rc of rects.values()) maxRight = Math.max(maxRight, rc.x + rc.w);
+    front.unshift(b.line(r.x + r.w, r.y + r.h / 2, [[0, 0], [maxRight + 20 - (r.x + r.w), 0]], { strokeColor: SPINE_COLOR, strokeWidth: 3, roughness: 0, customData: mark({ line: "spine" }) }));
+  }
+  for (const c of connections) {
+    b.arrow(boxes.get(c.from), boxes.get(c.to), { label: c.label || "Connects to", strokeColor: CE_CONNECTOR_COLOR, strokeStyle: "dashed", roughness: 0, customData: mark({ conn: [c.from, c.to] }) });
+  }
+  for (const n of nodes) {
+    if (!n.terminator || isEffect.has(n.id)) continue;
+    const r = rects.get(n.id);
+    const tcol = CE_TERM_COLOR[n.terminator];
+    const x = r.x + r.w + 16 - 11;
+    const y = r.y + r.h / 2 - 11;
+    const opts = { strokeColor: tcol, backgroundColor: tintColor(tcol), roughness: 0, customData: mark({ terminator: n.id }) };
+    if (n.terminator === "question") b.box("?", { ...opts, type: "ellipse", x, y, width: 22, height: 22, textColor: tcol });
+    else b.ellipse(x, y, 22, 22, opts);
+  }
+  const built = b.elements();
+  const frontSet = new Set(front);
+  const elements = [...built.filter((e) => frontSet.has(e.id)).sort((p, q) => front.indexOf(p.id) - front.indexOf(q.id)), ...built.filter((e) => !frontSet.has(e.id))];
+  let x1 = Infinity;
+  let y1 = Infinity;
+  let x2 = -Infinity;
+  let y2 = -Infinity;
+  for (const el of elements) {
+    const [a, c, d, e] = bboxOf(el);
+    x1 = Math.min(x1, a);
+    y1 = Math.min(y1, c);
+    x2 = Math.max(x2, d);
+    y2 = Math.max(y2, e);
+  }
+  const at = origin && Number.isFinite(origin.x) && Number.isFinite(origin.y) ? origin : { x: 0, y: 0 };
+  translateElements(elements, at.x - (x1 + x2) / 2, at.y - (y1 + y2) / 2);
+  return { chart: chartId, elements, ids: elements.map((e) => e.id), skipped: skipped2, layout };
+}
+
+// src/api.js
+var API_VERSION = 5;
+var GONE = "Scene is no longer open";
+var NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
+var FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
+var DRAWING_RE2 = /^\s*\{\{(\[\[excalidraw\]\]|excalidraw)\}\}/;
+var isPlain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+var nonce2 = () => Math.floor(Math.random() * 2 ** 31);
+var bump = (el, extra = {}) => ({ ...el, ...extra, version: (el.version || 0) + 1, versionNonce: nonce2(), updated: Date.now() });
+function invisible(el) {
+  if (el.isDeleted) return true;
+  if (["line", "arrow", "draw", "freedraw"].includes(el.type)) return !Array.isArray(el.points) || el.points.length < 2;
+  if (el.type === "text") return !el.text;
+  return el.width === 0 && el.height === 0;
+}
+function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard, beforeBulk: initialBeforeBulk, measure: measure2 } = {}) {
+  let disposed = false;
+  let beforeBulk = typeof initialBeforeBulk === "function" ? initialBeforeBulk : null;
+  const runBeforeBulk = (app, uid, label) => {
+    try {
+      beforeBulk?.(app, uid, label);
+    } catch (error) {
+      console.warn("[plexus] beforeBulk failed", error);
+    }
+  };
+  function commitNew(app, uid, elements, label) {
+    const existing = new Set((app.getSceneElementsIncludingDeleted?.() || []).map((e) => e.id));
+    for (const el of elements) if (existing.has(el.id)) throw new Error(`Element ${el.id} already exists`);
+    runBeforeBulk(app, uid, `before ${label}`);
+    const selectedElementIds2 = {};
+    for (const el of elements) if (!el.containerId) selectedElementIds2[el.id] = true;
+    const ok = writeGuard.guardedWrite(app, {
+      drawingUid: uid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current4) => [...current4, ...elements],
+      appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
+    });
+    if (!ok) throw new Error(`Not applied: ${label} was refused`);
+  }
+  const scenes = /* @__PURE__ */ new WeakMap();
+  const subs = /* @__PURE__ */ new Map();
+  const disposeHooks = /* @__PURE__ */ new Set();
+  const frame = typeof raf === "function" ? (fn) => raf(fn) : (fn) => setTimeout(fn, 16);
+  function build(app, uid) {
+    let released = false;
+    const live3 = () => !released && !disposed && native.activeEditor(doc)?.app === app && native.activeEditor(doc)?.drawingUid === uid;
+    const guard2 = () => {
+      if (!live3()) throw new Error(GONE);
+    };
+    const all = () => app.getSceneElementsIncludingDeleted?.() || [];
+    const write = (next, label, { force = false } = {}) => writeGuard.guardedWrite(app, { drawingUid: uid, next, label, captureUpdate: "IMMEDIATELY", force });
+    const scene = {
+      uid,
+      elements() {
+        guard2();
+        return structuredClone(liveElements(all()));
+      },
+      appState() {
+        guard2();
+        const s = app.state || {};
+        return { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom?.value ?? s.zoom, selectedElementIds: { ...s.selectedElementIds || {} }, theme: s.theme, width: s.width, height: s.height };
+      },
+      add(elements, { select = true, at = "keep" } = {}) {
+        guard2();
+        if (!Array.isArray(elements) || !elements.length) throw new Error("add needs a non-empty array");
+        if (elements.some((e) => e?.type === "image")) throw new Error("image elements are not supported");
+        const inputs = elements.map((e) => structuredClone(e));
+        const kept = [];
+        const copies = [];
+        inputs.forEach((el, i) => {
+          if (invisible(el)) return;
+          const cd = isPlain(el.customData) ? el.customData : {};
+          copies.push({ ...el, customData: { ...cd, plexus: { ...isPlain(cd.plexus) ? cd.plexus : {}, addKey: i } } });
+          kept.push(i);
+        });
+        const ids = inputs.map(() => null);
+        if (!copies.length) return ids;
+        const prevSel = { ...app.state?.selectedElementIds || {} };
+        const prevGroups = { ...app.state?.selectedGroupIds || {} };
+        let position = "center";
+        if (at === "keep") {
+          const bounds = commonBounds(copies);
+          if (bounds) {
+            const [x1, y1, x2, y2] = bounds;
+            const p = sceneToViewport({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, appState: app.state });
+            position = { clientX: p.x, clientY: p.y };
+          }
+        }
+        native.addViaPaste(app, copies, { position });
+        const byKey = /* @__PURE__ */ new Map();
+        for (const el of all()) {
+          const k = el.customData?.plexus?.addKey;
+          if (!el.isDeleted && Number.isInteger(k) && kept.includes(k) && !byKey.has(k)) byKey.set(k, el.id);
+        }
+        const keyOf = new Map([...byKey].map(([k, id]) => [id, k]));
+        const next = all().map((el) => {
+          const k = keyOf.get(el.id);
+          if (k === void 0) return el;
+          const orig = elements[k];
+          const out = { ...el };
+          if (orig.customData === void 0) delete out.customData;
+          else out.customData = structuredClone(orig.customData);
+          if (orig.frameId == null) out.frameId = null;
+          return bump(out);
+        });
+        let selection = prevSel;
+        let groups = prevGroups;
+        if (select) {
+          selection = {};
+          groups = {};
+          for (const el of next) if (keyOf.has(el.id) && !el.containerId) selection[el.id] = true;
+        }
+        writeGuard.guardedWrite(app, { drawingUid: uid, next, label: "Add", appState: { selectedElementIds: selection, selectedGroupIds: groups } });
+        for (const [k, id] of byKey) ids[k] = id;
+        return ids;
+      },
+      update(id, patch) {
+        guard2();
+        if (!isPlain(patch)) throw new Error("patch must be an object");
+        for (const key of FORBIDDEN_PATCH_KEYS) if (key in patch) throw new Error(`Cannot patch ${key}`);
+        const el = all().find((e) => e.id === id);
+        if (!el) throw new Error(`No element ${id}`);
+        const extra = { ...patch };
+        if (patch.customData !== void 0) {
+          const merged = { ...el.customData || {}, ...patch.customData };
+          if (isPlain(patch.customData.plexus) && isPlain(el.customData?.plexus)) merged.plexus = { ...el.customData.plexus, ...patch.customData.plexus };
+          extra.customData = merged;
+        }
+        if (typeof patch.text === "string" && patch.originalText === void 0) extra.originalText = patch.text;
+        const updated = bump(el, extra);
+        if (!write(all().map((e) => e.id === id ? updated : e), "Update")) throw new Error("Not applied: update was refused");
+        return structuredClone(updated);
+      },
+      remove(ids, { force = false } = {}) {
+        guard2();
+        const set = new Set(Array.isArray(ids) ? ids : [ids]);
+        const els = all();
+        const hit = new Set(els.filter((e) => set.has(e.id)).map((e) => e.id));
+        const doomed = /* @__PURE__ */ new Set([...hit, ...els.filter((e) => e.containerId && hit.has(e.containerId)).map((e) => e.id)]);
+        if (!doomed.size) return 0;
+        const n = els.filter((e) => doomed.has(e.id) && !e.isDeleted).length;
+        const applied = write(els.map((e) => doomed.has(e.id) && !e.isDeleted ? bump(e, { isDeleted: true }) : e), "Remove", { force: force === true });
+        if (!applied) throw new Error(`Not applied: would remove ${n} of ${els.filter((e) => !e.isDeleted).length}`);
+        return hit.size;
+      },
+      addChart(json, { layout = "tree", at } = {}) {
+        guard2();
+        const st = app.state || {};
+        const centre = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+        const chart = chartToElements(json, { layout, origin: centre, measure: measure2 });
+        commitNew(app, uid, chart.elements, "Chart");
+        return { chart: chart.chart, ids: chart.ids, skipped: chart.skipped };
+      },
+      select(ids) {
+        guard2();
+        const selection = {};
+        for (const id of ids || []) selection[id] = true;
+        app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {} } });
+      },
+      zoomTo(ids) {
+        guard2();
+        const set = new Set(ids || []);
+        const els = liveElements(all()).filter((e) => set.has(e.id));
+        if (!els.length) throw new Error("No elements to zoom to");
+        native.zoomTo(app, commonBounds(els));
+      },
+      async exportSvg(ids) {
+        guard2();
+        const list = ids?.length ? ids : liveElements(all()).map((e) => e.id);
+        const svg = await native.captureSelectionSvg(app, list);
+        guard2();
+        return normalizeSvgSize(svg);
+      },
+      onChange(cb) {
+        guard2();
+        if (typeof cb !== "function") throw new Error("callback required");
+        const emitter = app.onChangeEmitter;
+        let pending = false;
+        let off = null;
+        let closed = false;
+        const close2 = () => {
+          if (closed) return;
+          closed = true;
+          try {
+            off?.();
+          } catch (error) {
+            console.warn("[plexus] unsubscribe failed", error);
+          }
+          subs.get(app)?.delete(close2);
+        };
+        off = emitter?.on?.(() => {
+          if (pending || closed) return;
+          pending = true;
+          frame(() => {
+            pending = false;
+            if (closed || !live3()) return;
+            try {
+              cb({ uid });
+            } catch (error) {
+              console.error("[plexus] onChange failed", error);
+            }
+          });
+        });
+        if (!subs.has(app)) subs.set(app, /* @__PURE__ */ new Set());
+        subs.get(app).add(close2);
+        return close2;
+      }
+    };
+    const frozen = Object.freeze(scene);
+    return { scene: frozen, release() {
+      released = true;
+    } };
+  }
+  const registry = {
+    sceneFor(app, uid) {
+      if (disposed || !app || !uid) return null;
+      const cur = scenes.get(app);
+      if (cur && cur.uid === uid && !cur.released) return cur.scene;
+      cur?.release();
+      const made = build(app, uid);
+      const entry = { uid, scene: made.scene, release: made.release, released: false };
+      const rel = made.release;
+      entry.release = () => {
+        entry.released = true;
+        rel();
+      };
+      scenes.set(app, entry);
+      return entry.scene;
+    },
+    sceneOf(uid) {
+      if (disposed) return null;
+      const ed = native.activeEditor(doc);
+      return ed?.app && ed.drawingUid === uid ? registry.sceneFor(ed.app, uid) : null;
+    },
+    measure: measure2,
+    setBeforeBulk(fn) {
+      beforeBulk = typeof fn === "function" ? fn : null;
+    },
+    beforeBulk(app, uid, label) {
+      runBeforeBulk(app, uid, label);
+    },
+    // Appends builder elements to the open drawing (of uid, when given). Refuses when it is not open; never opens one.
+    commit(elements, { uid, label = "Build" } = {}) {
+      if (disposed) throw new Error(GONE);
+      const ed = native.activeEditor(doc);
+      if (!ed?.app || uid && ed.drawingUid !== uid) throw new Error(NOT_OPEN);
+      commitNew(ed.app, ed.drawingUid, elements, label);
+    },
+    activeApp() {
+      return native.activeEditor(doc)?.app ?? null;
+    },
+    activeUid() {
+      return native.activeEditor(doc)?.drawingUid ?? null;
+    },
+    ready(app, timeoutMs) {
+      return native.waitNotLoading(app, timeoutMs, { doc });
+    },
+    release(app) {
+      scenes.get(app)?.release();
+      scenes.delete(app);
+      for (const close2 of [...subs.get(app) || []]) close2();
+      subs.delete(app);
+    },
+    onDispose(cb) {
+      disposeHooks.add(cb);
+      return () => disposeHooks.delete(cb);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const set of subs.values()) for (const close2 of [...set]) close2();
+      subs.clear();
+      for (const cb of [...disposeHooks]) {
+        try {
+          cb();
+        } catch (error) {
+          console.warn("[plexus] dispose hook failed", error);
+        }
+      }
+      disposeHooks.clear();
+    }
+  };
+  return registry;
+}
+function subscribe(emitter, type, cb) {
+  if (typeof emitter?.on === "function") return emitter.on(type, cb);
+  if (typeof emitter?.addEventListener === "function") return emitter.addEventListener(type, cb);
+  return void 0;
+}
+function unsubscribe(emitter, type, cb) {
+  if (typeof emitter?.off === "function") return emitter.off(type, cb);
+  if (typeof emitter?.removeEventListener === "function") return emitter.removeEventListener(type, cb);
+  return void 0;
+}
+function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure: measure2 } = {}) {
+  const listeners = /* @__PURE__ */ new Map();
+  const opening = /* @__PURE__ */ new Map();
+  const api = {
+    apiVersion: API_VERSION,
+    version: String(version ?? ""),
+    isAvailable() {
+      try {
+        return !!host?.graphName?.();
+      } catch {
+        return false;
+      }
+    },
+    async create(args) {
+      const result = await host.createDrawing(args || {});
+      try {
+        emitter?.emit?.({ uid: result?.uid, kind: "drawing" });
+      } catch (error) {
+        console.warn("[plexus] change emit failed", error);
+      }
+      return result;
+    },
+    open(uid, { region, sidebar = false } = {}) {
+      let isRegion = region;
+      if (isRegion == null) isRegion = !!parseRegion(host.pullBlock?.(uid)?.string);
+      return isRegion ? actions.openRegion(uid, { sidebar }) : host.openBlock(uid, { sidebar });
+    },
+    thumbnail(uid, opts) {
+      return actions.thumbnail(uid, opts || {});
+    },
+    regionsOf(uid) {
+      const entries = host.regionsOf(uid);
+      let src = { string: "", pageTitle: null };
+      try {
+        src = host.labelSource?.(uid) ?? src;
+      } catch (error) {
+        console.warn("[plexus] labelSource failed", error);
+      }
+      return entries.map(({ uid: regionUid, region }) => {
+        let label = "Region";
+        try {
+          label = regionLabel({
+            kind: region.kind,
+            caption: region.caption ?? "",
+            drawingTitle: drawingTitleOf(src.string, src.pageTitle),
+            imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
+            resolveBlock: (u) => host.pullBlock?.(u)?.string
+          });
+        } catch (error) {
+          console.warn("[plexus] region label failed", error);
+        }
+        return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
+      });
+    },
+    drawingsOn(pageUid) {
+      return host.drawingsOn(pageUid);
+    },
+    scene(uid) {
+      return scenes?.sceneOf?.(uid) ?? null;
+    },
+    build({ style } = {}) {
+      const builder = createBuilder({ style, measure: measure2 ?? scenes?.measure });
+      let committed = false;
+      const pub = {};
+      for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(builder))) {
+        if (key !== "seal") Object.defineProperty(pub, key, { ...desc, enumerable: true });
+      }
+      pub.commit = (uid) => {
+        if (committed) throw new Error("Already committed");
+        if (!scenes?.commit) throw new Error("Scenes unavailable");
+        const elements = builder.elements();
+        if (!elements.length) throw new Error("Nothing to commit");
+        scenes.commit(elements, { uid, label: "Build" });
+        committed = true;
+        builder.seal();
+        return builder.ids();
+      };
+      return Object.freeze(pub);
+    },
+    whenOpen(uid, { timeoutMs = 1e4, sidebar = false } = {}) {
+      if (opening.has(uid)) return opening.get(uid).promise;
+      if (opening.size) return Promise.reject(new Error(`Busy opening ${[...opening.keys()][0]}`));
+      let timer = null;
+      let offDispose = null;
+      const promise = new Promise((resolve, reject) => {
+        const fail2 = (message) => reject(new Error(message));
+        timer = setTimeout(() => fail2("Timed out"), timeoutMs);
+        offDispose = scenes?.onDispose?.(() => fail2("Plexus unloaded"));
+        (async () => {
+          if (!scenes) throw new Error("Scenes unavailable");
+          if (!DRAWING_RE2.test(String(host.pullBlock?.(uid)?.string ?? ""))) throw new Error("Not a drawing");
+          let app = scenes.sceneOf(uid) ? scenes.activeApp() : null;
+          if (!app) {
+            const active = scenes.activeUid?.();
+            if (active && active !== uid) throw new Error("Another drawing is open");
+            const opened = await openDrawing?.(uid, { sidebar });
+            if (!opened?.app) throw new Error("Could not open drawing");
+            app = opened.app;
+          }
+          if (!await scenes.ready(app, timeoutMs)) throw new Error("Timed out");
+          const scene = scenes.sceneFor(app, uid);
+          if (!scene) throw new Error("Plexus unloaded");
+          return scene;
+        })().then(resolve, reject);
+      });
+      const entry = { promise };
+      opening.set(uid, entry);
+      const done2 = () => {
+        clearTimeout(timer);
+        offDispose?.();
+        if (opening.get(uid) === entry) opening.delete(uid);
+      };
+      promise.then(done2, done2);
+      return promise;
+    },
+    addEventListener(type, cb) {
+      if (type !== "change" || typeof cb !== "function" || listeners.has(cb)) return;
+      const wrapped = (detail) => {
+        try {
+          cb(detail);
+        } catch (error) {
+          console.error("[plexus] listener failed", error);
+        }
+      };
+      listeners.set(cb, wrapped);
+      subscribe(emitter, "change", wrapped);
+    },
+    removeEventListener(type, cb) {
+      if (type !== "change") return;
+      const wrapped = listeners.get(cb);
+      if (!wrapped) return;
+      listeners.delete(cb);
+      unsubscribe(emitter, "change", wrapped);
+    }
+  };
+  return Object.freeze(api);
+}
+var fire = (win, type, detail, Ctor) => {
+  try {
+    const C = Ctor ?? win.CustomEvent ?? globalThis.CustomEvent;
+    if (C) win.dispatchEvent(new C(type, { detail }));
+  } catch (error) {
+    console.warn("[plexus] event dispatch failed", error);
+  }
+};
+function installPublicApi(api, { win = globalThis.window ?? globalThis, CustomEventCtor } = {}) {
+  win.RoamPlexus = api;
+  fire(win, "roam-plexus:ready", { apiVersion: API_VERSION }, CustomEventCtor);
+}
+function uninstallPublicApi(api, { win = globalThis.window ?? globalThis, CustomEventCtor } = {}) {
+  const ours = win.RoamPlexus === api;
+  if (ours) delete win.RoamPlexus;
+  fire(win, "roam-plexus:unload", { apiVersion: API_VERSION }, CustomEventCtor);
+  return ours;
+}
+
+// src/model/mmdrop.js
+var REPARENT_INSET = 0.2;
+var BAND_PAD = 20;
+var HORIZONTAL = /* @__PURE__ */ new Set(["right", "left", "cause"]);
+var VERTICAL = /* @__PURE__ */ new Set(["down", "up"]);
+var refuse = (reason) => ({ type: "refuse", reason });
+var inside = (r, x, y) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+var inner = (r) => ({ x: r.x + REPARENT_INSET * r.width, y: r.y + REPARENT_INSET * r.height, width: r.width * (1 - 2 * REPARENT_INSET), height: r.height * (1 - 2 * REPARENT_INSET) });
+function resolveDrop({ plan, tree, dragged, point, layout }) {
+  if (!plan || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return { type: "pin" };
+  if (tree && dragged === tree.uid) return refuse("root");
+  const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
+  const byUid = /* @__PURE__ */ new Map();
+  const kids2 = /* @__PURE__ */ new Map();
+  for (const v of nodes) {
+    byUid.set(v.node.uid, v);
+    if (v.parent) {
+      if (!kids2.has(v.parent.uid)) kids2.set(v.parent.uid, []);
+      kids2.get(v.parent.uid).push(v);
+    }
+  }
+  if (!byUid.has(dragged)) return refuse("missing");
+  const rectOf = (uid) => {
+    const p = plan.positions?.[uid];
+    const s = plan.info?.get?.(uid)?.size;
+    return p && s ? { x: p.x, y: p.y, width: s.width, height: s.height } : null;
+  };
+  const sub = /* @__PURE__ */ new Set([dragged]);
+  for (const v of nodes) if (v.parent && sub.has(v.parent.uid)) sub.add(v.node.uid);
+  for (const v of nodes) {
+    if (sub.has(v.node.uid)) continue;
+    const r = rectOf(v.node.uid);
+    if (r && inside(inner(r), point.x, point.y)) return { type: "reparent", parentUid: v.node.uid, ring: r };
+  }
+  for (const uid of sub) {
+    const r = rectOf(uid);
+    if (!r) continue;
+    if (uid === dragged) {
+      if (inside(r, point.x, point.y)) return { type: "pin" };
+    } else if (inside(inner(r), point.x, point.y)) return refuse("own-subtree");
+  }
+  const horizontal = HORIZONTAL.has(layout);
+  if (!horizontal && !VERTICAL.has(layout)) return { type: "pin" };
+  const cross = (r) => horizontal ? { start: r.y, size: r.height } : { start: r.x, size: r.width };
+  const axis = (r) => horizontal ? { start: r.x, end: r.x + r.width } : { start: r.y, end: r.y + r.height };
+  const pc = horizontal ? point.y : point.x;
+  const pa = horizontal ? point.x : point.y;
+  for (const [parentUid, list] of kids2) {
+    const sibs = list.filter((v) => v.node.uid !== dragged && plan.info?.get?.(v.node.uid)?.mm?.pinned !== true);
+    if (!sibs.length) continue;
+    const rs = sibs.map((v) => ({ v, r: rectOf(v.node.uid) }));
+    if (rs.some((x) => !x.r)) continue;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const { r } of rs) {
+      const a = axis(r);
+      lo = Math.min(lo, a.start);
+      hi = Math.max(hi, a.end);
+    }
+    if (pa < lo - BAND_PAD || pa > hi + BAND_PAD) continue;
+    const blockParent = (v) => v.node.via ?? parentUid;
+    const bar = (at) => horizontal ? { x: lo, y: at, width: hi - lo, height: 0 } : { x: at, y: lo, width: 0, height: hi - lo };
+    const first = rs[0];
+    const last = rs[rs.length - 1];
+    const cf = cross(first.r);
+    if (pc >= cf.start - (0.5 * cf.size + SIBLING_GAP) && pc <= cf.start + REPARENT_INSET * cf.size) {
+      return { type: "reorder", parentUid: blockParent(first.v), beforeUid: first.v.node.uid, ring: bar(cf.start - SIBLING_GAP / 2) };
+    }
+    for (let i = 0; i + 1 < rs.length; i++) {
+      const a = rs[i];
+      const b = rs[i + 1];
+      const ca = cross(a.r);
+      const cb = cross(b.r);
+      if (pc < ca.start + (1 - REPARENT_INSET) * ca.size || pc > cb.start + REPARENT_INSET * cb.size) continue;
+      const ring = bar((ca.start + ca.size + cb.start) / 2);
+      if (b.v.node.via == null) return { type: "reorder", parentUid, beforeUid: b.v.node.uid, ring };
+      if (a.v.node.via == null) return { type: "reorder", parentUid, afterUid: a.v.node.uid, ring };
+      return { type: "reorder", parentUid: b.v.node.via, beforeUid: b.v.node.uid, ring };
+    }
+    const cl = cross(last.r);
+    if (pc >= cl.start + (1 - REPARENT_INSET) * cl.size && pc <= cl.start + cl.size + 0.5 * cl.size + SIBLING_GAP) {
+      return { type: "reorder", parentUid: blockParent(last.v), afterUid: last.v.node.uid, ring: bar(cl.start + cl.size + SIBLING_GAP / 2) };
+    }
+  }
+  return { type: "pin" };
+}
+
 // src/model/mmsync.js
 var FONT_FAMILY = 5;
 var BOUNDARY_PAD = 12;
 var EDGE_GAP = 4;
+var LABEL_FONT2 = 16;
+var CAUSE_LABEL = "caused by";
+var CAUSE_FILLS = Object.freeze(["#ffc9c9", "#ffd8a8", "#ffec99", "#e9ecef"]);
 var TOL = 0.5;
 var idPrefix = (root) => `pmm-${root}-`;
 var nodeId = (root, uid) => `pmm-${root}-${uid}`;
 var textId = (root, uid) => `pmm-${root}-${uid}-t`;
 var edgeId = (root, childUid) => `pmm-${root}-${childUid}-e`;
 var boundaryId = (root, uid) => `pmm-${root}-${uid}-b`;
+var labelId = (root, childUid) => `${edgeId(root, childUid)}-t`;
+var spineId = (root) => `pmm-${root}-${root}-s`;
 var rnd2 = () => Math.floor(Math.random() * 2147483646) + 1;
 var mmOf = (el) => el && el.customData && el.customData.plexus && el.customData.plexus.mm || void 0;
 function withMM(customData, mm2) {
@@ -7209,16 +8199,19 @@ function base(id, type, x, y, width, height, extra) {
     ...extra
   };
 }
-function buildNode({ map, uid, x, y, width, height, backgroundColor, mm: mm2, boundElements }) {
+function buildNode({ map, uid, x, y, width, height, backgroundColor, mm: mm2, boundElements, opacity, strokeStyle }) {
   return base(nodeId(map, uid), "rectangle", x, y, width, height, {
     backgroundColor,
     roundness: { type: 3 },
     boundElements: boundElements || [],
-    customData: withMM(null, mm2)
+    customData: withMM(null, mm2),
+    ...opacity !== void 0 ? { opacity } : {},
+    ...strokeStyle !== void 0 ? { strokeStyle } : {}
   });
 }
-function buildText({ map, uid, x, y, width, height, text, originalText, fontSize }) {
+function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity }) {
   return base(textId(map, uid), "text", x, y, width, height, {
+    ...opacity !== void 0 ? { opacity } : {},
     text,
     originalText,
     fontSize,
@@ -7230,17 +8223,45 @@ function buildText({ map, uid, x, y, width, height, text, originalText, fontSize
     lineHeight: LINE_HEIGHT
   });
 }
-function buildEdge({ map, parentUid, childUid, x, y, points }) {
+function buildEdge({ map, parentUid, childUid, x, y, points, via, unboundStart = false, boundElements }) {
   const [, [dx, dy]] = points;
   return base(edgeId(map, childUid), "arrow", x, y, Math.abs(dx), Math.abs(dy), {
     points,
     lastCommittedPoint: null,
-    startBinding: { elementId: nodeId(map, parentUid), focus: 0, gap: EDGE_GAP },
+    startBinding: unboundStart ? null : { elementId: nodeId(map, parentUid), focus: 0, gap: EDGE_GAP },
     endBinding: { elementId: nodeId(map, childUid), focus: 0, gap: EDGE_GAP },
     startArrowhead: null,
     endArrowhead: null,
     elbowed: false,
-    customData: withMM(null, { edge: [parentUid, childUid], map })
+    ...boundElements && boundElements.length ? { boundElements } : {},
+    customData: withMM(null, edgeMM(map, parentUid, childUid, via))
+  });
+}
+var edgeMM = (map, parentUid, childUid, via) => ({ edge: [parentUid, childUid], map, ...via ? { via } : {} });
+function buildLabel({ map, childUid, x, y, width, height, text, originalText }) {
+  return base(labelId(map, childUid), "text", x, y, width, height, {
+    text,
+    originalText,
+    fontSize: LABEL_FONT2,
+    fontFamily: 5,
+    textAlign: "center",
+    verticalAlign: "middle",
+    containerId: edgeId(map, childUid),
+    autoResize: true,
+    lineHeight: LINE_HEIGHT,
+    customData: withMM(null, { label: childUid, map })
+  });
+}
+function buildSpine({ map, x, y, points }) {
+  const [, [dx, dy]] = points;
+  return base(spineId(map), "line", x, y, Math.abs(dx), Math.abs(dy), {
+    points,
+    lastCommittedPoint: null,
+    startBinding: null,
+    endBinding: null,
+    startArrowhead: null,
+    endArrowhead: null,
+    customData: withMM(null, { spine: map, map })
   });
 }
 function buildBoundary({ map, uid, x, y, width, height }) {
@@ -7251,11 +8272,12 @@ function buildBoundary({ map, uid, x, y, width, height }) {
     customData: withMM(null, { boundary: uid, map })
   });
 }
-function edgeGeometry(p, c, layout) {
+function edgeGeometry(p, c, layout, start) {
   let sx;
   let sy;
   let ex;
   let ey;
+  if (layout === "cause" || layout === "fishbone") layout = "left";
   if (layout === "right") {
     sx = p.x + p.width;
     sy = p.y + p.height / 2;
@@ -7282,12 +8304,16 @@ function edgeGeometry(p, c, layout) {
     ex = c.x + c.width / 2;
     ey = c.y + c.height / 2;
   }
+  if (start) {
+    sx = start.x;
+    sy = start.y;
+  }
   return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
 }
 function textRect(node, textWidth, textHeight) {
   return { x: node.x + (node.width - textWidth) / 2, y: node.y + (node.height - textHeight) / 2 };
 }
-var makeSizer = (measure2) => (text, fontSize) => nodeSize(text, fontSize, measure2);
+var makeSizer = (measure2) => (text, fontSize, _uid, maxWidth) => nodeSize(text, fontSize, measure2, maxWidth);
 var close = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= TOL;
 function stable(v) {
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
@@ -7311,7 +8337,18 @@ function mergeBound(existing, prefix, desired) {
   return out;
 }
 var colorFor = (v) => v.depth === 0 ? ROOT_COLOR : BRANCH_COLORS[v.branchIndex % BRANCH_COLORS.length];
-function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
+var schemeFill = (v, scheme) => scheme === "cause" ? CAUSE_FILLS[Math.min(v.depth, 3)] : colorFor(v);
+var EVIDENCE_RE = /#\[\[evidence\]\]|(?:^|[\s(])#evidence(?![\p{L}\p{N}_/-]|[.:][\p{L}\p{N}_/-])/iu;
+function fullSize(s, text, fs) {
+  const out = { ...s };
+  if (!Array.isArray(out.lines)) out.lines = String(out.text ?? text).split("\n");
+  if (out.text === void 0) out.text = out.lines.join("\n");
+  if (out.textWidth === void 0) out.textWidth = out.width - 2 * PAD_X;
+  if (out.textHeight === void 0) out.textHeight = out.lines.length * fs * LINE_HEIGHT;
+  if (out.height === void 0) out.height = out.textHeight + 2 * PAD_Y;
+  return out;
+}
+function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos, tagColors, rootDefaults }) {
   const root = tree.uid;
   const pre = idPrefix(root);
   const byId = /* @__PURE__ */ new Map();
@@ -7328,38 +8365,83 @@ function planMap({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
   const rootEl = byId.get(nodeId(root, root));
   const rootMM = mmOf(rootEl) || {};
   const dir = rootMM.layout || layout;
-  const nodes = visibleNodes(tree);
+  const family = isCauseLayout(dir) ? "cause" : "branch";
+  const oldScheme = rootMM.scheme === "cause" ? "cause" : "branch";
+  const attrEdges = rootEl ? rootMM.attrEdges === true : !!(rootDefaults && rootDefaults.attrEdges === true);
+  const vtree = visualTree(tree, { attrEdges });
+  const nodes = visibleNodes(vtree);
   const uids = allUids(tree);
   const storedBounds = Array.isArray(rootMM.bounds) ? rootMM.bounds : [];
   const bounds = tree.truncated ? storedBounds : storedBounds.filter((u) => uids.has(u));
   const info = /* @__PURE__ */ new Map();
   const sizeMap = {};
   const pinned = {};
+  const labels = /* @__PURE__ */ new Map();
+  const tags = tagColors instanceof Map ? tagColors : /* @__PURE__ */ new Map();
   for (const v of nodes) {
     const n = v.node;
     const fs = fontSizeForDepth(v.depth);
-    const base2 = textOf ? textOf(n.uid, n) : plainText(n.string, () => "…");
+    let base2 = textOf ? textOf(n.uid, n) : plainText(n.string, () => "…");
+    if (v.depth === 0 && family === "cause") base2 = `★ ${base2}`;
     const text = isFolded(n) ? `${base2} (+${countHidden(n)})` : base2;
-    const s = typeof sizes === "function" ? { ...sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
-    if (!Array.isArray(s.lines)) s.lines = String(s.text ?? text).split("\n");
-    if (s.text === void 0) s.text = s.lines.join("\n");
-    if (s.textWidth === void 0) s.textWidth = s.width - 2 * PAD_X;
-    if (s.textHeight === void 0) s.textHeight = s.lines.length * fs * LINE_HEIGHT;
-    if (s.height === void 0) s.height = s.textHeight + 2 * PAD_Y;
+    const raw = typeof sizes === "function" ? { ...sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
+    const s = fullSize(raw, text, fs);
     sizeMap[n.uid] = s;
     const el = byId.get(nodeId(root, n.uid));
     const mm2 = mmOf(el);
     if (v.depth > 0 && el && mm2 && mm2.pinned === true) pinned[n.uid] = { x: el.x, y: el.y };
-    info.set(n.uid, { fs, text, size: s, el, mm: mm2 });
+    info.set(n.uid, {
+      fs,
+      text,
+      size: s,
+      el,
+      mm: mm2,
+      tag: tagColor(n.string, tags),
+      done: taskState(n.string) === "DONE",
+      dash: family === "cause" && EVIDENCE_RE.test(n.string)
+    });
+    if (v.depth > 0) {
+      const lt = n.edgeLabel !== void 0 ? n.edgeLabel : family === "cause" ? CAUSE_LABEL : null;
+      if (lt) labels.set(n.uid, lt);
+    }
   }
+  const labelMemo = /* @__PURE__ */ new Map();
+  const labelSize = (uid, text, wrapW) => {
+    const key = `${wrapW}|${text}`;
+    let r = labelMemo.get(key);
+    if (!r) {
+      const raw = typeof sizes === "function" ? { ...sizes(text, LABEL_FONT2, `${uid}-e`, wrapW) } : { ...sizes && sizes[`${uid}-e`] || { width: text.length * 8 + 2 * PAD_X } };
+      r = fullSize(raw, text, LABEL_FONT2);
+      labelMemo.set(key, r);
+    }
+    return r;
+  };
+  const baseWrap = arrowLabelWrapWidth(0, LABEL_FONT2);
+  const vertical = dir === "down" || dir === "up";
+  const gapOf = (uid) => {
+    const lt = labels.get(uid);
+    if (!lt) return LEVEL_GAP;
+    const ls = labelSize(uid, lt, baseWrap);
+    return Math.max(LEVEL_GAP, (vertical ? ls.textHeight : ls.textWidth) + 24);
+  };
   const anchor = rootEl && Number.isFinite(rootEl.x) ? { x: rootEl.x, y: rootEl.y } : rootPos || { x: 0, y: 0 };
-  const positions = layoutTree({ tree, sizes: sizeMap, layout: dir, pinned, root: anchor });
-  return { root, dir, bounds, nodes, info, positions, byId, textByContainer };
+  let positions;
+  let spine = null;
+  let slotX = {};
+  if (dir === "fishbone") {
+    const fb = fishboneLayout({ tree: vtree, sizes: sizeMap, pinned, root: anchor, gapOf });
+    positions = fb.positions;
+    spine = fb.spine;
+    slotX = fb.slotX;
+  } else positions = layoutTree({ tree: vtree, sizes: sizeMap, layout: dir, pinned, root: anchor, gapOf });
+  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges };
 }
-function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos }) {
+function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, tagColors, rootDefaults }) {
   const ops = { add: [], update: [], remove: [] };
   if (!tree) return ops;
-  const { root, dir, bounds, nodes, info, positions, byId, textByContainer } = planMap({ elements, tree, sizes, layout, textOf, rootPos });
+  const plan = planMap({ elements, tree, sizes, layout, textOf, rootPos, tagColors, rootDefaults });
+  const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX } = plan;
+  const fishbone = dir === "fishbone";
   const pre = idPrefix(root);
   const desiredIds = /* @__PURE__ */ new Set();
   const patches = /* @__PURE__ */ new Map();
@@ -7373,13 +8455,15 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
     let canon = null;
     if (mm2.boundary) canon = boundaryId(root, mm2.boundary);
     else if (Array.isArray(mm2.edge)) canon = edgeId(root, mm2.edge[1]);
+    else if (typeof mm2.label === "string") canon = labelId(root, mm2.label);
+    else if (mm2.spine) canon = spineId(root);
     else if (mm2.uid) canon = nodeId(root, mm2.uid);
     if (canon !== null && el.id !== canon) patchOf(el.id).customData = withoutMM(el.customData);
   }
   const kidEdges = /* @__PURE__ */ new Map();
   const finalRect = /* @__PURE__ */ new Map();
   for (const v of nodes) {
-    if (v.parent) {
+    if (v.parent && !(fishbone && v.depth === 1)) {
       if (!kidEdges.has(v.parent.uid)) kidEdges.set(v.parent.uid, []);
       kidEdges.get(v.parent.uid).push(v.node.uid);
     }
@@ -7389,6 +8473,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
   }
   const addEdges = [];
   const addBodies = [];
+  const addLabels = [];
   for (const v of nodes) {
     const uid = v.node.uid;
     const i = info.get(uid);
@@ -7415,10 +8500,34 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
     };
     const curMM = i.mm || {};
     const wantMM = isRoot ? { ...curMM, uid, map: root, root: true, layout: curMM.layout || dir, bounds } : { ...curMM, uid, map: root, ...branch !== void 0 ? { branch } : {} };
+    if (i.tag) wantMM.tag = i.tag;
+    else delete wantMM.tag;
+    if (i.done) wantMM.done = true;
+    else delete wantMM.done;
+    if (i.dash) wantMM.dash = true;
+    else delete wantMM.dash;
+    if (isRoot) {
+      if (family === "cause") wantMM.scheme = "cause";
+      else delete wantMM.scheme;
+    }
+    const fill = i.tag || schemeFill(v, family);
     if (!i.el) {
+      if (isRoot && rootDefaults) Object.assign(wantMM, { ...rootDefaults, ...wantMM });
       addBodies.push(
-        buildNode({ map: root, uid, x: rect.x, y: rect.y, width: rect.width, height: rect.height, backgroundColor: colorFor(v), mm: wantMM, boundElements: ownBound }),
-        buildText({ map: root, uid, ...want })
+        buildNode({
+          map: root,
+          uid,
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          backgroundColor: fill,
+          mm: wantMM,
+          boundElements: ownBound,
+          opacity: i.done ? 50 : void 0,
+          strokeStyle: i.dash ? "dashed" : void 0
+        }),
+        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0 })
       );
     } else {
       const el = i.el;
@@ -7426,12 +8535,20 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
       if (el.isDeleted) p.isDeleted = false;
       for (const k of ["x", "y", "width", "height"]) if (!close(el[k], rect[k])) p[k] = rect[k];
       if (Math.abs(el.angle || 0) > 1e-6) p.angle = 0;
-      if (!isRoot && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = colorFor(v);
+      if (!isRoot && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = fill;
+      else if (oldScheme !== family || curMM.tag !== i.tag) {
+        const oldExpected = curMM.tag || schemeFill(v, oldScheme);
+        if (el.backgroundColor === oldExpected && oldExpected !== fill) p.backgroundColor = fill;
+      }
+      if (i.done && curMM.done !== true) p.opacity = 50;
+      else if (!i.done && curMM.done === true && el.opacity === 50) p.opacity = 100;
+      if (i.dash && curMM.dash !== true) p.strokeStyle = "dashed";
+      else if (!i.dash && curMM.dash === true && el.strokeStyle === "dashed") p.strokeStyle = "solid";
       if (!same(curMM, wantMM)) p.customData = withMM(el.customData, wantMM);
       const mb = mergeBound(el.boundElements, pre, ownBound);
       if (!same(mb, el.boundElements || [])) p.boundElements = mb;
       if (!txtEl) {
-        addBodies.push(buildText({ map: root, uid, ...want }));
+        addBodies.push(buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0 }));
       } else {
         const tp = patchOf(txtEl.id);
         if (txtEl.isDeleted) tp.isDeleted = false;
@@ -7443,19 +8560,61 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
         if (txtEl.fontFamily !== FONT_FAMILY) tp.fontFamily = FONT_FAMILY;
         if (Math.abs((txtEl.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) tp.lineHeight = LINE_HEIGHT;
         if (txtEl.containerId !== nid) tp.containerId = nid;
+        if (i.done && curMM.done !== true) tp.opacity = 50;
+        else if (!i.done && curMM.done === true && txtEl.opacity === 50) tp.opacity = 100;
       }
     }
     if (!isRoot) {
       const eid = edgeId(root, uid);
       desiredIds.add(eid);
-      const pid = nodeId(root, v.parent.uid);
-      const g = edgeGeometry(finalRect.get(v.parent.uid), rect, dir);
+      const parentUid = v.parent.uid;
+      const pid = nodeId(root, parentUid);
+      const boneStart = fishbone && v.depth === 1 && spine ? { x: slotX[uid], y: spine.y } : null;
+      const g = edgeGeometry(finalRect.get(parentUid), rect, dir, boneStart);
       const e = byId.get(eid);
+      const [, [dx, dy]] = g.points;
+      const wantEdgeMM = edgeMM(root, parentUid, uid, v.node.via);
+      const lid = labelId(root, uid);
+      let label = null;
+      const ltext = labels.get(uid);
+      if (ltext) {
+        const foreign = e && (Array.isArray(e.boundElements) ? e.boundElements : []).some((b) => {
+          if (!b || b.type !== "text" || b.id === lid) return false;
+          const t = byId.get(b.id);
+          return t && !t.isDeleted && t.type === "text";
+        });
+        if (!foreign) {
+          const ls = labelSize(uid, ltext, arrowLabelWrapWidth(Math.abs(dx), LABEL_FONT2));
+          const lr = arrowLabelRect({ x: g.x, y: g.y, points: g.points }, ls.textWidth, ls.textHeight);
+          label = { x: lr.x, y: lr.y, width: ls.textWidth, height: ls.textHeight, text: ls.text, originalText: ltext };
+        }
+      }
+      const edgeBound = label ? [{ id: lid, type: "text" }] : [];
+      if (label) {
+        desiredIds.add(lid);
+        const lt = byId.get(lid);
+        if (!lt) addLabels.push(buildLabel({ map: root, childUid: uid, ...label }));
+        else {
+          const lp = patchOf(lid);
+          if (lt.isDeleted) lp.isDeleted = false;
+          for (const k of ["x", "y", "width", "height"]) if (!close(lt[k], label[k])) lp[k] = label[k];
+          if (Math.abs(lt.angle || 0) > 1e-6) lp.angle = 0;
+          if (lt.text !== label.text) lp.text = label.text;
+          if (lt.originalText !== label.originalText) lp.originalText = label.originalText;
+          if (lt.fontSize !== LABEL_FONT2) lp.fontSize = LABEL_FONT2;
+          if (lt.fontFamily !== FONT_FAMILY) lp.fontFamily = FONT_FAMILY;
+          if (lt.textAlign !== "center") lp.textAlign = "center";
+          if (lt.verticalAlign !== "middle") lp.verticalAlign = "middle";
+          if (Math.abs((lt.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) lp.lineHeight = LINE_HEIGHT;
+          if (lt.containerId !== eid) lp.containerId = eid;
+          const lm = mmOf(lt);
+          if (!lm || lm.label !== uid || lm.map !== root) lp.customData = withMM(lt.customData, { label: uid, map: root });
+        }
+      }
       if (!e) {
-        addEdges.push(buildEdge({ map: root, parentUid: v.parent.uid, childUid: uid, ...g }));
+        addEdges.push(buildEdge({ map: root, parentUid, childUid: uid, ...g, via: v.node.via, unboundStart: !!boneStart, boundElements: edgeBound }));
       } else {
         const ep = patchOf(eid);
-        const [, [dx, dy]] = g.points;
         if (e.isDeleted) ep.isDeleted = false;
         if (!close(e.x, g.x)) ep.x = g.x;
         if (!close(e.y, g.y)) ep.y = g.y;
@@ -7464,9 +8623,36 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
         const pts = Array.isArray(e.points) ? e.points : [];
         const ok = pts.length === 2 && close(pts[0][0], 0) && close(pts[0][1], 0) && close(pts[1][0], dx) && close(pts[1][1], dy);
         if (!ok) ep.points = g.points;
-        if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
+        if (boneStart) {
+          if (e.startBinding) ep.startBinding = null;
+        } else if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
         if (!e.endBinding || e.endBinding.elementId !== nid) ep.endBinding = { elementId: nid, focus: 0, gap: EDGE_GAP };
+        if (!same(mmOf(e) || null, wantEdgeMM)) ep.customData = withMM(e.customData, wantEdgeMM);
+        const eb = mergeBound(e.boundElements, pre, edgeBound);
+        if (!same(eb, e.boundElements || [])) ep.boundElements = eb;
       }
+    }
+  }
+  const addSpine = [];
+  if (fishbone && spine) {
+    const sid = spineId(root);
+    desiredIds.add(sid);
+    const len = spine.x2 - spine.x1;
+    const pts = [[0, 0], [len, 0]];
+    const e = byId.get(sid);
+    if (!e) addSpine.push(buildSpine({ map: root, x: spine.x1, y: spine.y, points: pts }));
+    else {
+      const sp = patchOf(sid);
+      if (e.isDeleted) sp.isDeleted = false;
+      if (!close(e.x, spine.x1)) sp.x = spine.x1;
+      if (!close(e.y, spine.y)) sp.y = spine.y;
+      if (!close(e.width, Math.abs(len))) sp.width = Math.abs(len);
+      if (!close(e.height, 0)) sp.height = 0;
+      const ep = Array.isArray(e.points) ? e.points : [];
+      const ok = ep.length === 2 && close(ep[0][0], 0) && close(ep[0][1], 0) && close(ep[1][0], len) && close(ep[1][1], 0);
+      if (!ok) sp.points = pts;
+      const m = mmOf(e);
+      if (!m || m.spine !== root || m.map !== root) sp.customData = withMM(e.customData, { spine: root, map: root });
     }
   }
   const bb = /* @__PURE__ */ new Map();
@@ -7505,7 +8691,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos })
     const m = mmOf(e);
     if (!m || m.boundary !== uid || m.map !== root) p.customData = withMM(e.customData, { boundary: uid, map: root });
   }
-  ops.add = [...addEdges, ...addBodies, ...addBoundaries];
+  ops.add = [...addSpine, ...addEdges, ...addBodies, ...addLabels, ...addBoundaries];
   const removed = /* @__PURE__ */ new Set();
   for (const el of elements || []) {
     if (!el || el.isDeleted || typeof el.id !== "string" || !el.id.startsWith(pre) || desiredIds.has(el.id)) continue;
@@ -7545,6 +8731,9 @@ var DELETE_WINDOW_MS = 3e3;
 var LOAD_WAIT_MS = 5e3;
 var MAX_WAIT_MS = 4e3;
 var FORCE_MARK_MS = 5e3;
+var PLACEHOLDER_WINDOW_MS = 3e4;
+var DRAG_START_PX = 4;
+var TASK_MACRO_LEN = "{{[[TODO]]}}".length;
 var PLACEHOLDER_CHILD = "New idea";
 var PLACEHOLDER_ROOT = "Central idea";
 var GROW_HINT = "Use Tab / Enter to grow this map";
@@ -7552,14 +8741,18 @@ var FOLLOW_HINT = "Mind-map nodes follow the outline; Alt+Backspace deletes a br
 var MARKUP_HINT = "Edit this node in the outline (it has links or formatting)";
 var WRITE_FAILED = "Could not update the outline";
 var CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
+var LABEL_HINT = "Edit the attribute block in the outline";
+var SELF_MOVE = "Cannot move a branch into itself";
+var CHANGE_BACK = "choose again to change back";
+var ATTR_HINT = "Attribute blocks show as labelled edges (Plexus menu to turn off)";
 var GESTURE_FIELDS = ["editingTextElement", "newElement", "resizingElement", "multiElement", "editingLinearElement"];
 var INPUT_ISOLATED = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
 var ARROWS = { ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up" };
 var LETTERS = /* @__PURE__ */ new Set(["KeyF", "KeyL", "KeyP", "KeyB", "KeyX", "KeyC", "KeyV"]);
 var defaultRaf = (fn) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16);
 var defaultGuardedWrite = (app, { next, captureUpdate } = {}) => {
-  const current2 = app.getSceneElementsIncludingDeleted?.() ?? [];
-  app.updateScene({ elements: typeof next === "function" ? next(current2) : next, ...captureUpdate ? { captureUpdate } : {} });
+  const current4 = app.getSceneElementsIncludingDeleted?.() ?? [];
+  app.updateScene({ elements: typeof next === "function" ? next(current4) : next, ...captureUpdate ? { captureUpdate } : {} });
   return true;
 };
 var defaultCaf = (id) => typeof globalThis.cancelAnimationFrame === "function" ? globalThis.cancelAnimationFrame(id) : clearTimeout(id);
@@ -7581,7 +8774,7 @@ function rawWalk(raw, fn) {
     for (const c of n[":block/children"] || []) stack.push(c);
   }
 }
-function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite }) {
+function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite, getTagColors = () => /* @__PURE__ */ new Map() }) {
   const sessions = /* @__PURE__ */ new Map();
   let disposed = false;
   const warn7 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
@@ -7603,6 +8796,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
   }
   const textOf = (uid, node) => plainText(node.string, blockString);
   const sizer = makeSizer((text, size) => measurer.measure(text, size));
+  const tagColors = () => {
+    try {
+      return getTagColors() || /* @__PURE__ */ new Map();
+    } catch (error) {
+      warn7("tag colours", error);
+      return /* @__PURE__ */ new Map();
+    }
+  };
   function mount({ app, containerEl, outerEl, zIndex, drawingUid = null } = {}) {
     if (disposed || !app || !containerEl) return () => {
     };
@@ -7637,6 +8838,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let loadedTimer = null;
     let deferredSince = null;
     const forceMarks = /* @__PURE__ */ new Map();
+    const rootDefaults = /* @__PURE__ */ new Map();
+    const createdAt = /* @__PURE__ */ new Map();
+    let pendingDrop = null;
+    let drag = null;
+    let dragCancelled = false;
+    let labelToasted = false;
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard2 = () => alive && !disposed && native.activeEditor(doc)?.app === app;
     const state = () => app.state || {};
@@ -7646,9 +8853,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       recordRoots();
     }
     function recordRoots() {
-      const live2 = els();
+      const live3 = els();
       for (const root of trees.keys()) {
-        const el = live2.find((e) => e.id === nodeId(root, root));
+        const el = live3.find((e) => e.id === nodeId(root, root));
         if (el && Number.isFinite(el.x)) lastRoot.set(root, { x: el.x, y: el.y });
       }
     }
@@ -7661,7 +8868,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       for (const root of roots) {
         const tree = trees.get(root);
         if (!tree) continue;
-        const ops = reconcile({ elements: next, tree, sizes: sizer, textOf, rootPos: rootPos.get(root) });
+        const ops = reconcile({ elements: next, tree, sizes: sizer, textOf, rootPos: rootPos.get(root), ...mapOpts(root) });
         if (!isEmptyOps(ops)) {
           next = applyOps(next, ops);
           changed = true;
@@ -7676,6 +8883,10 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       takeSnapshot();
       afterApply(roots);
       return true;
+    }
+    function mapOpts(root) {
+      const defaults = rootDefaults.get(root);
+      return { tagColors: tagColors(), ...defaults ? { rootDefaults: defaults } : {} };
     }
     function afterApply(roots) {
       for (const root of roots) {
@@ -7719,6 +8930,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       watches.delete(root);
       trees.delete(root);
       rootPos.delete(root);
+      rootDefaults.delete(root);
       lastRoot.delete(root);
       fontSig.delete(root);
       pendingRefresh.delete(root);
@@ -7828,9 +9040,214 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (!alive || scheduled != null) return;
       scheduled = raf(() => pass());
     }
-    function onPointerUp() {
+    function onPointerUp(activeTool, pds, event) {
       dirty = true;
+      try {
+        recordDrop(activeTool, pds, event);
+      } catch (error) {
+        warn7("drop", error);
+      }
+      endDrag();
       onChange();
+    }
+    const pointOf = (event, pds) => {
+      const src = event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY) ? { x: event.clientX, y: event.clientY } : pds?.lastCoords;
+      return src && Number.isFinite(src.x) && Number.isFinite(src.y) ? viewportToScene({ x: src.x, y: src.y, appState: state() }) : null;
+    };
+    function recordDrop(activeTool, pds, event) {
+      const cancelled = dragCancelled;
+      dragCancelled = false;
+      if (cancelled || !pds || activeTool?.type !== "selection" || !pds.drag?.hasOccurred) return;
+      if (pds.resize?.isResizing || state().viewModeEnabled || pds.hit?.hasBeenDuplicated) return;
+      if (event && (event.metaKey || event.ctrlKey)) return;
+      const sel = selectedNode();
+      if (!sel || sel.isRoot) return;
+      const hitId = pds.hit?.element?.id;
+      if (hitId !== nodeId(sel.root, sel.uid) && hitId !== textId(sel.root, sel.uid)) return;
+      const point = pointOf(event, pds);
+      const seen = drag && drag.active && drag.root === sel.root && drag.uid === sel.uid && drag.plan && drag.tree;
+      if (point) pendingDrop = { root: sel.root, uid: sel.uid, point, ...seen ? { plan: drag.plan, tree: drag.tree } : {} };
+    }
+    function planOf(root) {
+      const tree = trees.get(root);
+      return tree ? { tree, plan: planMap({ elements: els(), tree, sizes: sizer, textOf, ...mapOpts(root) }) } : null;
+    }
+    function otherMapAt(root, point) {
+      for (const el of els()) {
+        if (el.isDeleted || typeof el.id !== "string" || !el.id.startsWith("pmm-") || el.type === "text" || el.type === "arrow") continue;
+        const mm2 = mmOf(el);
+        if (!mm2 || mm2.map === root || !mm2.uid || el.id !== nodeId(mm2.map, mm2.uid)) continue;
+        if (point.x >= el.x && point.x <= el.x + el.width && point.y >= el.y && point.y <= el.y + el.height) return true;
+      }
+      return false;
+    }
+    function handleDrop() {
+      const d = pendingDrop;
+      pendingDrop = null;
+      if (!d || !trees.get(d.root) || !findNode(trees.get(d.root), d.uid)) return;
+      const snapBack = () => commit(null, [d.root]);
+      if (otherMapAt(d.root, d.point)) {
+        snapBack();
+        return;
+      }
+      const ctx = d.plan && d.tree ? { plan: d.plan, tree: d.tree } : planOf(d.root);
+      const res = resolveDrop({ plan: ctx.plan, tree: ctx.tree, dragged: d.uid, point: d.point, layout: ctx.plan.dir });
+      if (res.type === "pin") return;
+      if (res.type === "refuse") {
+        if (res.reason === "own-subtree") toast(SELF_MOVE);
+        snapBack();
+        return;
+      }
+      const spec = { parentUid: res.parentUid, ...res.beforeUid ? { beforeUid: res.beforeUid } : {}, ...res.afterUid ? { afterUid: res.afterUid } : {} };
+      if (!moveNode(d.root, d.uid, spec)) snapBack();
+    }
+    function moveNode(root, uid, spec) {
+      const tree = trees.get(root);
+      const found = tree ? findNode(tree, uid) : null;
+      const target = tree ? findNode(tree, spec.parentUid) : null;
+      if (!found || !found.parent || !target) return false;
+      if (findNode(found.node, spec.parentUid)) {
+        toast(SELF_MOVE);
+        return false;
+      }
+      const neighbour = spec.beforeUid ?? spec.afterUid ?? null;
+      const list = target.node.children.filter((c) => c !== found.node);
+      const ni = neighbour == null ? list.length : list.findIndex((c) => c.uid === neighbour);
+      if (ni === -1 || neighbour === uid) return false;
+      const at = neighbour == null ? ni : ni + (spec.afterUid != null && spec.beforeUid == null ? 1 : 0);
+      const from = found.parent.children.indexOf(found.node);
+      if (found.parent === target.node && at === from) return false;
+      found.parent.children = found.parent.children.filter((c) => c !== found.node);
+      target.node.children = [...list.slice(0, at), found.node, ...list.slice(at)];
+      if (target.node !== found.parent) target.node.open = true;
+      const id = nodeId(root, uid);
+      const pinned = mmOf(els().find((e) => e.id === id))?.pinned === true;
+      commit(pinned ? (l) => l.map((e) => e.id === id ? patchMarker(e, { pinned: void 0 }) : e) : null, [root]);
+      Promise.resolve(writer.moveTo(root, uid, spec)).then((result) => {
+        if (result && result.ok === false) {
+          if (result.reason === "inside-source") toast(SELF_MOVE);
+          else if (result.reason !== "self") failToast();
+        }
+        refreshRoot(root);
+      }).catch((error) => {
+        warn7("move", error);
+        failToast();
+        refreshRoot(root);
+      });
+      return true;
+    }
+    let dragOffs = [];
+    let dragFrame = null;
+    let ring = null;
+    function endDrag() {
+      for (const off of dragOffs.splice(0)) {
+        try {
+          off();
+        } catch (error) {
+          warn7("cleanup", error);
+        }
+      }
+      if (dragFrame != null) {
+        caf(dragFrame);
+        dragFrame = null;
+      }
+      if (ring) {
+        try {
+          ring.remove?.();
+        } catch {
+        }
+        ring = null;
+      }
+      drag = null;
+    }
+    function cancelDrag() {
+      if (drag) dragCancelled = true;
+      endDrag();
+    }
+    function onPointerDown(activeTool, pds, event) {
+      if (!alive) return;
+      endDrag();
+      dragCancelled = false;
+      if (activeTool?.type !== "selection" || state().viewModeEnabled || !doc.addEventListener) return;
+      const el = pds?.hit?.element;
+      const container = el && el.type === "text" && typeof el.containerId === "string" ? els().find((e) => e.id === el.containerId) : el;
+      const mm2 = mmOf(container);
+      if (!mm2 || !mm2.uid || mm2.root || mm2.edge || mm2.boundary || container.id !== nodeId(mm2.map, mm2.uid) || !trees.get(mm2.map)) return;
+      drag = { root: mm2.map, uid: mm2.uid, x0: event?.clientX ?? 0, y0: event?.clientY ?? 0, active: false, plan: null, tree: null, ev: null };
+      const on = (target, type, fn, opts) => {
+        target.addEventListener(type, fn, opts);
+        dragOffs.push(() => target.removeEventListener?.(type, fn, opts));
+      };
+      on(doc, "pointermove", (e) => {
+        if (!drag) return;
+        drag.ev = e;
+        if (dragFrame == null) dragFrame = raf(() => {
+          dragFrame = null;
+          try {
+            updateRing();
+          } catch (error) {
+            warn7("ring", error);
+            endDrag();
+          }
+        });
+      }, { passive: true });
+      on(doc, "pointercancel", cancelDrag);
+      on(doc, "keydown", (e) => {
+        if (e.key === "Escape") cancelDrag();
+      }, true);
+      if (doc.defaultView?.addEventListener) on(doc.defaultView, "blur", cancelDrag);
+    }
+    function hideRing() {
+      if (ring) {
+        try {
+          ring.remove?.();
+        } catch {
+        }
+        ring = null;
+      }
+    }
+    function updateRing() {
+      const d = drag;
+      if (!d || !d.ev || !alive) return;
+      const e = d.ev;
+      if (!d.active) {
+        if (Math.abs((e.clientX ?? 0) - d.x0) < DRAG_START_PX && Math.abs((e.clientY ?? 0) - d.y0) < DRAG_START_PX) return;
+        const ctx = planOf(d.root);
+        if (!ctx) {
+          endDrag();
+          return;
+        }
+        d.active = true;
+        d.plan = ctx.plan;
+        d.tree = ctx.tree;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        hideRing();
+        return;
+      }
+      const point = pointOf(e, null);
+      const res = point ? resolveDrop({ plan: d.plan, tree: d.tree, dragged: d.uid, point, layout: d.plan.dir }) : null;
+      if (!res || !res.ring) {
+        hideRing();
+        return;
+      }
+      const r = native.viewportRectOf(app, [res.ring.x, res.ring.y, res.ring.x + res.ring.width, res.ring.y + res.ring.height]);
+      if (!r) {
+        hideRing();
+        return;
+      }
+      if (!ring) {
+        ring = doc.createElement("div");
+        ring.style.pointerEvents = "none";
+        ring.style.zIndex = String((zIndex ?? zIndexFor(outerEl)) + 1);
+        doc.body.append(ring);
+      }
+      const bar = res.type === "reorder";
+      ring.className = `plexus-portal plexus-mm-ring${bar ? " plexus-mm-ring-bar" : ""}`;
+      ring.style.left = `${r.left - (bar && !r.width ? 1.5 : 0)}px`;
+      ring.style.top = `${r.top - (bar && !r.height ? 1.5 : 0)}px`;
+      ring.style.width = `${bar ? Math.max(3, r.width) : r.width}px`;
+      ring.style.height = `${bar ? Math.max(3, r.height) : r.height}px`;
     }
     function pass(force = false) {
       scheduled = null;
@@ -7840,8 +9257,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const editingId = st.editingTextElement?.id ?? null;
       if (prevEditingId && !editingId) pendingFinished.add(prevEditingId);
       prevEditingId = editingId;
-      const nonce3 = app.scene?.getSceneNonce?.();
-      if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce3 !== void 0 && nonce3 === lastNonce) {
+      const nonce4 = app.scene?.getSceneNonce?.();
+      if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce4 !== void 0 && nonce4 === lastNonce) {
         if (input) placeInput();
         return;
       }
@@ -7853,13 +9270,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       }
       deferredSince = null;
       dirty = false;
-      lastNonce = nonce3;
+      lastNonce = nonce4;
       const finishedIds = [...pendingFinished];
       pendingFinished.clear();
       const refreshRoots = [...pendingRefresh];
       pendingRefresh.clear();
       try {
         for (const id of finishedIds) nativeTextEdit(id);
+        handleDrop();
         nativeChanges();
       } catch (error) {
         warn7("change pass", error);
@@ -7869,7 +9287,10 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     }
     function flush({ unloading = false } = {}) {
       if (!alive) return;
-      if (unloading) closeInput({ write: true });
+      if (unloading) {
+        endDrag();
+        closeInput({ write: true });
+      }
       if (scheduled != null) {
         caf(scheduled);
         scheduled = null;
@@ -7886,27 +9307,32 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (snapshot.get(txt.id) === txt.version) return;
       const container = els().find((e) => e.id === txt.containerId);
       const mm2 = mmOf(container);
+      if (mm2 && Array.isArray(mm2.edge) && mm2.via && !labelToasted) {
+        labelToasted = true;
+        toast(LABEL_HINT);
+        return;
+      }
       if (!mm2 || !mm2.uid) return;
       const tree = trees.get(mm2.map);
       const found = tree ? findNode(tree, mm2.uid) : null;
       if (!found) return;
       const node = found.node;
-      if (hasMarkup(node.string)) {
+      if (hasMarkup(taskParts(node.string).rest)) {
         toast(MARKUP_HINT);
         return;
       }
-      let text = typeof txt.originalText === "string" ? txt.originalText : txt.text;
-      if (isFolded(node)) {
-        const suffix = ` (+${countHidden(node)})`;
-        if (!text.endsWith(suffix)) return;
-        text = text.slice(0, -suffix.length);
-      }
-      if (text === "" || text === "·" || text === node.string) return;
-      writeString(mm2.map, mm2.uid, text, node.string);
+      const text = typeof txt.originalText === "string" ? txt.originalText : txt.text;
+      if (text === "" || text === "·") return;
+      const next = editableText(node, text, { star: starFor(mm2.map, mm2.uid) });
+      if (next === null || next === void 0 || next === node.string) return;
+      writeString(mm2.map, mm2.uid, next, node.string);
+    }
+    function starFor(root, uid) {
+      return uid === root && CAUSE_LAYOUTS.includes(mmOf(rootElement(root))?.layout);
     }
     function nativeChanges() {
-      const live2 = els();
-      const liveById = new Map(live2.map((e) => [e.id, e]));
+      const live3 = els();
+      const liveById = new Map(live3.map((e) => [e.id, e]));
       let restored = false;
       for (const root of trees.keys()) {
         const tree = trees.get(root);
@@ -7924,7 +9350,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       for (const root of trees.keys()) {
         const tree = trees.get(root);
         if (!tree) continue;
-        const plan = planMap({ elements: live2, tree, sizes: sizer, textOf });
+        const plan = planMap({ elements: live3, tree, sizes: sizer, textOf, ...mapOpts(root) });
         const rootEl = plan.info.get(root)?.el;
         const was = lastRoot.get(root);
         const dx = rootEl && was ? rootEl.x - was.x : 0;
@@ -7966,6 +9392,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (!found) return;
       const uid = api.util.generateUID();
       const node = { uid, string: PLACEHOLDER_CHILD, open: true, children: [] };
+      createdAt.set(uid, now());
       let job;
       if (kind === "sibling" && found.parent) {
         const at = found.parent.children.indexOf(found.node);
@@ -8005,14 +9432,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const txt = els().find((e) => e.id === textId(input.rootUid, input.uid));
       s.fontSize = `${(txt && Number.isFinite(txt.fontSize) ? txt.fontSize : 16) * zoom}px`;
     }
-    function openInput({ root, uid, base: base2, placeholder = null }) {
+    function openInput({ root, uid, base: base2, placeholder = null, prefix = "" }) {
       closeInput({ write: true });
       const el = doc.createElement("input");
       el.type = "text";
       el.className = "plexus-portal plexus-mm-input";
-      el.value = base2;
+      el.value = base2.slice(prefix.length);
       el.style.zIndex = String((zIndex ?? zIndexFor(outerEl)) + 2);
-      const handle = { el, rootUid: root, uid, base: base2, placeholder, composing: false, listeners: [], done: false };
+      const handle = { el, rootUid: root, uid, base: base2, prefix, placeholder, composing: false, listeners: [], done: false };
       const on = (type, fn) => {
         el.addEventListener(type, fn);
         handle.listeners.push([type, fn]);
@@ -8055,13 +9482,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (write) finishInput(handle, value);
     }
     function finishInput(handle, value) {
-      const { rootUid, uid, base: base2, placeholder } = handle;
+      const { rootUid, uid, base: base2, placeholder, prefix } = handle;
       if (value === "") {
         if (placeholder) discard(rootUid, uid, placeholder);
         return;
       }
-      if (value === base2) return;
-      writeString(rootUid, uid, value, base2);
+      const next = prefix + value;
+      if (next === base2) return;
+      writeString(rootUid, uid, next, base2);
     }
     function discard(root, uid, placeholder) {
       const tree = trees.get(root);
@@ -8102,7 +9530,13 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         e.stopImmediatePropagation();
       };
       if (e.metaKey || e.ctrlKey) {
-        if (e.altKey) return;
+        if (e.altKey) {
+          if (e.key in ARROWS && !e.shiftKey) {
+            swallow4();
+            if (!e.repeat) moveSelection(sel, ARROWS[e.key], { center: true });
+          }
+          return;
+        }
         if (e.key in ARROWS) {
           swallow4();
           toast(GROW_HINT);
@@ -8116,6 +9550,22 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const plain = !e.altKey && !e.shiftKey;
       let action = null;
       let repeatSafe = true;
+      if (e.shiftKey && !e.altKey && e.key === "Tab") {
+        swallow4();
+        if (!e.repeat) selectParent(sel);
+        return;
+      }
+      if (e.altKey && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        swallow4();
+        if (!e.repeat && !st.viewModeEnabled) {
+          try {
+            reorderSelected(sel, e.key === "ArrowUp" ? -1 : 1);
+          } catch (error) {
+            warn7("hotkey", error);
+          }
+        }
+        return;
+      }
       if (plain && e.key === "Tab") {
         action = () => newNode(sel.root, sel.uid, "child");
         repeatSafe = false;
@@ -8127,6 +9577,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         swallow4();
         moveSelection(sel, ARROWS[e.key]);
         return;
+      } else if (alt && e.key === "Enter") {
+        action = () => toggleTask(sel);
+        repeatSafe = false;
+      } else if (plain && (e.key === "Backspace" || e.key === "Delete") && placeholderDeletable(sel)) {
+        action = () => discard(sel.root, sel.uid, PLACEHOLDER_CHILD);
+        repeatSafe = false;
       } else if (alt && e.key === "Backspace") {
         action = () => deleteBranch(sel);
         repeatSafe = false;
@@ -8154,13 +9610,50 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function editSelected(sel) {
       const node = findNode(trees.get(sel.root), sel.uid)?.node;
       if (!node) return;
-      if (hasMarkup(node.string)) {
+      const parts = taskParts(node.string);
+      if (hasMarkup(parts.rest)) {
         toast(MARKUP_HINT);
         return;
       }
-      openInput({ root: sel.root, uid: sel.uid, base: node.string });
+      openInput({ root: sel.root, uid: sel.uid, base: node.string, prefix: parts.prefix });
     }
-    function moveSelection(sel, dir) {
+    function toggleTask(sel) {
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      if (!node) return null;
+      const state2 = taskParts(node.string).state;
+      const next = state2 === null ? `{{[[TODO]]}} ${node.string}` : `{{[[${state2 === "TODO" ? "DONE" : "TODO"}]]}}${node.string.slice(TASK_MACRO_LEN)}`;
+      writeString(sel.root, sel.uid, next, node.string);
+      return null;
+    }
+    function drawnNodes(root) {
+      const tree = trees.get(root);
+      if (!tree) return [];
+      return visibleNodes(visualTree(tree, { attrEdges: mmOf(rootElement(root))?.attrEdges === true }));
+    }
+    function reorderSelected(sel, dir) {
+      if (sel.isRoot) return null;
+      const list = drawnNodes(sel.root);
+      const v = list.find((x) => x.node.uid === sel.uid);
+      if (!v || !v.parent) return null;
+      const via = v.node.via ?? null;
+      const sibs = list.filter((x) => x.parent && x.parent.uid === v.parent.uid && (x.node.via ?? null) === via).map((x) => x.node.uid);
+      const i = sibs.indexOf(sel.uid);
+      const parentUid = via ?? v.parent.uid;
+      if (dir < 0 && i > 0) moveNode(sel.root, sel.uid, { parentUid, beforeUid: sibs[i - 1] });
+      else if (dir > 0 && i !== -1 && i < sibs.length - 1) moveNode(sel.root, sel.uid, { parentUid, afterUid: sibs[i + 1] });
+      return null;
+    }
+    function selectParent(sel) {
+      const v = drawnNodes(sel.root).find((x) => x.node.uid === sel.uid);
+      if (v && v.parent) select(sel.root, v.parent.uid);
+    }
+    function placeholderDeletable(sel) {
+      if (sel.isRoot) return false;
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      const at = createdAt.get(sel.uid);
+      return !!node && at !== void 0 && now() - at <= PLACEHOLDER_WINDOW_MS && node.string === PLACEHOLDER_CHILD && node.children.length === 0;
+    }
+    function moveSelection(sel, dir, { center = false } = {}) {
       const tree = trees.get(sel.root);
       const rects = [];
       for (const v of visibleNodes(tree)) {
@@ -8179,7 +9672,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const left = st.offsetLeft || 0;
       const top = st.offsetTop || 0;
       const off = vr.left < left || vr.top < top || vr.left + vr.width > left + (st.width || 0) || vr.top + vr.height > top + (st.height || 0);
-      if (off) {
+      if (off || center) {
         app.updateScene({ appState: { scrollX: (st.width || 0) / (2 * zoom) - (to.x + to.width / 2), scrollY: (st.height || 0) / (2 * zoom) - (to.y + to.height / 2) }, captureUpdate: "NEVER" });
       }
     }
@@ -8198,10 +9691,10 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         toast("No children to fold");
         return null;
       }
-      const open4 = node.open === false;
-      node.open = open4;
+      const open5 = node.open === false;
+      node.open = open5;
       commit(null, [sel.root], { force: true });
-      return writer.setOpen(sel.root, sel.uid, open4).catch((error) => {
+      return writer.setOpen(sel.root, sel.uid, open5).catch((error) => {
         warn7("fold", error);
         failToast();
         refreshRoot(sel.root);
@@ -8218,6 +9711,29 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: next }) : e), [sel.root]);
       toast(`Layout: ${next}`);
       return null;
+    }
+    function mapOptions() {
+      const sel = selectedNode();
+      const rootEl = sel ? rootElement(sel.root) : null;
+      if (!sel || !rootEl) return null;
+      const mm2 = mmOf(rootEl) || {};
+      return { root: sel.root, layout: mm2.layout || "right", attrEdges: mm2.attrEdges === true };
+    }
+    function setLayout(layout) {
+      const sel = selectedNode();
+      const rootEl = sel ? rootElement(sel.root) : null;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS].includes(layout)) return false;
+      const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout }) : e), [sel.root]);
+      if (done2) toast(`Layout: ${layout} (${CHANGE_BACK})`);
+      return done2;
+    }
+    function setAttrEdges(on) {
+      const sel = selectedNode();
+      const rootEl = sel ? rootElement(sel.root) : null;
+      if (!rootEl) return false;
+      const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { attrEdges: on ? true : void 0 }) : e), [sel.root]);
+      if (done2) toast(`Attribute blocks as edges: ${on ? "on" : "off"} (${CHANGE_BACK})`);
+      return done2;
     }
     function togglePin(sel) {
       if (sel.isRoot) return null;
@@ -8332,6 +9848,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const cx = (st.width || 0) / (2 * zoom) - (st.scrollX || 0);
       const cy = (st.height || 0) / (2 * zoom) - (st.scrollY || 0);
       rootPos.set(root, { x: cx - 70, y: cy - 24 });
+      rootDefaults.set(root, { attrEdges: true });
       trees.set(root, { uid: root, string: PLACEHOLDER_ROOT, open: true, children: [] });
       const job = writer.createChild(root, drawingUid2, { uid: root, string: PLACEHOLDER_ROOT, unfold: false });
       ensureRoot(root);
@@ -8348,10 +9865,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     }
     function showOutline(root) {
       rootPos.set(root, { x: 0, y: 0 });
+      rootDefaults.set(root, { attrEdges: true });
       trees.set(root, null);
       ensureRoot(root);
       refreshRoot(root);
       if (!trees.get(root)) return false;
+      if (drawnNodes(root).some((v) => v.node.via)) toast(ATTR_HINT);
       select(root, root);
       const rect = els().filter((e) => !e.isDeleted && e.id.startsWith(`pmm-${root}-`) && !e.containerId);
       if (rect.length) {
@@ -8379,6 +9898,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     } catch (error) {
       warn7("subscribe", error);
     }
+    try {
+      const off = app.onPointerDownEmitter?.on?.(onPointerDown);
+      if (typeof off === "function") offs.push(off);
+    } catch (error) {
+      warn7("subscribe", error);
+    }
     const view2 = doc.defaultView;
     if (view2?.addEventListener) listen(view2, "pagehide", () => flush({ unloading: true }));
     if (doc.addEventListener) listen(doc, "visibilitychange", () => {
@@ -8390,6 +9915,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       selectedNode,
       startRoot,
       showOutline,
+      mapOptions,
+      setLayout,
+      setAttrEdges,
       flush,
       dispose() {
         flush();
@@ -8399,6 +9927,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         loadedTimer = null;
         scheduled = null;
         if (input) removeInput(input);
+        endDrag();
+        pendingDrop = null;
         for (const off of offs.splice(0)) {
           try {
             off();
@@ -8417,6 +9947,8 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         trees.clear();
         clip = null;
         pendingDelete = null;
+        createdAt.clear();
+        rootDefaults.clear();
         measurer.clear?.();
       }
     };
@@ -8444,6 +9976,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const s = await waitForSession(app);
       return s ? s.showOutline(rootUid) : false;
     },
+    mapOptions: (app) => sessionFor(app)?.mapOptions() ?? null,
+    setLayout: (app, layout) => sessionFor(app)?.setLayout(layout) ?? false,
+    setAttrEdges: (app, on) => sessionFor(app)?.setAttrEdges(on) ?? false,
     outlineInfo,
     NODE_CAP,
     hasSession: (app) => sessions.has(app),
@@ -8479,7 +10014,7 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     }
     return s;
   };
-  const busy = (root) => (queues.get(root)?.pending || 0) > 0;
+  const busy2 = (root) => (queues.get(root)?.pending || 0) > 0;
   function pullRaw(pattern, uid) {
     if (!uid) return null;
     const raw = api.data.pull(pattern, [":block/uid", uid]);
@@ -8547,9 +10082,9 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       return { ok: true, written: true };
     });
   }
-  function setOpen(rootUid, uid, open4) {
+  function setOpen(rootUid, uid, open5) {
     return run(rootUid, async () => {
-      await api.data.block.update({ block: { uid, open: !!open4 } });
+      await api.data.block.update({ block: { uid, open: !!open5 } });
       return { ok: true };
     });
   }
@@ -8567,6 +10102,37 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       await api.data.block.move({ location: { "parent-uid": targetParentUid, order: "last" }, block: { uid } });
       return { ok: true };
     }, targetRootUid && targetRootUid !== rootUid ? [targetRootUid] : []);
+  }
+  const childUids = (raw) => kids(raw).map((c) => c[":block/uid"]);
+  const CHILDREN = "[:block/uid :block/order {:block/children [:block/uid :block/order]}]";
+  function moveTo(rootUid, uid, { parentUid, beforeUid, afterUid } = {}) {
+    return run(rootUid, async () => {
+      const neighbour = beforeUid ?? afterUid ?? null;
+      if (!pullRaw("[:block/uid]", uid)) return { ok: false, reason: "missing" };
+      if (!pullRaw("[:block/uid]", parentUid)) return { ok: false, reason: "missing-target" };
+      if (neighbour === uid) return { ok: false, reason: "self" };
+      if (await insideBranch(uid, parentUid)) return { ok: false, reason: "inside-source" };
+      const current4 = childUids(pullRaw(CHILDREN, parentUid));
+      if (neighbour != null && !current4.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
+      await unfold(parentUid);
+      const same3 = current4.includes(uid);
+      const rest = current4.filter((u) => u !== uid);
+      const at = neighbour == null ? rest.length : rest.indexOf(neighbour) + (afterUid != null && beforeUid == null ? 1 : 0);
+      if (same3) {
+        const blocks = [...rest.slice(0, at), uid, ...rest.slice(at)];
+        if (blocks.every((u, i) => u === current4[i])) return { ok: true, written: false };
+        if (typeof api.data.block.reorderBlocks === "function") {
+          await api.data.block.reorderBlocks({ location: { "parent-uid": parentUid }, blocks });
+          return { ok: true, written: true };
+        }
+        await api.data.block.move({ location: { "parent-uid": parentUid, order: at }, block: { uid } });
+        const actual = childUids(pullRaw(CHILDREN, parentUid)).indexOf(uid);
+        if (actual !== -1 && actual !== at) await api.data.block.move({ location: { "parent-uid": parentUid, order: at + (at - actual) }, block: { uid } });
+        return { ok: true, written: true };
+      }
+      await api.data.block.move({ location: { "parent-uid": parentUid, order: neighbour == null ? "last" : at }, block: { uid } });
+      return { ok: true, written: true };
+    });
   }
   function copyBranch(rootUid, sourceUid, targetParentUid, { targetRootUid, cap = COPY_CAP } = {}) {
     return run(rootUid, async () => {
@@ -8643,11 +10209,11 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     const ident = `[:block/uid "${quote(rootUid)}"]`;
     let dirty = false;
     let scheduled = false;
-    let done = false;
+    let done2 = false;
     const flush = () => {
       scheduled = false;
-      if (done || !dirty) return;
-      if (busy(rootUid)) return;
+      if (done2 || !dirty) return;
+      if (busy2(rootUid)) return;
       dirty = false;
       try {
         cb(pullTree(rootUid));
@@ -8657,15 +10223,15 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     };
     const mark = () => {
       dirty = true;
-      if (busy(rootUid) || scheduled) return;
+      if (busy2(rootUid) || scheduled) return;
       scheduled = true;
       schedule(flush);
     };
     const handler = () => {
-      if (!done) mark();
+      if (!done2) mark();
     };
     const onDrain = () => {
-      if (dirty && !done && !scheduled) {
+      if (dirty && !done2 && !scheduled) {
         scheduled = true;
         schedule(flush);
       }
@@ -8678,8 +10244,8 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     hooks.add(onDrain);
     api.data.addPullWatch(TREE_PATTERN, ident, handler);
     return () => {
-      if (done) return;
-      done = true;
+      if (done2) return;
+      done2 = true;
       hooks.delete(onDrain);
       if (!hooks.size) drainHooks.delete(rootUid);
       try {
@@ -8690,7 +10256,7 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     };
   }
   function onIdle(rootUid, fn) {
-    if (!busy(rootUid)) {
+    if (!busy2(rootUid)) {
       fn();
       return;
     }
@@ -8706,7 +10272,1325 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     };
     hooks.add(hook);
   }
-  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  return { isBusy: busy2, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+}
+
+// src/host/snapshots.js
+var DB_NAME2 = "plexus-snapshots";
+var META = "snapshots";
+var DATA = "snapshotData";
+var PER_DRAWING = 20;
+var MAX_SNAPSHOT_BYTES = 20 * 1024 * 1024;
+var MAX_GRAPH_BYTES = 100 * 1024 * 1024;
+var OPEN_TIMEOUT_MS = 3e3;
+var OFF_MS = 6e4;
+var DISPOSE_WAIT_MS = 1e3;
+var nonce3 = () => Math.floor(Math.random() * 2 ** 31);
+var live2 = (els) => (els || []).filter((e) => e && !e.isDeleted);
+var request = (r) => new Promise((resolve, reject) => {
+  r.onsuccess = () => resolve(r.result);
+  r.onerror = () => reject(r.error ?? new Error("IndexedDB request failed"));
+});
+var done = (tx) => new Promise((resolve, reject) => {
+  tx.oncomplete = () => resolve();
+  tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
+  tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
+});
+var isQuota = (error) => error?.name === "QuotaExceededError";
+function createSnapshotStore({
+  idb,
+  keyRange = globalThis.IDBKeyRange,
+  graphName,
+  isEncrypted = false,
+  now = () => Date.now(),
+  timers = { setTimeout: (...a) => globalThis.setTimeout(...a), clearTimeout: (...a) => globalThis.clearTimeout(...a) },
+  openTimeoutMs = OPEN_TIMEOUT_MS,
+  disposeWaitMs = DISPOSE_WAIT_MS
+} = {}) {
+  const graph = String(graphName ?? "");
+  const enabled = !!idb && !!keyRange && !isEncrypted;
+  let disposed = false;
+  let dbPromise = null;
+  let offUntil = 0;
+  const inflight = /* @__PURE__ */ new Set();
+  const lastSig = /* @__PURE__ */ new Map();
+  const lastHash = /* @__PURE__ */ new Map();
+  const lastT = /* @__PURE__ */ new Map();
+  const warned = /* @__PURE__ */ new Set();
+  const drawingRange = (uid) => keyRange.bound([graph, uid, 0], [graph, uid, Infinity]);
+  const graphRange = () => keyRange.bound([graph], [graph, []]);
+  const warnOnce = (uid, message) => {
+    if (warned.has(uid)) return;
+    warned.add(uid);
+    console.warn(`[plexus] snapshots: ${message}`);
+  };
+  function openRequest(version) {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      const finish = (db) => {
+        if (settled) {
+          try {
+            db?.close?.();
+          } catch {
+          }
+          return;
+        }
+        settled = true;
+        if (timer != null) timers.clearTimeout(timer);
+        resolve(db);
+      };
+      try {
+        const req = version ? idb.open(DB_NAME2, version) : idb.open(DB_NAME2);
+        timer = timers.setTimeout(() => finish(null), openTimeoutMs);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: "key" });
+          if (!db.objectStoreNames.contains(DATA)) db.createObjectStore(DATA, { keyPath: "key" });
+        };
+        req.onblocked = () => finish(null);
+        req.onerror = () => {
+          console.warn("[plexus] snapshots db unavailable", req.error);
+          finish(null);
+        };
+        req.onsuccess = () => {
+          const db = req.result;
+          if (settled || disposed) {
+            try {
+              db.close();
+            } catch {
+            }
+            finish(null);
+            return;
+          }
+          finish(db);
+        };
+      } catch (error) {
+        console.warn("[plexus] snapshots db unavailable", error);
+        finish(null);
+      }
+    });
+  }
+  const hasStores = (db) => db.objectStoreNames.contains(META) && db.objectStoreNames.contains(DATA);
+  async function openOnce() {
+    let db = await openRequest();
+    if (db && !hasStores(db)) {
+      const next = db.version + 1;
+      try {
+        db.close();
+      } catch {
+      }
+      db = await openRequest(next);
+      if (db && !hasStores(db)) {
+        try {
+          db.close();
+        } catch {
+        }
+        db = null;
+      }
+    }
+    if (db) {
+      const mine = db;
+      db.onversionchange = () => {
+        try {
+          mine.close();
+        } catch {
+        }
+        dbPromise = null;
+      };
+    }
+    return db;
+  }
+  function openDb() {
+    if (!enabled || disposed || now() < offUntil) return Promise.resolve(null);
+    if (!dbPromise) {
+      const p = openOnce().then((db) => {
+        if (!db) {
+          offUntil = now() + OFF_MS;
+          if (dbPromise === p) dbPromise = null;
+        }
+        return db;
+      });
+      dbPromise = p;
+    }
+    return dbPromise;
+  }
+  async function trim(metaStore, dataStore, uid) {
+    const own = (await request(metaStore.getAll(drawingRange(uid)))).sort((a, b) => a.t - b.t);
+    const drop = (row) => {
+      metaStore.delete(row.key);
+      dataStore.delete(row.key);
+    };
+    for (const row of own.slice(0, Math.max(0, own.length - PER_DRAWING))) drop(row);
+    const all = await request(metaStore.getAll(graphRange()));
+    let total = 0;
+    for (const row of all) total += row.bytes || 0;
+    if (total <= MAX_GRAPH_BYTES) return;
+    const newest = /* @__PURE__ */ new Map();
+    for (const row of all) if (!newest.has(row.key[1]) || newest.get(row.key[1]).t < row.t) newest.set(row.key[1], row);
+    for (const row of all.filter((r) => newest.get(r.key[1]) !== r).sort((a, b) => a.t - b.t)) {
+      if (total <= MAX_GRAPH_BYTES) break;
+      drop(row);
+      total -= row.bytes || 0;
+    }
+  }
+  async function write(db, uid, meta, elementsJson) {
+    const tx = db.transaction([META, DATA], "readwrite");
+    const metaStore = tx.objectStore(META);
+    const dataStore = tx.objectStore(DATA);
+    const finished = done(tx);
+    finished.catch(() => {
+    });
+    try {
+      metaStore.put(meta);
+      dataStore.put({ key: meta.key, elements: elementsJson });
+      await trim(metaStore, dataStore, uid);
+    } catch (error) {
+      try {
+        tx.abort?.();
+      } catch {
+      }
+      throw error;
+    }
+    await finished;
+  }
+  async function evictQuarter(db) {
+    const tx = db.transaction([META, DATA], "readwrite");
+    const metaStore = tx.objectStore(META);
+    const dataStore = tx.objectStore(DATA);
+    const finished = done(tx);
+    finished.catch(() => {
+    });
+    const all = await request(metaStore.getAll(graphRange()));
+    const newest = /* @__PURE__ */ new Map();
+    for (const row of all) if (!newest.has(row.key[1]) || newest.get(row.key[1]).t < row.t) newest.set(row.key[1], row);
+    const old = all.filter((r) => newest.get(r.key[1]) !== r).sort((a, b) => a.t - b.t);
+    for (const row of old.slice(0, Math.ceil(all.length / 4))) {
+      metaStore.delete(row.key);
+      dataStore.delete(row.key);
+    }
+    await finished;
+  }
+  async function newestRow(db, uid) {
+    const tx = db.transaction([META], "readonly");
+    const rows = await request(tx.objectStore(META).getAll(drawingRange(uid)));
+    return rows.reduce((best, r) => !best || r.t > best.t ? r : best, null);
+  }
+  async function doPut(uid, elements) {
+    if (!enabled || disposed || !uid) return false;
+    const els = live2(elements);
+    if (!els.length) return false;
+    const sig = signature(els);
+    if (lastSig.get(uid) === sig) return false;
+    const json = JSON.stringify(els);
+    if (json.length > MAX_SNAPSHOT_BYTES) {
+      warnOnce(uid, "drawing is over 20 MB, not snapshotted");
+      return false;
+    }
+    const hash = fnv1a(json);
+    const db = await openDb();
+    if (!db) return false;
+    let newest = null;
+    if (!lastHash.has(uid)) {
+      newest = await newestRow(db, uid);
+      if (newest) lastHash.set(uid, newest.hash);
+    }
+    if (lastHash.get(uid) === hash) {
+      lastSig.set(uid, sig);
+      return false;
+    }
+    const prevT = newest ? newest.t : lastT.get(uid) ?? 0;
+    const t = Math.max(now(), prevT + 1, (lastT.get(uid) ?? 0) + 1);
+    lastT.set(uid, t);
+    const meta = { key: [graph, uid, t], graph, drawingUid: uid, t, count: els.length, hash, bytes: json.length };
+    try {
+      try {
+        await write(db, uid, meta, json);
+      } catch (error) {
+        if (!isQuota(error)) throw error;
+        await evictQuarter(db);
+        await write(db, uid, meta, json);
+      }
+    } catch (error) {
+      console.warn("[plexus] snapshot not saved", error);
+      return false;
+    }
+    lastSig.set(uid, sig);
+    lastHash.set(uid, hash);
+    lastT.set(uid, t);
+    return true;
+  }
+  function put(drawingUid, elements) {
+    if (!enabled || disposed) return Promise.resolve(false);
+    const p = doPut(drawingUid, elements).catch((error) => {
+      console.warn("[plexus] snapshot failed", error);
+      return false;
+    });
+    inflight.add(p);
+    p.then(() => inflight.delete(p));
+    return p;
+  }
+  async function list(drawingUid) {
+    if (!enabled || disposed) return [];
+    try {
+      const db = await openDb();
+      if (!db || disposed) return [];
+      const tx = db.transaction([META], "readonly");
+      const rows = await request(tx.objectStore(META).getAll(drawingRange(drawingUid)));
+      return rows.sort((a, b) => b.t - a.t).map((r) => ({ key: r.key, t: r.t, count: r.count, hash: r.hash, bytes: r.bytes }));
+    } catch (error) {
+      console.warn("[plexus] snapshot list failed", error);
+      return [];
+    }
+  }
+  async function get(key) {
+    if (!enabled || disposed || !Array.isArray(key) || key[0] !== graph) return null;
+    try {
+      const db = await openDb();
+      if (!db || disposed) return null;
+      const tx = db.transaction([DATA], "readonly");
+      const row = await request(tx.objectStore(DATA).get(key));
+      return row ? JSON.parse(row.elements) : null;
+    } catch (error) {
+      console.warn("[plexus] snapshot read failed", error);
+      return null;
+    }
+  }
+  async function dispose() {
+    if (disposed) return;
+    disposed = true;
+    const wait = (p2) => new Promise((resolve) => {
+      const timer = timers.setTimeout(resolve, disposeWaitMs);
+      Promise.resolve(p2).then(() => {
+        timers.clearTimeout(timer);
+        resolve();
+      }, () => {
+        timers.clearTimeout(timer);
+        resolve();
+      });
+    });
+    if (inflight.size) await wait(Promise.all([...inflight]));
+    const p = dbPromise;
+    dbPromise = null;
+    if (p) {
+      let db = null;
+      await wait(p.then((d) => {
+        db = d;
+      }));
+      try {
+        db?.close?.();
+      } catch {
+      }
+    }
+  }
+  return { put, list, get, dispose, isEnabled: () => enabled && !disposed };
+}
+var BUSY_STATE = ["editingTextElement", "newElement", "resizingElement", "isResizing", "isRotating"];
+var busy = (state) => !!state && (state.cursorButton === "down" || BUSY_STATE.some((k) => !!state[k]));
+function createSnapshotScheduler({
+  store,
+  app,
+  drawingUid,
+  intervalMs = 6e5,
+  timers = { setTimeout: (...a) => globalThis.setTimeout(...a), clearTimeout: (...a) => globalThis.clearTimeout(...a) },
+  requestIdle = (fn) => typeof globalThis.requestIdleCallback === "function" ? globalThis.requestIdleCallback(fn, { timeout: 5e3 }) : timers.setTimeout(fn, 0),
+  loadPollMs = 250,
+  loadWaitMs = 5e3,
+  retryMs = 3e4
+} = {}) {
+  let disposed = false;
+  let last = null;
+  let unsubscribe2 = null;
+  let intervalTimer = null;
+  let loadTimer = null;
+  const idle = (fn) => {
+    try {
+      requestIdle(() => {
+        if (!disposed) fn();
+      });
+    } catch (error) {
+      console.warn("[plexus] snapshot idle failed", error);
+    }
+  };
+  try {
+    const off = app?.onChangeEmitter?.on?.((elements) => {
+      if (elements && elements.length) last = elements;
+    });
+    unsubscribe2 = typeof off === "function" ? off : null;
+  } catch (error) {
+    console.warn("[plexus] snapshot subscribe failed", error);
+  }
+  const source = () => {
+    if (app && app.unmounted !== true) {
+      try {
+        const els = app.getSceneElementsIncludingDeleted?.();
+        if (els && els.length) return els;
+      } catch {
+      }
+    }
+    return last;
+  };
+  function snapshotNow() {
+    if (disposed) return Promise.resolve(false);
+    const els = source();
+    if (!els || !els.length) return Promise.resolve(false);
+    return store.put(drawingUid, els);
+  }
+  const scheduleInterval = (ms) => {
+    if (disposed || !(ms > 0)) return;
+    intervalTimer = timers.setTimeout(() => {
+      intervalTimer = null;
+      idle(() => {
+        if (busy(app?.state)) {
+          scheduleInterval(retryMs);
+          return;
+        }
+        snapshotNow();
+        scheduleInterval(intervalMs);
+      });
+    }, ms);
+  };
+  let waited = 0;
+  const pollLoaded = () => {
+    loadTimer = null;
+    if (disposed) return;
+    if (!app?.state?.isLoading || waited >= loadWaitMs) {
+      idle(() => snapshotNow());
+      return;
+    }
+    waited += loadPollMs;
+    loadTimer = timers.setTimeout(pollLoaded, loadPollMs);
+  };
+  pollLoaded();
+  scheduleInterval(intervalMs);
+  async function dispose({ final = false } = {}) {
+    if (disposed) return false;
+    const keep = last;
+    disposed = true;
+    if (intervalTimer != null) timers.clearTimeout(intervalTimer);
+    if (loadTimer != null) timers.clearTimeout(loadTimer);
+    intervalTimer = null;
+    loadTimer = null;
+    try {
+      unsubscribe2?.();
+    } catch {
+    }
+    unsubscribe2 = null;
+    last = null;
+    if (final && keep && keep.length) return store.put(drawingUid, keep);
+    return false;
+  }
+  return { snapshotNow, dispose };
+}
+function planRestore({ current: current4 = [], snapshot = [], files, now = () => Date.now() } = {}) {
+  const stamp = now();
+  const byId = /* @__PURE__ */ new Map();
+  for (const el of current4) if (el) byId.set(el.id, el);
+  const owned = (el) => typeof el?.id === "string" && el.id.startsWith("pmm-");
+  const bump3 = (el, from, extra) => ({
+    ...el,
+    ...extra,
+    version: Math.max(from?.version || 0, el.version || 0) + 1,
+    versionNonce: nonce3(),
+    updated: stamp
+  });
+  const next = [];
+  const kept = /* @__PURE__ */ new Set();
+  let missingFiles = 0;
+  for (const el of snapshot) {
+    if (!el || owned(el)) continue;
+    kept.add(el.id);
+    next.push(bump3(el, byId.get(el.id), { isDeleted: false }));
+    if (el.type === "image" && el.fileId && !files?.[el.fileId]) missingFiles += 1;
+  }
+  const restored = next.length;
+  let deleted = 0;
+  for (const el of current4) {
+    if (!el || kept.has(el.id)) continue;
+    if (owned(el) || el.isDeleted) {
+      next.push(el);
+      continue;
+    }
+    next.push(bump3(el, el, { isDeleted: true }));
+    deleted += 1;
+  }
+  return { next, restored, deleted, missingFiles };
+}
+
+// src/view/restore-dialog.js
+var STOP_EVENTS = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
+var open = /* @__PURE__ */ new WeakMap();
+var pad = (n) => String(n).padStart(2, "0");
+function formatWhen(t, nowMs = Date.now()) {
+  const d = new Date(t);
+  const n = new Date(nowMs);
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()) return hm;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+}
+var plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function openRestoreDialog({ doc, zIndex = 1e5, session = [], loadSaved, onRestore = () => {
+}, onClose = () => {
+}, mac = false } = {}) {
+  const existing = open.get(doc);
+  if (existing) existing.close();
+  const el = (tag, className, text) => {
+    const node = doc.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = String(text);
+    return node;
+  };
+  const root = el("div", "plexus-portal plexus-restore");
+  root.setAttribute?.("role", "dialog");
+  root.setAttribute?.("aria-modal", "true");
+  root.setAttribute?.("aria-label", "Restore an earlier version");
+  root.setAttribute?.("tabindex", "-1");
+  root.style.zIndex = String(Number(zIndex) + 2);
+  const previous = doc.activeElement ?? null;
+  let closed = false;
+  const close2 = () => {
+    if (closed) return;
+    closed = true;
+    if (open.get(doc) === handle) open.delete(doc);
+    root.remove?.();
+    try {
+      previous?.focus?.();
+    } catch {
+    }
+    try {
+      onClose();
+    } catch (error) {
+      console.warn("[plexus] restore dialog close failed", error);
+    }
+  };
+  const stop = (e) => e?.stopPropagation?.();
+  for (const type of STOP_EVENTS) root.addEventListener(type, stop);
+  root.addEventListener("keydown", (e) => {
+    if (e?.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  });
+  const pick3 = (entry) => {
+    close2();
+    try {
+      onRestore(entry);
+    } catch (error) {
+      console.warn("[plexus] restore failed", error);
+    }
+  };
+  const row = (main, meta, entry) => {
+    const line = el("div", "plexus-restore-row");
+    const button = el("button", "plexus-toolbar-button plexus-restore-pick", "Restore");
+    button.type = "button";
+    button.addEventListener("click", (e) => {
+      e.stopPropagation?.();
+      pick3(entry);
+    });
+    line.append(el("span", "plexus-restore-main", main), el("span", "plexus-restore-meta", meta), button);
+    return line;
+  };
+  const section = (title) => {
+    const box = el("div", "plexus-restore-section");
+    box.append(el("div", "plexus-restore-heading", title));
+    const list = el("div", "plexus-restore-list");
+    box.append(list);
+    return { box, list };
+  };
+  const note = (text) => el("div", "plexus-restore-empty", text);
+  const sessionSection = section("This session");
+  if (!session.length) sessionSection.list.append(note("Nothing yet this session"));
+  for (const s of session) {
+    sessionSection.list.append(row(s.label || "Change", `${formatWhen(s.time)} · ${plural2(s.count, "element")}`, { kind: "session", index: s.index, label: s.label, ...s.id !== void 0 ? { id: s.id } : {} }));
+  }
+  const savedSection = section("Saved on this device");
+  savedSection.list.append(note(typeof loadSaved === "function" ? "Loading…" : "Not kept on encrypted graphs"));
+  if (typeof loadSaved === "function") {
+    Promise.resolve().then(loadSaved).then((saved) => {
+      if (closed) return;
+      savedSection.list.replaceChildren();
+      if (!saved || saved.encrypted === true) {
+        savedSection.list.append(note("Not kept on encrypted graphs"));
+        return;
+      }
+      if (!saved.length) savedSection.list.append(note("No saved versions yet"));
+      for (const s of saved) savedSection.list.append(row(formatWhen(s.t), plural2(s.count, "element"), { kind: "saved", key: s.key, t: s.t, count: s.count }));
+    }).catch((error) => {
+      console.warn("[plexus] restore dialog list failed", error);
+      if (closed) return;
+      savedSection.list.replaceChildren();
+      savedSection.list.append(note("Could not load saved versions"));
+    });
+  }
+  const cancel = el("button", "plexus-toolbar-button plexus-restore-cancel", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", (e) => {
+    e.stopPropagation?.();
+    close2();
+  });
+  const actions = el("div", "plexus-restore-actions");
+  actions.append(cancel);
+  root.append(
+    el("div", "plexus-restore-title", "Restore an earlier version"),
+    el("div", "plexus-restore-hint", `Restoring is one undo step (${mac ? "Cmd" : "Ctrl"}+Z).`),
+    sessionSection.box,
+    savedSection.box,
+    actions
+  );
+  const handle = { close: close2, isOpen: () => !closed, node: root };
+  open.set(doc, handle);
+  doc.body.append(root);
+  try {
+    root.focus?.();
+  } catch {
+  }
+  return handle;
+}
+
+// src/view/chart-dialog.js
+var ISOLATED = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
+var LAYOUT_LABELS = { tree: "Tree", fishbone: "Fishbone", pentagon: "Pentagon" };
+var current = null;
+function openChartDialog({ doc, zIndex = 1e5, onInsert = () => {
+}, onClose = () => {
+}, FileReaderCtor = globalThis.FileReader } = {}) {
+  if (current) current.close();
+  const handle = { done: false, root: null, listeners: [] };
+  const mk = (tag, className, text) => {
+    const n = doc.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = String(text);
+    return n;
+  };
+  const on = (node, type, fn) => {
+    node.addEventListener(type, fn);
+    handle.listeners.push([node, type, fn]);
+  };
+  const root = mk("div", "plexus-portal plexus-chart-dialog");
+  root.style.zIndex = String(zIndex + 2);
+  handle.root = root;
+  const title = mk("div", "plexus-chart-title", "Cause-and-effect from JSON");
+  const area = mk("textarea", "plexus-chart-text");
+  area.placeholder = '{"nodes": [{"id": "a", "text": "Effect", "role": "primary"}], "edges": []}';
+  area.spellcheck = false;
+  const fileRow = mk("div", "plexus-chart-row");
+  const fileButton = mk("button", "plexus-toolbar-button", "Choose file…");
+  fileButton.type = "button";
+  const fileInput = mk("input", "plexus-chart-file");
+  fileInput.type = "file";
+  fileInput.accept = ".json,application/json";
+  const layoutSelect = mk("select", "plexus-chart-layout");
+  for (const l of CE_LAYOUTS) {
+    const o = mk("option", null, LAYOUT_LABELS[l] || l);
+    o.value = l;
+    layoutSelect.append(o);
+  }
+  layoutSelect.value = CE_LAYOUTS[0];
+  fileRow.append(fileButton, fileInput, layoutSelect);
+  const error = mk("div", "plexus-chart-error", "");
+  const actions = mk("div", "plexus-chart-actions");
+  const insert = mk("button", "plexus-toolbar-button", "Insert");
+  insert.type = "button";
+  const cancel = mk("button", "plexus-toolbar-button", "Cancel");
+  cancel.type = "button";
+  actions.append(insert, cancel);
+  root.append(title, area, fileRow, error, actions);
+  const close2 = () => {
+    if (handle.done) return;
+    handle.done = true;
+    for (const [node, type, fn] of handle.listeners.splice(0)) node.removeEventListener?.(type, fn);
+    try {
+      root.remove?.();
+    } catch (e) {
+      console.warn("[plexus] chart dialog remove failed", e);
+    }
+    if (current === handle) current = null;
+    try {
+      onClose();
+    } catch (e) {
+      console.warn("[plexus] chart dialog onClose failed", e);
+    }
+  };
+  handle.close = close2;
+  const submit = async () => {
+    if (handle.done) return;
+    const text = String(area.value ?? "").trim();
+    if (!text) {
+      error.textContent = "Paste the chart JSON or choose a file";
+      return;
+    }
+    error.textContent = "";
+    try {
+      await onInsert({ text, layout: layoutSelect.value });
+      close2();
+    } catch (e) {
+      if (!handle.done) error.textContent = String(e?.message || e);
+    }
+  };
+  for (const type of ISOLATED) on(root, type, (e) => e.stopPropagation?.());
+  on(root, "keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault?.();
+      submit();
+    }
+  });
+  on(insert, "click", (e) => {
+    e.stopPropagation?.();
+    submit();
+  });
+  on(cancel, "click", (e) => {
+    e.stopPropagation?.();
+    close2();
+  });
+  on(fileButton, "click", (e) => {
+    e.stopPropagation?.();
+    fileInput.click?.();
+  });
+  on(fileInput, "change", () => {
+    const file = fileInput.files?.[0];
+    if (!file || typeof FileReaderCtor !== "function") return;
+    const reader = new FileReaderCtor();
+    reader.onload = () => {
+      if (!handle.done) {
+        area.value = String(reader.result ?? "");
+        error.textContent = "";
+      }
+    };
+    reader.onerror = () => {
+      if (!handle.done) error.textContent = "Could not read the file";
+    };
+    reader.readAsText(file);
+  });
+  try {
+    doc.body.append(root);
+    area.focus?.();
+  } catch (e) {
+    console.warn("[plexus] chart dialog failed", e);
+    close2();
+    return null;
+  }
+  current = handle;
+  return { el: root, close: close2, isOpen: () => !handle.done };
+}
+
+// src/model/slides.js
+var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+var orderOf = (el) => {
+  const o = el?.customData?.plexus?.order;
+  return typeof o === "number" && Number.isFinite(o) ? o : null;
+};
+function orderFrames(elements) {
+  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
+  return frames.sort((a, b) => {
+    const oa = orderOf(a), ob = orderOf(b);
+    if (oa !== null && ob !== null) {
+      if (oa !== ob) return oa - ob;
+    } else if (oa !== null) return -1;
+    else if (ob !== null) return 1;
+    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+    if (n) return n;
+    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
+  });
+}
+
+// src/model/outline.js
+var isFrame = (el) => el.type === "frame" || el.type === "magicframe";
+var mmOf2 = (el) => el?.customData?.plexus?.mm;
+var isProjection = (el) => typeof el?.id === "string" && el.id.startsWith("pmm-");
+function todayTitle(today) {
+  if (typeof today === "string" && today) return today;
+  const d = today instanceof Date ? today : today != null ? new Date(today) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : "today";
+}
+var cleanText = (s) => String(s ?? "").replace(/\r\n?/g, "\n").replace(/^\n+|\n+$/g, "").trim();
+function itemString(el, textOf, today) {
+  const plexus = el.customData?.plexus;
+  if (typeof plexus?.embed === "string") {
+    const ref = parseEmbedRef(plexus.embed);
+    if (!ref) return plexus.embed.trim() || null;
+    return ref.kind === "today" ? `[[${todayTitle(today)}]]` : ref.ref;
+  }
+  if (el.type === "image") {
+    const url = el.customData?.firebaseUrl;
+    if (typeof url !== "string" || !url) return null;
+    return appendLink(`![](${url})`, el.link, today);
+  }
+  const text = cleanText(textOf(el));
+  if (!text) return null;
+  return appendLink(text, el.link, today);
+}
+function appendLink(text, link, today) {
+  if (typeof link !== "string" || !link.trim()) return text;
+  const raw = link.trim();
+  const ref = parseEmbedRef(raw);
+  const add = ref ? ref.kind === "today" ? `[[${todayTitle(today)}]]` : ref.ref : raw;
+  if (text.includes(add) || text.includes(raw)) return text;
+  return `${text} ${add}`;
+}
+function readingOrder2(items) {
+  const byTop = [...items].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const out = [];
+  let row = [];
+  let anchor = null;
+  const flush = () => {
+    row.sort((a, b) => a.x - b.x || a.y - b.y || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    out.push(...row);
+    row = [];
+  };
+  for (const it of byTop) {
+    if (anchor && Math.abs(it.cy - anchor.cy) <= 0.5 * Math.min(it.h, anchor.h)) {
+      row.push(it);
+      continue;
+    }
+    flush();
+    anchor = it;
+    row.push(it);
+  }
+  flush();
+  return out;
+}
+function buildBucket(items, edges) {
+  if (!items.length) return [];
+  const ordered = readingOrder2(items);
+  const ids = new Set(items.map((i) => i.id));
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const incoming = new Map(items.map((i) => [i.id, /* @__PURE__ */ new Set()]));
+  for (const [from, to] of edges) {
+    if (from === to || !ids.has(from) || !ids.has(to)) continue;
+    incoming.get(to).add(from);
+  }
+  const emitted = /* @__PURE__ */ new Set();
+  const topo = [];
+  const kept = new Map(items.map((i) => [i.id, /* @__PURE__ */ new Set()]));
+  const remaining = new Set(ids);
+  while (remaining.size) {
+    let pick3 = null;
+    for (const it of ordered) {
+      if (!remaining.has(it.id)) continue;
+      let open5 = false;
+      for (const src of incoming.get(it.id)) if (!emitted.has(src)) {
+        open5 = true;
+        break;
+      }
+      if (!open5) {
+        pick3 = it;
+        break;
+      }
+    }
+    if (!pick3) {
+      pick3 = ordered.find((it) => remaining.has(it.id));
+      for (const src of [...incoming.get(pick3.id)]) if (!emitted.has(src)) incoming.get(pick3.id).delete(src);
+    }
+    for (const src of incoming.get(pick3.id)) kept.get(pick3.id).add(src);
+    remaining.delete(pick3.id);
+    emitted.add(pick3.id);
+    topo.push(pick3.id);
+  }
+  const nodes = new Map(topo.map((id) => [id, { string: byId.get(id).string, heading: 0, children: [] }]));
+  const roots = [];
+  for (const id of topo) {
+    const srcs = kept.get(id);
+    if (srcs.size === 1) nodes.get([...srcs][0]).children.push(nodes.get(id));
+    else roots.push(nodes.get(id));
+  }
+  return roots;
+}
+var countNodes = (nodes) => nodes.reduce((n, node) => n + 1 + countNodes(node.children), 0);
+function elementsToOutline(elements, { selection = null, today } = {}) {
+  const live3 = liveElements(elements);
+  const frames = orderFrames(live3);
+  const frameIds = new Set(frames.map((f) => f.id));
+  const frameName = new Map(frames.map((f, i) => [f.id, String(f.name ?? "").trim() || `Frame ${i + 1}`]));
+  const byId = new Map(live3.map((el) => [el.id, el]));
+  const boundText = /* @__PURE__ */ new Map();
+  for (const el of live3) {
+    if (el.type === "text" && el.containerId && byId.has(el.containerId)) boundText.set(el.containerId, el);
+  }
+  const itemIdOf = (id) => {
+    const el = byId.get(id);
+    if (!el) return null;
+    if (el.type === "text" && el.containerId && byId.has(el.containerId)) return el.containerId;
+    return el.id;
+  };
+  let allowed = null;
+  let selectedFrames = /* @__PURE__ */ new Set();
+  if (selection != null) {
+    allowed = /* @__PURE__ */ new Set();
+    const ids = [...selection];
+    for (const id of ids) {
+      const el = byId.get(id);
+      if (!el) continue;
+      if (isFrame(el)) {
+        selectedFrames.add(el.id);
+        for (const child of live3) if (child.frameId === el.id) allowed.add(itemIdOf(child.id));
+      } else {
+        allowed.add(itemIdOf(id));
+      }
+    }
+  }
+  const items = [];
+  const mapSeen = /* @__PURE__ */ new Set();
+  for (const el of live3) {
+    if (isFrame(el) || el.type === "arrow" || el.type === "line") continue;
+    if (el.type === "text" && el.containerId && byId.has(el.containerId)) continue;
+    if (isProjection(el)) {
+      const mm2 = mmOf2(el);
+      if (!mm2?.root || typeof mm2.uid !== "string" || mapSeen.has(mm2.uid)) continue;
+      if (allowed && !allowed.has(el.id)) continue;
+      mapSeen.add(mm2.uid);
+      items.push(makeItem(el, `((${mm2.uid}))`));
+      continue;
+    }
+    if (allowed && !allowed.has(el.id)) continue;
+    const textOf = (e) => boundText.get(e.id) ? boundText.get(e.id).originalText ?? boundText.get(e.id).text : e.type === "text" ? e.originalText ?? e.text : "";
+    const string = itemString(el, textOf, today);
+    if (string) items.push(makeItem(el, string));
+  }
+  const frameOf = (item) => frameIds.has(item.frameId) ? item.frameId : null;
+  const buckets = /* @__PURE__ */ new Map();
+  for (const it of items) {
+    const key = frameOf(it);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(it);
+  }
+  const itemById = new Map(items.map((i) => [i.id, i]));
+  const edgesByBucket = /* @__PURE__ */ new Map();
+  for (const el of live3) {
+    if (el.type !== "arrow") continue;
+    const s = el.startBinding?.elementId, e = el.endBinding?.elementId;
+    if (!s || !e) continue;
+    const from = itemIdOf(s), to = itemIdOf(e);
+    if (!itemById.has(from) || !itemById.has(to)) continue;
+    const bf = frameOf(itemById.get(from)), bt = frameOf(itemById.get(to));
+    if (bf !== bt) continue;
+    if (!edgesByBucket.has(bf)) edgesByBucket.set(bf, []);
+    edgesByBucket.get(bf).push([from, to]);
+  }
+  const nodes = [];
+  for (const f of frames) {
+    const bucket = buckets.get(f.id) || [];
+    if (allowed && !bucket.length && !selectedFrames.has(f.id)) continue;
+    nodes.push({ string: frameName.get(f.id), heading: 2, children: buildBucket(bucket, edgesByBucket.get(f.id) || []) });
+  }
+  nodes.push(...buildBucket(buckets.get(null) || [], edgesByBucket.get(null) || []));
+  return { nodes, count: countNodes(nodes) };
+}
+function makeItem(el, string) {
+  const x = Number(el.x) || 0, y = Number(el.y) || 0;
+  const w = Number(el.width) || 0, h = Number(el.height) || 0;
+  return { id: el.id, frameId: el.frameId ?? null, string, x, y, w, h, cy: y + h / 2 };
+}
+function outlineToMarkdown(tree, { multiline = true } = {}) {
+  const nodes = Array.isArray(tree) ? tree : tree?.nodes || [];
+  const lines = [];
+  const walk2 = (list, depth) => {
+    const pad2 = "  ".repeat(depth);
+    for (const node of list) {
+      const prefix = node.heading > 0 ? `${"#".repeat(Math.min(3, node.heading))} ` : "";
+      const parts = String(node.string ?? "").split("\n");
+      if (multiline) {
+        lines.push(`${pad2}- ${prefix}${parts[0]}`);
+        for (const rest of parts.slice(1)) lines.push(`${pad2}  ${rest}`);
+      } else {
+        lines.push(`${pad2}- ${prefix}${parts.map((p) => p.trim()).filter(Boolean).join(" ")}`);
+      }
+      walk2(node.children || [], depth + 1);
+    }
+  };
+  walk2(nodes, 0);
+  return lines.join("\n");
+}
+
+// src/view/outline-preview.js
+var ISOLATED2 = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
+var current2 = null;
+function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, replacing = 0, onWrite = () => {
+}, onClose = () => {
+} } = {}) {
+  if (current2) current2.close();
+  const el = (tag, className, text) => {
+    const n = doc.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = String(text);
+    return n;
+  };
+  const prior = doc.activeElement ?? null;
+  const root = el("div", "plexus-portal plexus-outline-preview");
+  root.setAttribute?.("role", "dialog");
+  root.setAttribute?.("aria-label", "Drawing to outline");
+  root.style.zIndex = String(Number(zIndex) + 2);
+  let closed = false;
+  let busy2 = false;
+  const stop = (e) => e?.stopPropagation?.();
+  const close2 = () => {
+    if (closed) return;
+    closed = true;
+    if (current2 === handle) current2 = null;
+    for (const type of ISOLATED2) root.removeEventListener?.(type, stop);
+    root.removeEventListener?.("keydown", onKey);
+    root.remove?.();
+    try {
+      prior?.focus?.();
+    } catch {
+    }
+    try {
+      onClose();
+    } catch (error) {
+      console.warn("[plexus] outline preview onClose failed", error);
+    }
+  };
+  const onKey = (e) => {
+    if (e?.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  };
+  for (const type of ISOLATED2) root.addEventListener(type, stop);
+  root.addEventListener("keydown", onKey);
+  const button = (label, handler) => {
+    const b = el("button", "plexus-toolbar-button", label);
+    b.type = "button";
+    b.addEventListener("click", (e) => {
+      e?.stopPropagation?.();
+      handler(b);
+    });
+    return b;
+  };
+  root.append(el("div", "plexus-outline-preview-title", "Drawing to outline"));
+  const blocks = `${count} block${count === 1 ? "" : "s"}`;
+  root.append(el("div", "plexus-outline-preview-summary", replacing > 0 ? `${blocks} will replace the ${replacing} in the current outline.` : `${blocks} will be written.`));
+  const list = el("div", "plexus-outline-preview-list");
+  if (headings.length) for (const h of headings) list.append(el("div", "plexus-outline-preview-heading", h));
+  else list.append(el("div", "plexus-outline-preview-heading", "No frames: one flat outline"));
+  root.append(list);
+  const actions = el("div", "plexus-outline-preview-actions");
+  const write = button("Write outline", async (b) => {
+    if (busy2 || closed) return;
+    busy2 = true;
+    b.disabled = true;
+    try {
+      await onWrite();
+    } catch (error) {
+      console.warn("[plexus] outline write failed", error);
+    }
+    close2();
+  });
+  actions.append(button("Cancel", () => close2()), write);
+  root.append(actions);
+  doc.body.append(root);
+  try {
+    write.focus?.();
+  } catch {
+  }
+  const handle = { el: root, close: close2 };
+  current2 = handle;
+  return handle;
+}
+
+// src/actions-outline.js
+var OUTLINE_CONTAINER = "{{[[plexus-outline]]}}";
+var OUTLINE_PREVIEW_ABOVE = 50;
+var OUTLINE_MAX = 500;
+var TREE_PATTERN2 = "[:block/uid :block/string :block/heading :block/order {:block/children ...}]";
+var normTree = (raw) => ({
+  uid: raw?.[":block/uid"],
+  string: raw?.[":block/string"] ?? "",
+  heading: raw?.[":block/heading"] || 0,
+  children: (raw?.[":block/children"] || []).map(normTree).sort((a, b) => a.order - b.order),
+  order: raw?.[":block/order"] ?? 0
+});
+var flatUids = (t) => [t.uid, ...t.children.flatMap(flatUids)];
+var looksLikeHeading = (nodes) => nodes.some((n) => !(n.heading > 0) && /^#{1,6}\s/.test(n.string) || looksLikeHeading(n.children || []));
+function createOutlineActions({
+  host,
+  native,
+  api = globalThis.roamAlphaAPI,
+  toaster,
+  clipboard,
+  withLockFn = withLock,
+  openPreview = openOutlinePreview,
+  doc,
+  getApp = null
+} = {}) {
+  let preview = null;
+  let disposed = false;
+  const toast = (message, opts) => {
+    try {
+      toaster?.show?.(message, opts);
+    } catch {
+    }
+  };
+  const error = (message) => toast(message, { kind: "error" });
+  const app = (drawingUid) => {
+    try {
+      if (getApp) return getApp(drawingUid) || null;
+      const editor = native?.activeEditor?.(doc);
+      return editor && (!drawingUid || !editor.drawingUid || editor.drawingUid === drawingUid) ? editor.app : null;
+    } catch {
+      return null;
+    }
+  };
+  const today = () => {
+    try {
+      return api.util.dateToPageTitle(/* @__PURE__ */ new Date());
+    } catch {
+      return void 0;
+    }
+  };
+  function build(drawingUid, selection) {
+    const editor = app(drawingUid);
+    let ids = null;
+    let elements;
+    if (selection) {
+      if (Array.isArray(selection) || selection instanceof Set) ids = [...selection];
+      else if (editor) ids = native.selectedElementIds(editor);
+      else return { message: "Open the drawing to outline a selection" };
+      if (!ids.length) return { message: "Nothing is selected" };
+    }
+    if (editor) elements = editor.getSceneElements?.() ?? editor.getSceneElementsIncludingDeleted?.() ?? [];
+    else elements = host.drawing?.(drawingUid)?.elements ?? null;
+    if (!Array.isArray(elements)) return { message: "That drawing could not be read" };
+    const outline = elementsToOutline(elements, { selection: ids, today: today() });
+    if (!outline.count) return { message: "Nothing to outline" };
+    return { outline };
+  }
+  const findContainer = (drawingUid) => host.pullBlock(drawingUid)?.children.find((c) => c.string.trim() === OUTLINE_CONTAINER) || null;
+  async function ensureContainer(drawingUid) {
+    const existing = findContainer(drawingUid);
+    if (existing) return existing.uid;
+    const uid = `o${fnv1a(drawingUid)}`;
+    try {
+      await host.createBlock({ parentUid: drawingUid, order: "last", string: OUTLINE_CONTAINER, uid, open: false });
+    } catch (err) {
+      const found = findContainer(drawingUid);
+      if (found) return found.uid;
+      if (!host.pullBlock(uid)) throw err;
+    }
+    return uid;
+  }
+  const pullTree = (uid) => {
+    const raw = api.data.pull(TREE_PATTERN2, [":block/uid", uid]);
+    return raw && raw[":block/uid"] ? normTree(raw) : null;
+  };
+  function referencedElsewhere(oldTops) {
+    const uids = new Set(oldTops.flatMap(flatUids));
+    for (const id of uids) {
+      const raw = api.data.pull("[:block/uid {:block/_refs [:block/uid]}]", [":block/uid", id]);
+      if ((raw?.[":block/_refs"] || []).some((r) => !uids.has(r[":block/uid"]))) return true;
+    }
+    return false;
+  }
+  function compare(nodes, actual) {
+    const out = { strings: true, headings: true, fixes: [] };
+    const walk2 = (exp, act) => {
+      if (exp.length !== act.length) {
+        out.strings = false;
+        return;
+      }
+      exp.forEach((node, i) => {
+        const a = act[i];
+        if (String(a.string).trim() !== String(node.string).trim()) out.strings = false;
+        if ((a.heading || 0) !== (node.heading || 0)) {
+          out.headings = false;
+          out.fixes.push({ uid: a.uid, heading: node.heading || 0 });
+        }
+        walk2(node.children || [], a.children);
+      });
+    };
+    walk2(nodes, actual);
+    return out;
+  }
+  async function createSequential(nodes, parentUid) {
+    for (const node of nodes) {
+      const uid = api.util.generateUID();
+      await api.data.block.create({
+        location: { "parent-uid": parentUid, order: "last" },
+        block: { uid, string: node.string, ...node.heading > 0 ? { heading: node.heading } : {} }
+      });
+      await createSequential(node.children || [], uid);
+    }
+  }
+  async function deleteQuiet(uids) {
+    let all = true;
+    for (const uid of uids) {
+      try {
+        await api.data.block.delete({ block: { uid } });
+      } catch (err) {
+        all = false;
+        console.warn("[plexus] outline delete failed", err);
+      }
+    }
+    return all;
+  }
+  async function replaceContainer(containerUid, outline, markdown) {
+    const before = pullTree(containerUid);
+    const old = before ? before.children : [];
+    const oldSet = new Set(old.map((c) => c.uid));
+    if (old.length && referencedElsewhere(old)) return { ok: false, reason: "referenced" };
+    const newTops = () => (pullTree(containerUid)?.children || []).filter((c) => !oldSet.has(c.uid));
+    try {
+      let fresh2;
+      let cmp2;
+      if (looksLikeHeading(outline.nodes)) {
+        await createSequential(outline.nodes, containerUid);
+        fresh2 = newTops();
+        cmp2 = compare(outline.nodes, fresh2);
+        if (!cmp2.strings) throw new Error("[plexus] outline did not round-trip");
+      } else {
+        await api.data.block.fromMarkdown({ location: { "parent-uid": containerUid, order: old.length }, "markdown-string": markdown });
+        fresh2 = newTops();
+        cmp2 = compare(outline.nodes, fresh2);
+      }
+      if (!cmp2.strings) {
+        await deleteQuiet(fresh2.map((c) => c.uid));
+        await createSequential(outline.nodes, containerUid);
+        fresh2 = newTops();
+        cmp2 = compare(outline.nodes, fresh2);
+        if (!cmp2.strings) throw new Error("[plexus] outline did not round-trip");
+      }
+      if (!cmp2.headings) {
+        for (const fix of cmp2.fixes) await api.data.block.update({ block: { uid: fix.uid, heading: fix.heading } });
+      }
+    } catch (err) {
+      console.warn("[plexus] outline write failed", err);
+      try {
+        await deleteQuiet(newTops().map((c) => c.uid));
+      } catch {
+      }
+      return { ok: false, reason: "insert" };
+    }
+    const removedAll = old.length ? await deleteQuiet(old.map((c) => c.uid)) : true;
+    return { ok: true, removedAll };
+  }
+  async function write(drawingUid, outline) {
+    const markdown = outlineToMarkdown(outline);
+    try {
+      const lock = await withLockFn(lockName(api.graph.name, drawingUid), async () => {
+        const containerUid = await ensureContainer(drawingUid);
+        return { containerUid, ...await replaceContainer(containerUid, outline, markdown) };
+      });
+      if (!lock.acquired) {
+        error("Could not lock the drawing; nothing was written");
+        return { ok: false, reason: "lock" };
+      }
+      const r = lock.value;
+      if (!r.ok) {
+        error(r.reason === "referenced" ? "The previous outline is referenced elsewhere; move those blocks out first" : "The outline could not be written; the previous one was kept");
+        return r;
+      }
+      if (!r.removedAll) error("The previous outline could not be fully removed");
+      else toast(`Outline written · ${outline.count} block${outline.count === 1 ? "" : "s"}`);
+      return { ok: true, count: outline.count, containerUid: r.containerUid, removedAll: r.removedAll };
+    } catch (err) {
+      console.warn("[plexus] drawing to outline failed", err);
+      error("The outline could not be written");
+      return { ok: false, reason: "error" };
+    }
+  }
+  function closePreview() {
+    const p = preview;
+    preview = null;
+    try {
+      p?.close?.();
+    } catch {
+    }
+  }
+  function replacingCount(drawingUid) {
+    try {
+      const c = findContainer(drawingUid);
+      const tree = c ? pullTree(c.uid) : null;
+      return tree ? flatUids(tree).length - 1 : 0;
+    } catch {
+      return 0;
+    }
+  }
+  function copyText(text, done2) {
+    let pending;
+    try {
+      const writeText = () => clipboard.writeText(text);
+      pending = native.withClipboard ? native.withClipboard(writeText) : writeText();
+    } catch (err) {
+      pending = Promise.reject(err);
+    }
+    return Promise.resolve(pending).then(
+      () => {
+        toast(done2);
+        return true;
+      },
+      (err) => {
+        console.warn("[plexus] clipboard failed", err);
+        error("Clipboard access was blocked");
+        return false;
+      }
+    );
+  }
+  return {
+    async drawingToOutline(drawingUid, { selection = null } = {}) {
+      if (disposed) return { ok: false, reason: "disposed" };
+      if (!drawingUid) return { ok: false, reason: "no-drawing" };
+      const built = build(drawingUid, selection);
+      if (!built.outline) {
+        toast(built.message);
+        return { ok: false, reason: "empty" };
+      }
+      const { outline } = built;
+      if (outline.count > OUTLINE_MAX) {
+        error(`That outline has ${outline.count} blocks; the limit is ${OUTLINE_MAX}. Select fewer elements`);
+        return { ok: false, reason: "too-many", count: outline.count };
+      }
+      if (outline.count <= OUTLINE_PREVIEW_ABOVE) return write(drawingUid, outline);
+      closePreview();
+      return new Promise((resolve) => {
+        let settled = false;
+        const settle = (v) => {
+          if (!settled) {
+            settled = true;
+            resolve(v);
+          }
+        };
+        try {
+          preview = openPreview({
+            doc,
+            headings: outline.nodes.filter((n) => n.heading > 0).map((n) => n.string),
+            count: outline.count,
+            replacing: replacingCount(drawingUid),
+            onWrite: async () => {
+              const r = await write(drawingUid, outline);
+              settle(r);
+              return r;
+            },
+            onClose: () => {
+              preview = null;
+              settle({ ok: false, reason: "cancelled" });
+            }
+          });
+        } catch (err) {
+          console.warn("[plexus] outline preview failed", err);
+          error("The outline preview could not open");
+          settle({ ok: false, reason: "error" });
+        }
+      });
+    },
+    // Builds synchronously so the clipboard write still counts as the user's gesture.
+    copyMarkdown(drawingUid, { selection = null } = {}) {
+      if (disposed || !drawingUid) return Promise.resolve(false);
+      const built = build(drawingUid, selection);
+      if (!built.outline) {
+        toast(built.message);
+        return Promise.resolve(false);
+      }
+      return copyText(outlineToMarkdown(built.outline), "Copied as Roam markdown");
+    },
+    closePreview,
+    dispose() {
+      disposed = true;
+      closePreview();
+    }
+  };
 }
 
 // src/host/camera.js
@@ -8803,13 +11687,13 @@ async function animateTo(app, bbox, { maxZoom = 1, animate = true, doc = globalT
     const cur = viewOf(s);
     const fit = fitZoom({ bbox, viewportWidth: s.width, viewportHeight: s.height, maxZoom });
     const target = { scrollX: fit.scrollX, scrollY: fit.scrollY, zoom: fit.zoom };
-    const inside = (v) => {
+    const inside2 = (v) => {
       const r = rectFor(app, bbox, v);
       const l = s.offsetLeft || 0;
       const tp = s.offsetTop || 0;
       return r.left >= l && r.top >= tp && r.left + r.width <= l + s.width && r.top + r.height <= tp + s.height;
     };
-    if (inside(cur) && cur.zoom >= 0.6 * target.zoom && cur.zoom <= 1.25 * target.zoom) {
+    if (inside2(cur) && cur.zoom >= 0.6 * target.zoom && cur.zoom <= 1.25 * target.zoom) {
       return { moved: false, aborted: false, rect: rectFor(app, bbox, cur) };
     }
     const result = await animateView(app, target, { animate, doc, ...rest });
@@ -8931,8 +11815,8 @@ function createRegionsLayer({
     return changed;
   }
   function sceneSignature() {
-    const nonce3 = app.scene?.getSceneNonce?.();
-    if (nonce3 != null) return `n${nonce3}`;
+    const nonce4 = app.scene?.getSceneNonce?.();
+    if (nonce4 != null) return `n${nonce4}`;
     const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
     let sum = elements.length;
     for (const el of elements) sum += Number(el?.version) || 0;
@@ -8963,7 +11847,7 @@ function createRegionsLayer({
       return "";
     }
   }
-  function makeItem(uid) {
+  function makeItem2(uid) {
     const outline = doc.createElementNS ? doc.createElementNS(SVG_NS, "rect") : doc.createElement("rect");
     outline.setAttribute("class", "plexus-region-outline");
     outline.setAttribute("vector-effect", "non-scaling-stroke");
@@ -9015,8 +11899,8 @@ function createRegionsLayer({
   function collect() {
     const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
     const appState = app.state;
-    const live2 = liveElements(elements);
-    const sceneIndex = { live: live2, byId: new Map(live2.map((el) => [el.id, el])) };
+    const live3 = liveElements(elements);
+    const sceneIndex = { live: live3, byId: new Map(live3.map((el) => [el.id, el])) };
     const wanted = [];
     regions.forEach((entry, index) => {
       const region = entry?.region;
@@ -9035,7 +11919,7 @@ function createRegionsLayer({
     for (const { entry, index } of drawn) {
       let out;
       try {
-        out = regionSceneBBox(entry.region, live2, appState, sceneIndex);
+        out = regionSceneBBox(entry.region, live3, appState, sceneIndex);
       } catch (error) {
         warn7("regions layer bbox failed", error);
         continue;
@@ -9044,7 +11928,7 @@ function createRegionsLayer({
       keep.add(entry.uid);
       let item = items.get(entry.uid);
       if (!item) {
-        item = makeItem(entry.uid);
+        item = makeItem2(entry.uid);
         items.set(entry.uid, item);
       }
       item.bbox = out.bbox;
@@ -9113,10 +11997,10 @@ function createRegionsLayer({
         item.chip.style.top = `${item.bbox[1]}px`;
       }
       const rect = native.viewportRectOf(app, item.bbox);
-      const inside = rect.top - CHIP_HEIGHT < box.top;
-      if (inside !== item.chipFlip) {
-        item.chipFlip = inside;
-        item.chip.style.transform = inside ? CHIP_INSIDE : CHIP_ABOVE;
+      const inside2 = rect.top - CHIP_HEIGHT < box.top;
+      if (inside2 !== item.chipFlip) {
+        item.chipFlip = inside2;
+        item.chip.style.transform = inside2 ? CHIP_INSIDE : CHIP_ABOVE;
       }
     }
   }
@@ -9309,17 +12193,17 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
     else setTimeout(resolve, 16);
   });
   const settled = async (uid) => {
-    const current2 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
-    if (typeof current2 !== "function") return true;
+    const current4 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
+    if (typeof current4 !== "function") return true;
     for (let i = 0; i < SETTLE_TRIES; i++) {
-      let open4 = null;
+      let open5 = null;
       try {
-        open4 = await current2.call(api.ui.mainWindow);
+        open5 = await current4.call(api.ui.mainWindow);
       } catch {
-        open4 = null;
+        open5 = null;
       }
       if (disposed) return false;
-      if (open4 === uid) {
+      if (open5 === uid) {
         await frame();
         await frame();
         return true;
@@ -9387,7 +12271,7 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
 }
 
 // src/view/audit-dialog.js
-var STOP_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
+var STOP_EVENTS2 = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
 var MAX_ROWS = 500;
 var PROBLEM_TEXT = {
   unsupported: "Unsupported region string",
@@ -9415,7 +12299,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
 }, onClose = () => {
 }, dark = false } = {}) {
   const statuses = /* @__PURE__ */ new Map();
-  let current2 = Array.isArray(rows) ? rows : [];
+  let current4 = Array.isArray(rows) ? rows : [];
   let closed = false;
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
@@ -9447,11 +12331,11 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
   const summary = el("div", "plexus-legacy-summary");
   const list = el("div", "plexus-legacy-rows plexus-audit-rows");
   const stop = (e) => e?.stopPropagation?.();
-  for (const type of STOP_EVENTS) d.addEventListener(type, stop);
+  for (const type of STOP_EVENTS2) d.addEventListener(type, stop);
   const close2 = () => {
     if (closed) return;
     closed = true;
-    for (const type of STOP_EVENTS) d.removeEventListener?.(type, stop);
+    for (const type of STOP_EVENTS2) d.removeEventListener?.(type, stop);
     d.removeEventListener?.("cancel", close2);
     d.removeEventListener?.("close", close2);
     try {
@@ -9490,9 +12374,9 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     return node;
   };
   const render = () => {
-    const shown = current2.slice(0, MAX_ROWS);
-    summary.textContent = current2.length ? `${current2.length} problem${current2.length === 1 ? "" : "s"}` : "No problems found";
-    if (current2.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
+    const shown = current4.slice(0, MAX_ROWS);
+    summary.textContent = current4.length ? `${current4.length} problem${current4.length === 1 ? "" : "s"}` : "No problems found";
+    if (current4.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
     const nodes = [];
     const pages = /* @__PURE__ */ new Map();
     for (const row of shown) {
@@ -9510,7 +12394,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
         for (const row of group) nodes.push(rowNode(row));
       }
     }
-    if (current2.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current2.length - MAX_ROWS} more`));
+    if (current4.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current4.length - MAX_ROWS} more`));
     if (typeof list.replaceChildren === "function") list.replaceChildren(...nodes);
     else {
       list.textContent = "";
@@ -9520,7 +12404,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
   const actions = el("div", "plexus-legacy-actions");
   actions.append(
     button("Copy report", () => {
-      const json = JSON.stringify(current2, null, 2);
+      const json = JSON.stringify(current4, null, 2);
       const clipboard = doc.defaultView?.navigator?.clipboard;
       return withClipboard(() => clipboard.writeText(json));
     }),
@@ -9537,7 +12421,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     close: close2,
     update(next) {
       if (closed) return;
-      current2 = Array.isArray(next) ? next : [];
+      current4 = Array.isArray(next) ? next : [];
       render();
     }
   };
@@ -9974,26 +12858,6 @@ function legacySummary(queryRows) {
   };
 }
 
-// src/model/slides.js
-var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-var orderOf = (el) => {
-  const o = el?.customData?.plexus?.order;
-  return typeof o === "number" && Number.isFinite(o) ? o : null;
-};
-function orderFrames(elements) {
-  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
-  return frames.sort((a, b) => {
-    const oa = orderOf(a), ob = orderOf(b);
-    if (oa !== null && ob !== null) {
-      if (oa !== ob) return oa - ob;
-    } else if (oa !== null) return -1;
-    else if (ob !== null) return 1;
-    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
-    if (n) return n;
-    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
-  });
-}
-
 // src/model/frames.js
 var FRAME_GAP = 40;
 var FRAME_PRESETS2 = Object.freeze({
@@ -10080,8 +12944,8 @@ function childrenOutside(elements, frame, rect) {
   return liveElements(elements).filter((el) => el.frameId === frame.id && !intersects(elementBounds(el), rect));
 }
 function selectedFrameOf(elements, ids) {
-  const live2 = new Map(liveElements(elements).map((el) => [el.id, el]));
-  const picked = (ids || []).map((id) => live2.get(id)).filter(Boolean);
+  const live3 = new Map(liveElements(elements).map((el) => [el.id, el]));
+  const picked = (ids || []).map((id) => live3.get(id)).filter(Boolean);
   if (!picked.length) return null;
   const frames = picked.filter(isFrameLike);
   if (frames.length === 1 && picked.length === 1) return frames[0].id;
@@ -10090,7 +12954,7 @@ function selectedFrameOf(elements, ids) {
   const owners = new Set(picked.map((el) => el.frameId ?? null));
   if (owners.size !== 1) return null;
   const owner = [...owners][0];
-  return owner && live2.get(owner) && isFrameLike(live2.get(owner)) ? owner : null;
+  return owner && live3.get(owner) && isFrameLike(live3.get(owner)) ? owner : null;
 }
 function frameAt(frames, point) {
   let best = null;
@@ -10117,7 +12981,7 @@ function nearestFrame(frames, point) {
 // src/model/caption.js
 var MAX_CAPTION = 200;
 var UID_RE2 = /^[A-Za-z0-9_-]+$/;
-function cleanText(text) {
+function cleanText2(text) {
   return String(text ?? "").replace(/[{}`]/g, "").replace(/\s+/g, " ").trim();
 }
 function refFromLink(value) {
@@ -10182,9 +13046,9 @@ function captionRefsInfo(elements, ids, { frameName, words = true } = {}) {
     const isText = el.type === "text";
     if (!wanted.has(el.id) && !(isText && el.containerId && wanted.has(el.containerId))) continue;
     const container = isText && el.containerId ? byId.get(el.containerId) : null;
-    const live2 = container && !container.isDeleted ? container : null;
-    const box = boxOf(live2 || el);
-    const ref = live2 && sourceRefOf(live2) || sourceRefOf(el);
+    const live3 = container && !container.isDeleted ? container : null;
+    const box = boxOf(live3 || el);
+    const ref = live3 && sourceRefOf(live3) || sourceRefOf(el);
     if (ref) {
       if (!seenRefs.has(ref)) {
         seenRefs.add(ref);
@@ -10193,10 +13057,10 @@ function captionRefsInfo(elements, ids, { frameName, words = true } = {}) {
       continue;
     }
     if (!isText || !words) continue;
-    const text = firstSentence(cleanText(el.originalText ?? el.text));
-    if (text) (live2 ? bound : free).push({ value: text, box, seq: seq++ });
+    const text = firstSentence(cleanText2(el.originalText ?? el.text));
+    if (text) (live3 ? bound : free).push({ value: text, box, seq: seq++ });
   }
-  const name = words ? cleanText(frameName) : "";
+  const name = words ? cleanText2(frameName) : "";
   let wordParts;
   if (name) {
     wordParts = [{ value: name }];
@@ -10469,11 +13333,11 @@ function printPages({
   };
   let fail2 = () => {
   };
-  const done = new Promise((resolve, reject) => {
+  const done2 = new Promise((resolve, reject) => {
     settle = resolve;
     fail2 = reject;
   });
-  done.catch(() => {
+  done2.catch(() => {
   });
   const timer = (fn, ms) => {
     const id = setTimer(() => {
@@ -10570,7 +13434,7 @@ function printPages({
     }
   };
   run().catch(abort);
-  return { done, dispose };
+  return { done: done2, dispose };
 }
 var safeName = (s) => String(s ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-");
 function pngFileName(drawing, index, total, name) {
@@ -10598,7 +13462,7 @@ function downloadPngs({
   let disposed = false;
   let settle = () => {
   };
-  const done = new Promise((resolve) => {
+  const done2 = new Promise((resolve) => {
     settle = resolve;
   });
   const timer = (fn, ms) => {
@@ -10650,7 +13514,7 @@ function downloadPngs({
     else settle(clicked);
   };
   step(0);
-  return { done, dispose };
+  return { done: done2, dispose };
 }
 
 // src/view/legacy-dialog.js
@@ -10895,21 +13759,21 @@ function cropToFraction(crop) {
   return [crop.x / crop.naturalWidth, crop.y / crop.naturalHeight, crop.width / crop.naturalWidth, crop.height / crop.naturalHeight];
 }
 var validCrop2 = (c) => !!c && c.width > 0 && c.height > 0 && c.naturalWidth > 0 && c.naturalHeight > 0;
-var isFrame = (el) => el.type === "frame" || el.type === "magicframe";
+var isFrame2 = (el) => el.type === "frame" || el.type === "magicframe";
 var DRAWING_STRING_RE = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 function detectRegionKind({ elements, ids, selectedGroupIds }) {
-  const live2 = (elements || []).filter((el) => el && !el.isDeleted);
-  const byId = new Map(live2.map((el) => [el.id, el]));
+  const live3 = (elements || []).filter((el) => el && !el.isDeleted);
+  const byId = new Map(live3.map((el) => [el.id, el]));
   const selected = ids.map((id) => byId.get(id)).filter(Boolean);
-  const frames = selected.filter(isFrame);
+  const frames = selected.filter(isFrame2);
   if (frames.length === 1 && selected.every((el) => el === frames[0] || el.frameId === frames[0].id)) {
     const frame = frames[0];
-    return { kind: "cframe", frame, children: live2.filter((el) => el.frameId === frame.id) };
+    return { kind: "cframe", frame, children: live3.filter((el) => el.frameId === frame.id) };
   }
   const groupIds = Object.keys(selectedGroupIds || {}).filter((g) => selectedGroupIds[g]);
   if (groupIds.length === 1) {
     const g = groupIds[0];
-    const members = live2.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+    const members = live3.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
     const sel = new Set(ids);
     if (members.length && members.length === sel.size && members.every((el) => sel.has(el.id))) {
       return { kind: "group", groupId: g, members };
@@ -10992,7 +13856,7 @@ function createActions({
   let activeTool = null;
   let activeToolIsDrawing = false;
   let stopSpotlight = null;
-  const busy = /* @__PURE__ */ new Set();
+  const busy2 = /* @__PURE__ */ new Set();
   let presentOwner = null;
   let printJob = null;
   let labelTimer = null;
@@ -11017,12 +13881,12 @@ function createActions({
     }
   };
   async function once(name, fn) {
-    if (busy.has(name)) return null;
-    busy.add(name);
+    if (busy2.has(name)) return null;
+    busy2.add(name);
     try {
       return await fn();
     } finally {
-      busy.delete(name);
+      busy2.delete(name);
     }
   }
   const sceneElements = (app) => app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? [];
@@ -11076,10 +13940,10 @@ function createActions({
     }
   }
   const membersOf = (region, elements) => {
-    const live2 = elements.filter((el) => el && !el.isDeleted);
-    if (region.kind === "group") return live2.filter((el) => el.groupIds?.includes(region.groupId ?? region.g)).map((el) => el.id);
+    const live3 = elements.filter((el) => el && !el.isDeleted);
+    if (region.kind === "group") return live3.filter((el) => el.groupIds?.includes(region.groupId ?? region.g)).map((el) => el.id);
     const frameId2 = region.frameId ?? region.fr;
-    const children = live2.filter((el) => el.frameId === frameId2).map((el) => el.id);
+    const children = live3.filter((el) => el.frameId === frameId2).map((el) => el.id);
     return region.kind === "cframe" ? [frameId2] : [frameId2, ...children];
   };
   const hotIds = (region, elements) => {
@@ -11108,10 +13972,10 @@ function createActions({
     }
   }
   const captionIds = (region, elements) => {
-    const live2 = elements.filter((el) => el && !el.isDeleted);
+    const live3 = elements.filter((el) => el && !el.isDeleted);
     if (region.kind === "area") return region.ids;
-    if (region.kind === "group") return live2.filter((el) => el.groupIds?.includes(region.groupId)).map((el) => el.id);
-    return live2.filter((el) => el.frameId === region.frameId).map((el) => el.id);
+    if (region.kind === "group") return live3.filter((el) => el.groupIds?.includes(region.groupId)).map((el) => el.id);
+    return live3.filter((el) => el.frameId === region.frameId).map((el) => el.id);
   };
   const RELINK_KINDS = /* @__PURE__ */ new Set(["area", "group", "frame", "cframe"]);
   function relinkPlan(regionUid) {
@@ -11235,7 +14099,7 @@ function createActions({
   const rnd4 = () => Math.floor(Math.random() * 2 ** 31);
   const refText = (ref) => ref && typeof ref === "object" ? ref.ref : ref;
   const isValidDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
-  const todayTitle = () => api.util.dateToPageTitle(/* @__PURE__ */ new Date());
+  const todayTitle2 = () => api.util.dateToPageTitle(/* @__PURE__ */ new Date());
   function viewCentre(app) {
     const st = app.state || {};
     return viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
@@ -11247,14 +14111,14 @@ function createActions({
       drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current2) => [...current2, ...elements],
+      next: (current4) => [...current4, ...elements],
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
   }
   function cleanTitle(text) {
     return String(text ?? "").replace(/\[\[|\]\]|#/g, "").replace(/\s+/g, " ").trim();
   }
-  async function newDrawingRun({ where, uid, open: open4, order: wantOrder }) {
+  async function newDrawingRun({ where, uid, open: open5, order: wantOrder }) {
     if (native.activeEditor(doc)) {
       toaster.show("Close the open drawing first", { kind: "error" });
       return null;
@@ -11366,7 +14230,7 @@ function createActions({
         }
       }
     }
-    if (open4 && !disposed) {
+    if (open5 && !disposed) {
       const rendered = () => {
         for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
           if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && !el.closest?.(".plexus-dock") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
@@ -11392,7 +14256,7 @@ function createActions({
     if (text === "plexus:today") {
       embed = "plexus:today";
       label = "Today";
-      link = `[[${todayTitle()}]]`;
+      link = `[[${todayTitle2()}]]`;
     } else {
       const parsed = parseEmbedRef(text);
       if (!parsed) {
@@ -11619,7 +14483,7 @@ function createActions({
       } else {
         let pageUid;
         if (home === "page") pageUid = host.blockInfo(drawingUid)?.pageUid;
-        else pageUid = await host.ensurePage(todayTitle());
+        else pageUid = await host.ensurePage(todayTitle2());
         if (!pageUid) throw new Error("no page for the card");
         uid = await host.createBlock({ parentUid: pageUid, order: "last", string: "" });
       }
@@ -11689,9 +14553,9 @@ function createActions({
       const editor = native.activeEditor(doc);
       if (editor && editor.app === card.app) {
         try {
-          const current2 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
+          const current4 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
           const ids = /* @__PURE__ */ new Set([card.anchorId]);
-          for (const el of current2) if (el?.containerId === card.anchorId) ids.add(el.id);
+          for (const el of current4) if (el?.containerId === card.anchorId) ids.add(el.id);
           guard2.guardedWrite(editor.app, {
             drawingUid: card.drawingUid,
             label: "Discard note",
@@ -11735,9 +14599,9 @@ function createActions({
       if (activePromptIsDrawing) activePrompt?.cancel?.();
     },
     // New drawing where the user is. where: "here" | "below" | "page" | "today". uid: the target block (else the focused block).
-    newDrawing({ where = "here", uid, open: open4 = true, order } = {}) {
+    newDrawing({ where = "here", uid, open: open5 = true, order } = {}) {
       const target = typeof uid === "string" && uid ? uid : safe2(() => api.ui?.getFocusedBlock?.()?.["block-uid"]);
-      return once("new-drawing", () => newDrawingRun({ where, uid: target, open: open4, order }));
+      return once("new-drawing", () => newDrawingRun({ where, uid: target, open: open5, order }));
     },
     embedFromPick: (opts) => embedFromPickRun(opts),
     createPageAndEmbed: (title, scenePoint, opts) => createPageAndEmbedRun(title, scenePoint, opts),
@@ -11767,11 +14631,11 @@ function createActions({
     async placePending(scenePoint) {
       if (!pendingNow()) return placeRefuse("Nothing to place");
       const job = pending;
-      const done = await placeBlocksRun(job.items, { mode: job.mode, scenePoint, onPlaced: () => {
+      const done2 = await placeBlocksRun(job.items, { mode: job.mode, scenePoint, onPlaced: () => {
         if (pending === job) pending = null;
       } });
-      if (done && pending === job) pending = null;
-      return done;
+      if (done2 && pending === job) pending = null;
+      return done2;
     },
     cancelPendingPlace() {
       pending = null;
@@ -12243,7 +15107,7 @@ function createActions({
       toaster.show("Crop cache cleared");
     }
   };
-  function copyText(text, done) {
+  function copyText(text, done2) {
     let pending2;
     try {
       const write = () => clipboard.writeText(text);
@@ -12253,7 +15117,7 @@ function createActions({
     }
     return Promise.resolve(pending2).then(
       () => {
-        toaster.show(done);
+        toaster.show(done2);
         return true;
       },
       (error) => {
@@ -12428,13 +15292,13 @@ function createActions({
     return ok;
   }
   function selectionFor(region, elements) {
-    const live2 = elements.filter((e) => e && !e.isDeleted);
-    const has2 = (id) => live2.some((e) => e.id === id);
+    const live3 = elements.filter((e) => e && !e.isDeleted);
+    const has2 = (id) => live3.some((e) => e.id === id);
     let ids = [];
     let groups = {};
     if (region.kind === "area") ids = (region.ids || []).filter(has2);
     else if (region.kind === "group") {
-      ids = live2.filter((e) => Array.isArray(e.groupIds) && e.groupIds.includes(region.groupId)).map((e) => e.id);
+      ids = live3.filter((e) => Array.isArray(e.groupIds) && e.groupIds.includes(region.groupId)).map((e) => e.id);
       if (ids.length) groups = { [region.groupId]: true };
     } else if (region.kind === "frame" || region.kind === "cframe") ids = has2(region.frameId) ? [region.frameId] : [];
     else if (region.kind === "rect" || region.kind === "poly") ids = has2(region.el) ? [region.el] : [];
@@ -12575,7 +15439,7 @@ function createActions({
         drawingUid,
         label: "Remove link",
         captureUpdate: "IMMEDIATELY",
-        next: (current2) => current2.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
+        next: (current4) => current4.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
       });
     } catch (error) {
       console.warn("[plexus] remove link failed", error);
@@ -12877,7 +15741,7 @@ function createActions({
       cleanupDialog = createCleanup({
         doc,
         onApply: async (r) => {
-          if (busy.has("cleanup-apply")) return;
+          if (busy2.has("cleanup-apply")) return;
           const n = r?.candidates?.length ?? 0;
           let ok = false;
           try {
@@ -13282,19 +16146,19 @@ function createActions({
     if (!isId(drawingUid) || disposed) return 0;
     const token = {};
     closePolls.set(drawingUid, token);
-    const live2 = () => !disposed && closePolls.get(drawingUid) === token;
+    const live3 = () => !disposed && closePolls.get(drawingUid) === token;
     const end = Date.now() + closeWindowMs;
     let last = mountHash ?? "";
     let count = 0;
     try {
       for (; ; ) {
-        if (!live2()) return count;
+        if (!live3()) return count;
         if (native.activeEditor(doc)?.drawingUid === drawingUid) return count;
         const hash = safe2(() => host.drawing(drawingUid)?.hash) ?? "";
         if (hash !== last) {
           last = hash;
           for (const { uid } of safe2(() => host.regionsOf(drawingUid)) || []) {
-            if (!live2()) break;
+            if (!live3()) break;
             try {
               await refreshRegion?.(uid, { purge: false });
               count += 1;
@@ -13385,7 +16249,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Embed labels",
       captureUpdate: "NEVER",
-      next: (current2) => current2.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
+      next: (current4) => current4.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
     });
     return ok ? patches.size : 0;
   }
@@ -13399,9 +16263,9 @@ function createActions({
         void flush();
       }, ms);
     };
-    const current2 = () => !disposed && gen === labelGen;
+    const current4 = () => !disposed && gen === labelGen;
     const flush = async () => {
-      if (!current2()) return;
+      if (!current4()) return;
       const editor = native.activeEditor(doc);
       if (editor?.app !== app || !isId(editor.drawingUid)) return;
       if (editorBusy(app)) {
@@ -13412,7 +16276,7 @@ function createActions({
         await native.waitNotLoading?.(app, 5e3, { doc });
         await frame();
         await frame();
-        if (!current2() || native.activeEditor(doc)?.app !== app) return;
+        if (!current4() || native.activeEditor(doc)?.app !== app) return;
         labelReady.add(app);
         if (editorBusy(app)) {
           arm(LABEL_RETRY_MS);
@@ -13444,8 +16308,8 @@ function createActions({
   function revealFrames(app, frames) {
     if (!frames.length || typeof app.scrollToContent !== "function") return;
     const view2 = sceneViewRect(app);
-    const inside = frames.every((f) => f.x >= view2.left && f.y >= view2.top && f.x + f.width <= view2.right && f.y + f.height <= view2.bottom);
-    if (inside) return;
+    const inside2 = frames.every((f) => f.x >= view2.left && f.y >= view2.top && f.x + f.width <= view2.right && f.y + f.height <= view2.bottom);
+    if (inside2) return;
     const animate = !!safe2(() => motionOk2(doc, settingsNow().animation));
     safe2(() => app.scrollToContent(frames.length === 1 ? frames[0] : frames, { fitToContent: false, animate }));
   }
@@ -13463,10 +16327,10 @@ function createActions({
       drawingUid: editor.drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current2) => {
-        const plan = planOrders(current2, rects.length);
+      next: (current4) => {
+        const plan = planOrders(current4, rects.length);
         created = rects.map((r, i) => ({ ...presetFrame({ id: ids[i], preset, x: r.x, y: r.y, order: plan.orders[i] }), width: r.width, height: r.height }));
-        return [...applyOrderRewrite(current2, plan.rewrite), ...created];
+        return [...applyOrderRewrite(current4, plan.rewrite), ...created];
       },
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
@@ -13527,7 +16391,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Reformat frame",
       captureUpdate: "IMMEDIATELY",
-      next: (current2) => current2.map((el) => {
+      next: (current4) => current4.map((el) => {
         if (!el) return el;
         if (el.id === id) return bumped(el, rect);
         if (released.has(el.id)) return bumped(el, { frameId: null });
@@ -13575,19 +16439,19 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current2) => {
-          const frameEl = current2.find((el) => el?.id === newFrameId);
-          const rest = current2.filter((el) => el?.id !== newFrameId);
+        next: (current4) => {
+          const frameEl = current4.find((el) => el?.id === newFrameId);
+          const rest = current4.filter((el) => el?.id !== newFrameId);
           const plan = planOrders(rest, 1);
           const named = { ...withOrder(frameEl, plan.orders[0]), name: `Slide ${plan.orders[0]}` };
-          return applyOrderRewrite(current2, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
+          return applyOrderRewrite(current4, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
         },
         appState: { selectedElementIds: { [newFrameId]: true }, selectedGroupIds: {} }
       });
       resultId = newFrameId;
     } else {
       const box = commonBounds(picked);
-      const pad = 16;
+      const pad2 = 16;
       const members = new Set(picked.map((el) => el.id));
       const fallbackId = frameId();
       resultId = fallbackId;
@@ -13596,11 +16460,11 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current2) => {
-          const plan = planOrders(current2, 1);
+        next: (current4) => {
+          const plan = planOrders(current4, 1);
           const order = plan.orders[0];
-          const frameEl = { ...presetFrame({ id: fallbackId, preset: DEFAULT_PRESET2, x: box[0] - pad, y: box[1] - pad, order }), width: box[2] - box[0] + 2 * pad, height: box[3] - box[1] + 2 * pad, name: `Slide ${order}` };
-          const adopted = applyOrderRewrite(current2, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
+          const frameEl = { ...presetFrame({ id: fallbackId, preset: DEFAULT_PRESET2, x: box[0] - pad2, y: box[1] - pad2, order }), width: box[2] - box[0] + 2 * pad2, height: box[3] - box[1] + 2 * pad2, name: `Slide ${order}` };
+          const adopted = applyOrderRewrite(current4, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
           return [...adopted, frameEl];
         },
         appState: { selectedElementIds: { [fallbackId]: true }, selectedGroupIds: {} }
@@ -13665,12 +16529,12 @@ function createActions({
     for (const { frame: frame2, i } of items) {
       if (!alive()) break;
       let result = null;
-      const live2 = mounted && native.activeEditor(doc)?.app === mounted.app;
+      const live3 = mounted && native.activeEditor(doc)?.app === mounted.app;
       try {
-        if (live2 && format === "svg") {
+        if (live3 && format === "svg") {
           const svg = await captureSafe(mounted.app, [frame2.id]);
           result = svg ? { type: "svg", svg: normalizeSvgSize(svg) } : null;
-        } else if (live2) {
+        } else if (live3) {
           result = await native2x(frame2) ?? await cropFrame(frame2);
         } else {
           result = await cropFrame(frame2);
@@ -14883,10 +17747,10 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         row.setAttribute("title", title ?? text);
         row.className = "dont-unfocus-block";
         Object.assign(row.style, { borderRadius: "2px", padding: "6px", color: "lightgray" });
-        const inner = doc.createElement("div");
-        inner.className = "rm-autocomplete-result";
-        inner.textContent = text;
-        row.append(inner);
+        const inner2 = doc.createElement("div");
+        inner2.className = "rm-autocomplete-result";
+        inner2.textContent = text;
+        row.append(inner2);
         scroll.append(row);
       };
       if (status === "hint") message(isPage ? "Search for a page" : "Search for a block");
@@ -14898,13 +17762,13 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
           row.setAttribute("title", item.kind === "block" ? item.str : item.title);
           row.className = "dont-unfocus-block";
           Object.assign(row.style, { borderRadius: "2px", padding: "6px", cursor: "pointer" });
-          const inner = doc.createElement("div");
-          inner.className = "rm-autocomplete-result";
+          const inner2 = doc.createElement("div");
+          inner2.className = "rm-autocomplete-result";
           const label = doc.createElement("span");
           if (item.kind === "create") label.textContent = `+ Create page ${item.title}`;
           else segs(label, item.kind === "block" ? blockSnippet(item.str, trigger.query) : item.title, trigger.query);
-          inner.append(label);
-          row.append(inner);
+          inner2.append(label);
+          row.append(inner2);
           if (item.kind === "date") {
             const sub = doc.createElement("div");
             sub.className = "bp3-text-overflow-ellipsis";
@@ -15171,7 +18035,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
   };
 }
 function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
-  let current2 = null;
+  let current4 = null;
   let currentEl = null;
   let offBlur = null;
   let pending = null;
@@ -15182,8 +18046,8 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
     }
     offBlur?.();
     offBlur = null;
-    current2?.();
-    current2 = null;
+    current4?.();
+    current4 = null;
     currentEl = null;
   };
   const onFocusIn = (e) => {
@@ -15193,7 +18057,7 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
       if (!t.closest?.(".excalidraw-outer-container") && !t.classList?.contains("plexus-portal")) return;
       release();
       currentEl = t;
-      current2 = suggest.attach(t);
+      current4 = suggest.attach(t);
       const onOut = () => {
         if (pending != null) clearT(pending);
         pending = setT(() => {
@@ -15660,7 +18524,7 @@ function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } = {}) {
     for (const n of [...containerEl.querySelectorAll?.("[data-plexus-item]") ?? []]) n.remove?.();
   };
 }
-function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard: guard2, point, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
+function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard: guard2, point, tools, mindmap, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
   const kbd = (id) => hotkeyFor(id, { mac });
   const can = (fn) => {
     try {
@@ -15694,6 +18558,14 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     }
   };
   const pend = pending();
+  const mm2 = (() => {
+    try {
+      return mindmap?.mapOptions?.(app) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const layoutItem = (layout, name) => ({ id: `mm-layout-${layout}`, label: `Plexus: Mind map layout: ${name}${mm2?.layout === layout ? " (current)" : ""}`, enabled: !!mm2, run: call(`mm-layout-${layout}`, () => mindmap.setLayout(app, layout)) });
   const placing = (() => {
     try {
       return actions.pendingPlace?.() ?? null;
@@ -15719,6 +18591,14 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     { id: "copy-embed", label: "Plexus: Copy drawing embed", enabled: can(() => drawingUid && noSelection()), run: call("copy-embed", () => actions.copyDrawingEmbed()) },
     { id: "frames-regions", label: "Plexus: Regions for all frames", enabled: can(() => noSelection() && actions.hasFrames()), run: call("frames-regions", () => actions.regionsForAllFrames()) },
     { id: "restore", label: "Plexus: Restore before last Plexus change", enabled: can(() => noSelection() && drawingUid && hasSnapshot()), run: call("restore", () => actions.restoreBeforeLastPlexusChange()) },
+    { id: "restore-version", label: "Plexus: Restore an earlier version…", enabled: !!tools?.restore && !!drawingUid, run: call("restore-version", () => tools.restore()) },
+    { id: "chart-json", label: "Plexus: Cause-and-effect from JSON…", enabled: !!tools?.chart && !!drawingUid, run: call("chart-json", () => tools.chart()) },
+    { id: "to-outline", label: "Plexus: Drawing to outline…", enabled: !!tools?.outline && !!drawingUid, run: call("to-outline", () => tools.outline({ focusedUid: drawingUid })) },
+    { id: "copy-markdown", label: "Plexus: Copy as Roam markdown", enabled: !!tools?.copyMarkdown && !!drawingUid, run: call("copy-markdown", () => tools.copyMarkdown({ focusedUid: drawingUid })) },
+    layoutItem("right", "Right"),
+    layoutItem("cause", "Cause"),
+    layoutItem("fishbone", "Fishbone"),
+    { id: "mm-attr-edges", label: `Plexus: Attribute blocks as edges${mm2 ? mm2.attrEdges ? ": on" : ": off" : ""}`, enabled: !!mm2, run: call("mm-attr-edges", () => mindmap.setAttrEdges(app, !mm2.attrEdges)) },
     { id: "text-only", label: "Plexus: Select text only", enabled: can(() => {
       const els = selectedElements();
       return els.length >= 2 && els.some(freeText);
@@ -15730,12 +18610,12 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
 }
 
 // src/view/caption-prompt.js
-var ISOLATED = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
+var ISOLATED3 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
 var BLUR_GRACE_MS = 200;
 var MIN_WIDTH = 200;
-var current = null;
+var current3 = null;
 function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "empty", zIndex = 100002, raf, now = () => Date.now() } = {}) {
-  if (current) current.commit();
+  if (current3) current3.commit();
   let resolveOuter;
   const promise = new Promise((resolve) => {
     resolveOuter = resolve;
@@ -15762,7 +18642,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
         console.warn("[plexus] caption prompt remove failed", error);
       }
     }
-    if (current === handle) current = null;
+    if (current3 === handle) current3 = null;
     resolveOuter(value);
   };
   handle.commit = () => finish(handle.el ? String(handle.el.value ?? "") : String(initial ?? ""));
@@ -15783,7 +18663,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
     s.height = "30px";
     s.zIndex = String(zIndex);
   };
-  const open4 = () => {
+  const open5 = () => {
     handle.frame = null;
     if (handle.done) return;
     try {
@@ -15807,7 +18687,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
           finish(escape === "cancel" ? null : "");
         }
       });
-      for (const type of ISOLATED) on(type, (e) => e.stopPropagation());
+      for (const type of ISOLATED3) on(type, (e) => e.stopPropagation());
       on("blur", (e) => {
         if (handle.done) return;
         if (e?.relatedTarget?.closest?.(".plexus-suggest")) return;
@@ -15834,14 +18714,14 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
       finish(null);
     }
   };
-  current = handle;
-  handle.frame = schedule(open4);
+  current3 = handle;
+  handle.frame = schedule(open5);
   return promise;
 }
 
 // src/view/settings-dialog.js
-var STOP_EVENTS2 = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
-var open = /* @__PURE__ */ new WeakMap();
+var STOP_EVENTS3 = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
+var open2 = /* @__PURE__ */ new WeakMap();
 var clampInt = (value, fallback, min, max) => {
   const n = Number(value);
   const base2 = value === "" || value == null || !Number.isFinite(n) ? fallback : n;
@@ -15868,6 +18748,7 @@ var FIELDS = [
   { id: SETTING_IDS.pasteRefs, label: "Paste refs as", type: "select", options: [["text", "Text"], ["embed", "Embed"], ["link", "Link"]] },
   { id: SETTING_IDS.cardHome, label: "New note cards go", type: "select", options: [["drawing", "Under the drawing"], ["page", "On the drawing's page"], ["daily", "On today's page"]] },
   { id: SETTING_IDS.drawingName, label: "New drawing page name", type: "text", fallback: DEFAULT_DRAWING_NAME },
+  { id: SETTING_IDS.mmTagColors, label: "Mind map tag colors", type: "freetext", fallback: "", placeholder: "urgent=#ffc9c9, done=#b2f2bb" },
   { id: SETTING_IDS.printSize, label: "Print page size", type: "select", options: [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]] },
   { id: SETTING_IDS.printMargin, label: "Print margin (mm)", type: "number", fallback: 10, min: 0, max: 30 },
   { id: SETTING_IDS.laserColor, label: "Laser pointer color", type: "color" },
@@ -15877,7 +18758,7 @@ var NATIVE_SHORTCUTS = [["Back", "Alt+←"], ["Edit embed", "F2"]];
 function openSettingsDialog({ doc, get = () => void 0, set = () => {
 }, onChanged = () => {
 }, zIndex = 1e5, dark = false, mac } = {}) {
-  const existing = open.get(doc);
+  const existing = open2.get(doc);
   if (existing) {
     try {
       existing.focus();
@@ -15894,7 +18775,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
   };
   const d = el("dialog", `plexus-portal plexus-settings${dark ? " plexus-settings--dark" : ""}`);
   const stop = (e) => e?.stopPropagation?.();
-  for (const type of STOP_EVENTS2) d.addEventListener(type, stop);
+  for (const type of STOP_EVENTS3) d.addEventListener(type, stop);
   const stored = (f) => {
     let v;
     try {
@@ -15905,13 +18786,15 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     if (f.type === "number") return String(clampInt(v, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, v);
     if (f.type === "text") return drawingNameOf(v);
+    if (f.type === "freetext") return typeof v === "string" ? v : f.fallback;
     if (f.type === "color") return laserColorOf(v);
     return v == null ? f.fallback : !!v;
   };
-  const current2 = (f, input) => {
+  const current4 = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
     if (f.type === "text") return drawingNameOf(input.value);
+    if (f.type === "freetext") return String(input.value ?? "");
     if (f.type === "color") return laserColorOf(input.value);
     return !!input.checked;
   };
@@ -15929,9 +18812,10 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
         input.append(o);
       }
       input.value = stored(f);
-    } else if (f.type === "text") {
+    } else if (f.type === "text" || f.type === "freetext") {
       input = el("input", "plexus-settings-input");
       input.type = "text";
+      if (f.placeholder) input.placeholder = f.placeholder;
       input.value = stored(f);
     } else if (f.type === "color") {
       input = el("input", "plexus-settings-input");
@@ -15966,7 +18850,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     for (const [f, input] of inputs) {
       if (only && only !== input) continue;
       try {
-        const value = current2(f, input);
+        const value = current4(f, input);
         if (value === stored(f)) continue;
         writes.push(Promise.resolve(set(f.id, value)).catch((error) => console.warn("[plexus] settings write failed", f.id, error)));
       } catch (error) {
@@ -15982,8 +18866,8 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
       }
     });
   };
-  for (const [f, input] of inputs) if (f.type !== "text") input.addEventListener("change", () => {
-    if (f.type === "number") input.value = current2(f, input);
+  for (const [f, input] of inputs) if (f.type !== "text" && f.type !== "freetext") input.addEventListener("change", () => {
+    if (f.type === "number") input.value = current4(f, input);
     commit(input);
   });
   let closed = false;
@@ -15991,8 +18875,8 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     if (closed) return;
     closed = true;
     commit();
-    open.delete(doc);
-    for (const type of STOP_EVENTS2) d.removeEventListener?.(type, stop);
+    open2.delete(doc);
+    for (const type of STOP_EVENTS3) d.removeEventListener?.(type, stop);
     d.removeEventListener?.("cancel", close2);
     d.removeEventListener?.("close", close2);
     try {
@@ -16017,7 +18901,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     if (d.style) d.style.zIndex = String(zIndex);
   }
   const handle = { close: close2 };
-  open.set(doc, { handle, focus: () => (inputs[0][1].focus ?? (() => {
+  open2.set(doc, { handle, focus: () => (inputs[0][1].focus ?? (() => {
   })).call(inputs[0][1]) });
   return handle;
 }
@@ -16030,7 +18914,7 @@ var WIDTH = 400;
 var UID_RE3 = /^[A-Za-z0-9_-]{9}$/;
 var SEMANTIC_TIMEOUT = 1500;
 var warn4 = (what, error) => console.warn(`[plexus] embed picker ${what} failed`, error);
-var open2 = /* @__PURE__ */ new WeakMap();
+var open3 = /* @__PURE__ */ new WeakMap();
 function openEmbedPicker({
   doc,
   api,
@@ -16046,7 +18930,7 @@ function openEmbedPicker({
   requestFrame,
   debounce = { page: 60, block: 150 }
 } = {}) {
-  const existing = open2.get(doc);
+  const existing = open3.get(doc);
   if (existing) {
     existing.focus();
     return existing.handle;
@@ -16126,7 +19010,7 @@ function openEmbedPicker({
     view2?.removeEventListener?.("pointerdown", onWinPointer, true);
     view2?.removeEventListener?.("resize", onWinResize);
     root.remove();
-    if (open2.get(doc)?.handle === handle) open2.delete(doc);
+    if (open3.get(doc)?.handle === handle) open3.delete(doc);
     try {
       onClose?.({ picked });
     } catch (error) {
@@ -16158,10 +19042,10 @@ function openEmbedPicker({
       row.setAttribute("title", text);
       row.className = "dont-unfocus-block";
       Object.assign(row.style, { borderRadius: "2px", padding: "6px", color: "lightgray" });
-      const inner = doc.createElement("div");
-      inner.className = "rm-autocomplete-result";
-      inner.textContent = text;
-      row.append(inner);
+      const inner2 = doc.createElement("div");
+      inner2.className = "rm-autocomplete-result";
+      inner2.textContent = text;
+      row.append(inner2);
       scroll.append(row);
     };
     const all = [...items, ...related];
@@ -16181,14 +19065,14 @@ function openEmbedPicker({
         row.setAttribute("title", item.kind === "block" ? item.str : item.title);
         row.className = "dont-unfocus-block";
         Object.assign(row.style, { borderRadius: "2px", padding: "6px", cursor: "pointer" });
-        const inner = doc.createElement("div");
-        inner.className = "rm-autocomplete-result";
+        const inner2 = doc.createElement("div");
+        inner2.className = "rm-autocomplete-result";
         const label = doc.createElement("span");
         if (item.kind === "create") label.textContent = `+ Create page ${item.title}`;
         else if (item.kind === "today") label.textContent = "Today (always today)";
         else segs(label, item.kind === "block" ? blockSnippet(item.str, query) : item.title);
-        inner.append(label);
-        row.append(inner);
+        inner2.append(label);
+        row.append(inner2);
         const subText = item.kind === "date" ? "Daily note" : item.kind === "block" ? item.pageTitle : "";
         if (subText) {
           const sub = doc.createElement("div");
@@ -16407,7 +19291,7 @@ function openEmbedPicker({
   input.addEventListener("input", onInput);
   input.addEventListener("keydown", onKeydown);
   input.addEventListener("blur", onBlur);
-  open2.set(doc, { handle, focus: () => {
+  open3.set(doc, { handle, focus: () => {
     try {
       input.focus?.({ preventScroll: true });
     } catch {
@@ -16442,7 +19326,7 @@ function openEmbedPicker({
 var ACTIVE_BG3 = "rgb(213, 218, 223)";
 var MIN_Z2 = 100003;
 var warn5 = (what, ...rest) => console.warn(`[plexus] ${what}`, ...rest);
-var open3 = /* @__PURE__ */ new WeakMap();
+var open4 = /* @__PURE__ */ new WeakMap();
 function filterCommands(commands, query) {
   const tokens2 = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   if (!tokens2.length) return [...commands];
@@ -16459,7 +19343,7 @@ function openCommandList({
   onClose,
   setTimeout: setT = (...a) => globalThis.setTimeout(...a)
 } = {}) {
-  const existing = open3.get(doc);
+  const existing = open4.get(doc);
   if (existing) {
     existing.focus();
     return existing.handle;
@@ -16505,7 +19389,7 @@ function openCommandList({
     dead = true;
     doc.removeEventListener?.("pointerdown", onDocPointer, true);
     root.remove();
-    if (open3.get(doc)?.handle === handle) open3.delete(doc);
+    if (open4.get(doc)?.handle === handle) open4.delete(doc);
     try {
       onClose?.();
     } catch (error) {
@@ -16547,10 +19431,10 @@ function openCommandList({
       const row = doc.createElement("div");
       row.className = "dont-unfocus-block plexus-cmdlist-empty";
       Object.assign(row.style, { borderRadius: "2px", padding: "6px" });
-      const inner = doc.createElement("div");
-      inner.className = "rm-autocomplete-result";
-      inner.textContent = "No matching command";
-      row.append(inner);
+      const inner2 = doc.createElement("div");
+      inner2.className = "rm-autocomplete-result";
+      inner2.textContent = "No matching command";
+      row.append(inner2);
       scroll.append(row);
     }
     matches.forEach((cmd, k) => {
@@ -16558,18 +19442,18 @@ function openCommandList({
       row.setAttribute("title", cmd.label);
       row.className = "dont-unfocus-block";
       Object.assign(row.style, { borderRadius: "2px", padding: "6px", cursor: "pointer" });
-      const inner = doc.createElement("div");
-      inner.className = "rm-autocomplete-result";
+      const inner2 = doc.createElement("div");
+      inner2.className = "rm-autocomplete-result";
       const label = doc.createElement("span");
       label.textContent = cmd.label;
-      inner.append(label);
+      inner2.append(label);
       if (cmd.hotkey) {
         const kbd = doc.createElement("kbd");
         kbd.className = "plexus-cmdlist-kbd";
         kbd.textContent = cmd.hotkey;
-        inner.append(kbd);
+        inner2.append(kbd);
       }
-      row.append(inner);
+      row.append(inner2);
       row.addEventListener("mousemove", (e) => {
         if (lastMouse && lastMouse[0] === e.clientX && lastMouse[1] === e.clientY) return;
         lastMouse = [e.clientX, e.clientY];
@@ -16625,7 +19509,7 @@ function openCommandList({
   input.addEventListener("keyup", stop);
   input.addEventListener("keypress", stop);
   input.addEventListener("blur", onBlur);
-  open3.set(doc, { handle, focus });
+  open4.set(doc, { handle, focus });
   try {
     doc.body.append(root);
     doc.addEventListener?.("pointerdown", onDocPointer, true);
@@ -16836,8 +19720,8 @@ function installHotkeyGuard({ containerEl, run, doc } = {}) {
       const id = HOTKEY_CODES[e.code];
       if (!id) return;
       const t = e.target;
-      const inside = t === containerEl || t === doc?.body || t === doc?.documentElement || containerEl.contains?.(t) && !isTextTarget(t) && t?.dataset?.type !== "wysiwyg";
-      if (!inside) return;
+      const inside2 = t === containerEl || t === doc?.body || t === doc?.documentElement || containerEl.contains?.(t) && !isTextTarget(t) && t?.dataset?.type !== "wysiwyg";
+      if (!inside2) return;
       e.preventDefault?.();
       e.stopImmediatePropagation?.();
       run(id);
@@ -16927,7 +19811,7 @@ function createDock({
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimer(cb, 16));
   const isMac = mac ?? /Mac/i.test(String(view2?.navigator?.platform ?? ""));
   const MutationObs = MO ?? view2?.MutationObserver ?? globalThis.MutationObserver;
-  let open4 = true;
+  let open5 = true;
   let rootKind = "drawing";
   let rootUid = drawingUid;
   let childUids = [];
@@ -17042,8 +19926,8 @@ function createDock({
   parentBtn.hidden = !hasParent;
   if (!hasParent) parentBtn.setAttribute?.("hidden", "");
   const effectiveWidth = () => {
-    const inner = Number(view2?.innerWidth) || DOCK_MAX_WIDTH * 2;
-    return clamp(requestedWidth, DOCK_MIN_WIDTH, Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.floor(inner / 2))));
+    const inner2 = Number(view2?.innerWidth) || DOCK_MAX_WIDTH * 2;
+    return clamp(requestedWidth, DOCK_MIN_WIDTH, Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.floor(inner2 / 2))));
   };
   let theme = null;
   let themeBg = null;
@@ -17070,7 +19954,7 @@ function createDock({
     }
   };
   const refreshTheme = () => {
-    if (!open4) return;
+    if (!open5) return;
     resetThemeMemo();
     applyTheme();
   };
@@ -17079,11 +19963,11 @@ function createDock({
     applyTheme();
   };
   const scheduleApply = () => {
-    if (applyQueued || !open4) return;
+    if (applyQueued || !open5) return;
     applyQueued = true;
     requestFrame(() => {
       applyQueued = false;
-      if (open4) applyWidth();
+      if (open5) applyWidth();
     });
   };
   const widthOf = () => app?.state?.width;
@@ -17123,8 +20007,8 @@ function createDock({
     if (!snap || !app) return;
     const st = app.state || {};
     if (sameKeys(st.selectedElementIds, snap.ids) && sameKeys(st.selectedGroupIds, snap.groups)) return;
-    const live2 = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((x) => !x.isDeleted).map((x) => x.id));
-    if (!Object.keys(snap.ids).every((id) => live2.has(id))) return;
+    const live3 = new Set((app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? []).filter((x) => !x.isDeleted).map((x) => x.id));
+    if (!Object.keys(snap.ids).every((id) => live3.has(id))) return;
     app.updateScene({ appState: { selectedElementIds: snap.ids, selectedGroupIds: snap.groups } });
   });
   async function ownsSelection() {
@@ -17160,7 +20044,7 @@ function createDock({
     try {
       await clearRounds(my);
     } finally {
-      if (refocus && my === clearGen && open4) {
+      if (refocus && my === clearGen && open5) {
         const a = doc.activeElement;
         if (!a || a === doc.body || a === doc.documentElement) {
           try {
@@ -17179,9 +20063,9 @@ function createDock({
       dispatched = true;
     }
     for (let round = 0; round < 2; round++) {
-      if (!await wait(SELECTION_RECHECK_MS2) || my !== clearGen || !open4) return;
+      if (!await wait(SELECTION_RECHECK_MS2) || my !== clearGen || !open5) return;
       const held = highlight() || await ownsSelection();
-      if (my !== clearGen || !open4) return;
+      if (my !== clearGen || !open5) return;
       if (!dispatched) {
         if (!dockHasTextarea() && !held) return;
         dispatchEscape("window");
@@ -17234,7 +20118,7 @@ function createDock({
   }
   async function focusBlock(uid) {
     const my = ++focusGen;
-    const stale = () => !open4 || my !== focusGen;
+    const stale = () => !open5 || my !== focusGen;
     let input = null;
     for (let waited = 0; ; waited += POLL_MS) {
       input = findInput(uid);
@@ -17327,7 +20211,7 @@ function createDock({
     return last ? uidOfId(last.id) : null;
   }
   function onChildren(uids) {
-    if (!open4) return;
+    if (!open5) return;
     if (uids.length === childUids.length && uids.every((u, i) => u === childUids[i])) return;
     const prev = childUids;
     const added = uids.filter((u) => !prev.includes(u));
@@ -17398,7 +20282,7 @@ function createDock({
     parentBtn.setAttribute?.("aria-pressed", rootKind === "parent" ? "true" : "false");
   }
   async function setRoot(which) {
-    if (!open4 || which !== "drawing" && which !== "parent") return false;
+    if (!open5 || which !== "drawing" && which !== "parent") return false;
     if (which === rootKind) return true;
     let target = drawingUid;
     if (which === "parent") {
@@ -17409,7 +20293,7 @@ function createDock({
     if (focusedTa() || editing) {
       leaveEditing();
       await new Promise((resolve) => setTimer(resolve, LEAVE_WAIT_MS2));
-      if (!open4 || my !== rootGen) return false;
+      if (!open5 || my !== rootGen) return false;
     }
     try {
       unwatch?.();
@@ -17438,7 +20322,7 @@ function createDock({
           const snap = snapSel();
           setTimer(() => restoreSel(snap), 0);
           setTimer(() => {
-            if (!open4 || dockHasTextarea()) return;
+            if (!open5 || dockHasTextarea()) return;
             editing = false;
             void clearSelection({ refocus: true }).catch((error) => warn7("selection clear failed", error));
           }, MENU_ESC_SETTLE_MS);
@@ -17602,7 +20486,7 @@ function createDock({
       void shutdown(true);
     });
     on(addBtn, "click", () => {
-      Promise.resolve().then(() => addBlock(rootUid)).then((uid) => uid && open4 ? focusBlock(uid) : null).catch((error) => {
+      Promise.resolve().then(() => addBlock(rootUid)).then((uid) => uid && open5 ? focusBlock(uid) : null).catch((error) => {
         warn7("add block failed", error);
         toast("Could not add a block");
       });
@@ -17637,7 +20521,7 @@ function createDock({
   function installObservers() {
     if (typeof MutationObs !== "function") return;
     const outerMo = new MutationObs(safe2("outer observer", () => {
-      if (open4 && !hasClass(outerEl, "full-screen")) void shutdown(false);
+      if (open5 && !hasClass(outerEl, "full-screen")) void shutdown(false);
     }));
     outerMo.observe(outerEl, { attributes: true, attributeFilter: ["class"] });
     offs.push(() => outerMo.disconnect());
@@ -17649,8 +20533,8 @@ function createDock({
     offs.push(() => menuMo.disconnect());
   }
   function shutdown(notify) {
-    if (!open4) return closePromise ?? Promise.resolve();
-    open4 = false;
+    if (!open5) return closePromise ?? Promise.resolve();
+    open5 = false;
     const ta = focusedTa();
     const wasEditing = !!ta || editing;
     try {
@@ -17716,7 +20600,7 @@ function createDock({
   void verifyNarrow(width0).catch((error) => warn7("narrowing check failed", error));
   return {
     el,
-    isOpen: () => open4,
+    isOpen: () => open5,
     close: () => shutdown(true),
     dispose: () => shutdown(false),
     setRoot,
@@ -17956,9 +20840,9 @@ function maskText(text) {
     String(text ?? "").replace(/```[\s\S]*?```/g, blank2).replace(/`[^`\n]*`/g, blank2).replace(/https?:\/\/\S+/g, blank2)
   );
 }
-function closeOf(m, open4, limit) {
+function closeOf(m, open5, limit) {
   let depth = 1;
-  let i = open4 + 2;
+  let i = open5 + 2;
   while (i < limit) {
     if (m[i] === "[" && m[i + 1] === "[") {
       depth++;
@@ -18395,10 +21279,10 @@ function installTextLinks({
       row.style.padding = "6px";
       row.style.cursor = "pointer";
       row.style.borderRadius = "2px";
-      const inner = doc.createElement("div");
-      inner.className = "rm-autocomplete-result";
-      inner.textContent = labelOf(token);
-      row.append(inner);
+      const inner2 = doc.createElement("div");
+      inner2.className = "rm-autocomplete-result";
+      inner2.textContent = labelOf(token);
+      row.append(inner2);
       row.addEventListener("mousemove", () => setActive(k));
       row.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -18578,7 +21462,7 @@ var LAYER_REFRESH_MS = 200;
 var DOCK_SETTLE_MS = 150;
 var TOOLBAR_PRESETS = { a4: "A4", letter: "Letter", "16:9": "16:9", "4:3": "4:3", "1:1": "1:1", mobile: "Mobile" };
 var presetOf = (id) => TOOLBAR_PRESETS[id] ?? id;
-var LAYOUT_KINDS = { "2x2": "grid", strip: "strip" };
+var LAYOUT_KINDS2 = { "2x2": "grid", strip: "strip" };
 function createEmitter() {
   const listeners = /* @__PURE__ */ new Map();
   return {
@@ -18639,6 +21523,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let toggleLayer = null;
     let backCommand = null;
     let showDockParent = null;
+    let tools = null;
     let mountedApp = null;
     const hotkeyHandlers = {};
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
@@ -18678,7 +21563,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         onReformatFrame: (preset) => actions.reformatFrame({ preset: presetOf(preset) }),
         canReformat: () => !!actions.selectedFrameId(),
         onMakeSlide: () => actions.makeSlide(),
-        onLayout: (kind, preset) => actions.addFrameLayout({ kind: LAYOUT_KINDS[kind] ?? kind, preset: presetOf(preset) }),
+        onLayout: (kind, preset) => actions.addFrameLayout({ kind: LAYOUT_KINDS2[kind] ?? kind, preset: presetOf(preset) }),
         onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
         onEditEmbed: () => actions.editEmbed(),
         canEditEmbed: () => actions.canEditEmbed(),
@@ -18702,9 +21587,25 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         }
       });
       lifecycle.add(() => guard2.dispose());
-      const scenes = createSceneRegistry({ native: native_exports, doc, guard: guard2 });
-      lifecycle.add(() => scenes.dispose());
+      const measurer = createMeasurer({ doc });
+      const snapshotStore = createSnapshotStore({
+        idb: doc.defaultView?.indexedDB ?? globalThis.indexedDB,
+        keyRange: doc.defaultView?.IDBKeyRange ?? globalThis.IDBKeyRange,
+        graphName: host.graphName(),
+        isEncrypted: host.isEncrypted()
+      });
+      lifecycle.add(() => snapshotStore.dispose());
       let mounted = null;
+      const scenes = createSceneRegistry({
+        native: native_exports,
+        doc,
+        guard: guard2,
+        measure: measurer.measure,
+        beforeBulk: (app, uid, label) => {
+          if (mounted?.app === app && mounted.uid === uid) mounted.scheduler?.snapshotNow(label);
+        }
+      });
+      lifecycle.add(() => scenes.dispose());
       mountedApp = () => mounted?.app ?? null;
       let layerOn = false;
       const toggleRegionsLayer = () => {
@@ -18724,29 +21625,29 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         later(() => toolbar.place(), DOCK_SETTLE_MS);
       };
       const openDock = () => {
-        const current2 = mounted;
-        if (!current2?.uid || !current2.outer || current2.dock?.isOpen()) return null;
+        const current4 = mounted;
+        if (!current4?.uid || !current4.outer || current4.dock?.isOpen()) return null;
         const dock = createDock({
           doc,
           api,
-          app: current2.app,
-          containerEl: current2.el,
-          outerEl: current2.outer,
-          drawingUid: current2.uid,
-          zIndex: current2.z,
+          app: current4.app,
+          containerEl: current4.el,
+          outerEl: current4.outer,
+          drawingUid: current4.uid,
+          zIndex: current4.z,
           width: getSettings().dockWidth,
           onWidth: (w) => {
             writeSetting(extensionAPI, SETTING_IDS.dockWidth, String(w));
             placeToolbar();
           },
           onClose: () => {
-            if (current2.dock === dock) current2.dock = null;
+            if (current4.dock === dock) current4.dock = null;
             dockOn = false;
             placeToolbar();
           },
           parentOf: (uid) => host.parentOf(uid),
           onNavigate: ({ target, sidebar } = {}) => {
-            if (!navigateToTarget({ api, containerEl: current2.el, target, sidebar: !!sidebar })) return;
+            if (!navigateToTarget({ api, containerEl: current4.el, target, sidebar: !!sidebar })) return;
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
             if (sidebar) toaster.show("Opened in sidebar");
@@ -18754,7 +21655,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
           toast: (message) => toaster.show(message, { kind: "error" })
         });
-        current2.dock = dock;
+        current4.dock = dock;
         dockOn = true;
         placeToolbar();
         return dock;
@@ -18768,9 +21669,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         return !!openDock();
       };
       const goBack = async () => {
-        const current2 = mounted;
-        if (!current2?.history) return false;
-        return current2.history.back(current2.app, { animate: motionOk(doc, getSettings().animation), doc });
+        const current4 = mounted;
+        if (!current4?.history) return false;
+        return current4.history.back(current4.app, { animate: motionOk(doc, getSettings().animation), doc });
       };
       let regionref = null;
       const zIndexFor = (el) => {
@@ -18786,8 +21687,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const presenter = createPresenter({ doc, api, host });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
-      const measurer = createMeasurer({ doc });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3 });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3 });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
@@ -18935,7 +21835,136 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         if (!mounted?.noteTool) return void toaster.show("Open a drawing first", { kind: "error" });
         mounted.noteTool.arm();
       };
-      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
+      const mac = /mac|iphone|ipad/i.test(String(doc.defaultView?.navigator?.platform ?? ""));
+      const outline = createOutlineActions({ host, native: native_exports, api, toaster, clipboard: globalThis.navigator?.clipboard, doc });
+      lifecycle.add(() => outline.dispose());
+      let restoreHandle = null;
+      let chartHandle = null;
+      const closeDialogs = () => {
+        for (const handle of [restoreHandle, chartHandle]) {
+          try {
+            handle?.close?.();
+          } catch (error) {
+            console.warn("[plexus] dialog close failed", error);
+          }
+        }
+        restoreHandle = null;
+        chartHandle = null;
+        try {
+          outline.closePreview();
+        } catch (error) {
+          console.warn("[plexus] outline preview close failed", error);
+        }
+      };
+      lifecycle.add(closeDialogs);
+      const openEditor = () => {
+        const editor = activeEditor(doc);
+        if (!editor?.drawingUid) {
+          toaster.show("Open a drawing full-screen first", { kind: "error" });
+          return null;
+        }
+        return editor;
+      };
+      const restoreEntry = async (editor, entry) => {
+        const { app, drawingUid } = editor;
+        const live3 = () => activeEditor(doc)?.app === app && activeEditor(doc)?.drawingUid === drawingUid;
+        const st = app.state ?? {};
+        if (st.editingTextElement || st.newElement || st.cursorButton === "down") return void toaster.show("Finish the current edit first", { kind: "error" });
+        const scheduler = mounted?.app === app ? mounted.scheduler : null;
+        if (entry.kind === "session") {
+          scheduler?.snapshotNow("before restore");
+          guard2.restoreTo(app, drawingUid, entry.id !== void 0 ? { id: entry.id } : entry.index);
+          return;
+        }
+        const snapshot = await snapshotStore.get(entry.key);
+        if (!snapshot) return void toaster.show("That version could not be read", { kind: "error" });
+        if (!live3()) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        scheduler?.snapshotNow("before restore");
+        const plan = planRestore({ current: app.getSceneElementsIncludingDeleted?.() ?? [], snapshot, files: app.files ?? app.getFiles?.() });
+        const ok = guard2.guardedWrite(app, {
+          drawingUid,
+          label: "Restore",
+          next: plan.next,
+          captureUpdate: "IMMEDIATELY",
+          force: true,
+          appState: { selectedElementIds: {}, selectedGroupIds: {} }
+        });
+        if (!ok) return void toaster.show("Could not restore the drawing", { kind: "error" });
+        toaster.show(`Restored · ${mac ? "Cmd" : "Ctrl"}+Z brings the current version back${plan.missingFiles ? ` · ${plan.missingFiles} images missing` : ""}`);
+      };
+      const restoreDialog = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        closeDialogs();
+        restoreHandle = openRestoreDialog({
+          doc,
+          zIndex: zIndexFor(editor.el),
+          mac,
+          session: guard2.list(editor.drawingUid),
+          loadSaved: () => snapshotStore.isEnabled() ? snapshotStore.list(editor.drawingUid) : Promise.resolve(host.isEncrypted() ? { encrypted: true } : []),
+          onRestore: (entry) => restoreEntry(editor, entry).catch((error) => {
+            console.warn("[plexus] restore failed", error);
+            toaster.show("Could not restore the drawing", { kind: "error" });
+          }),
+          onClose: () => {
+            restoreHandle = null;
+            refocus(editor.el);
+          }
+        });
+        return restoreHandle;
+      };
+      const chartDialog = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        closeDialogs();
+        const { drawingUid } = editor;
+        chartHandle = openChartDialog({
+          doc,
+          zIndex: zIndexFor(editor.el),
+          onInsert: ({ text, layout }) => {
+            const scene = scenes.sceneOf(drawingUid);
+            if (!scene) throw new Error("Drawing is not open");
+            const out = scene.addChart(text, { layout });
+            toaster.show(`Chart inserted · ${out.ids.length} elements${out.skipped ? ` · ${out.skipped} skipped` : ""}`);
+          },
+          onClose: () => {
+            chartHandle = null;
+            refocus(editor.el);
+          }
+        });
+        return chartHandle;
+      };
+      const outlineTarget = (ctx) => activeEditor(doc)?.drawingUid ?? ctx?.focusedUid ?? null;
+      const withTarget = (ctx, fn) => {
+        const uid = outlineTarget(ctx);
+        if (!uid) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return Promise.resolve(fn(uid)).catch((error) => console.warn("[plexus] outline failed", error));
+      };
+      const mmEditor = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        if (!mindmap.mapOptions(editor.app)) {
+          toaster.show("Select a mind-map node first", { kind: "error" });
+          return null;
+        }
+        return editor;
+      };
+      tools = {
+        restore: restoreDialog,
+        chart: chartDialog,
+        outline: (ctx) => withTarget(ctx, (uid) => outline.drawingToOutline(uid, { selection: !!activeEditor(doc) && selectedElementIds(activeEditor(doc).app).length > 0 })),
+        copyMarkdown: (ctx) => withTarget(ctx, (uid) => outline.copyMarkdown(uid, { selection: !!activeEditor(doc) && selectedElementIds(activeEditor(doc).app).length > 0 })),
+        setLayout: (layout) => {
+          const editor = mmEditor();
+          return editor ? mindmap.setLayout(editor.app, layout) : false;
+        },
+        toggleAttrEdges: () => {
+          const editor = mmEditor();
+          if (!editor) return false;
+          return mindmap.setAttrEdges(editor.app, !mindmap.mapOptions(editor.app).attrEdges);
+        }
+      };
+      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, measure: measurer.measure, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
       lifecycle.add(installRegionLanding({
@@ -19062,12 +22091,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       };
       let navigatedAt = -Infinity;
       const unmountEditor = ({ unloading = false } = {}) => {
-        const current2 = mounted;
+        const current4 = mounted;
         mounted = null;
-        if (!current2) return Promise.resolve();
+        closeDialogs();
+        if (!current4) return Promise.resolve();
         if (Date.now() - navigatedAt <= 2e3) clearLinkTooltip(doc);
         const pending = [];
-        for (const dispose of current2.disposers) {
+        for (const dispose of current4.disposers) {
           try {
             const out = dispose();
             if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
@@ -19075,13 +22105,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             console.warn("[plexus] editor cleanup failed", error);
           }
         }
-        if (current2.app) scenes.release(current2.app);
+        if (current4.app) scenes.release(current4.app);
         actions.cancelDrawingTool();
-        if (current2.uid) {
-          emitter.emit({ uid: current2.uid, kind: "drawing" });
-          warmThumbnails(current2.uid);
+        if (current4.uid) {
+          emitter.emit({ uid: current4.uid, kind: "drawing" });
+          warmThumbnails(current4.uid);
           if (!unloading) {
-            Promise.resolve(actions.refreshAfterClose(current2.uid, current2.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+            Promise.resolve(actions.refreshAfterClose(current4.uid, current4.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
           }
         }
         return Promise.all(pending).then(() => void 0);
@@ -19161,6 +22191,11 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           mounted.disposers.push(() => pickerHandle?.close?.());
           mounted.disposers.push(() => history.clear());
           let backlinks = null;
+          if (mountUid && snapshotStore.isEnabled()) {
+            const scheduler = createSnapshotScheduler({ store: snapshotStore, app, drawingUid: mountUid });
+            mounted.scheduler = scheduler;
+            mounted.disposers.push(() => scheduler.dispose({ final: true }));
+          }
           if (mountUid) {
             const layer = createRegionsLayer({
               doc,
@@ -19260,6 +22295,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               drawingUid: mountUid,
               guard: guard2,
               point,
+              tools,
+              mindmap,
               openPicker: (p) => openPicker(p),
               noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
               toScene: (p) => sceneAt(app, p)
@@ -19375,6 +22412,14 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "auditPage", label: "Audit regions on this page", run: guarded("auditPage", () => audit && (() => audit("page"))) },
       { id: "auditGraph", label: "Audit regions in graph", run: guarded("auditGraph", () => audit && (() => audit("graph"))) },
       { id: "restore", label: "Restore before last Plexus change", run: guarded("restore", () => actions && (() => actions.restoreBeforeLastPlexusChange())) },
+      { id: "restoreVersion", label: "Restore an earlier version…", run: () => tools ? tools.restore() : unavailable("restoreVersion") },
+      { id: "chartFromJson", label: "Cause-and-effect from JSON…", run: () => tools ? tools.chart() : unavailable("chartFromJson") },
+      { id: "drawingToOutline", label: "Drawing to outline…", run: (ctx) => tools ? tools.outline(ctx) : unavailable("drawingToOutline") },
+      { id: "copyMarkdown", label: "Copy as Roam markdown", run: (ctx) => tools ? tools.copyMarkdown(ctx) : unavailable("copyMarkdown") },
+      { id: "mmLayoutRight", label: "Mind map layout: Right", run: () => tools ? tools.setLayout("right") : unavailable("mmLayout") },
+      { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => tools ? tools.setLayout("cause") : unavailable("mmLayout") },
+      { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => tools ? tools.setLayout("fishbone") : unavailable("mmLayout") },
+      { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges") },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },

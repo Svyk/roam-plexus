@@ -271,3 +271,59 @@ test("onIdle runs now when idle and once after the queue drains when busy", asyn
   await job;
   assert.equal(ran, 2);
 });
+
+const kidsOf = (...uids) => uids.map((u, i) => ({ ":block/uid": u, ":block/order": i }));
+
+test("moveTo within a parent reorders with the full fresh child list and writes no string", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true, ":block/children": kidsOf("a", "b", "c") }, a: {}, b: {}, c: {} } });
+  const reorders = [];
+  s.api.data.block.reorderBlocks = async (a) => { reorders.push(a); };
+  assert.deepEqual(await s.w.moveTo("r", "c", { parentUid: "p", beforeUid: "a" }), { ok: true, written: true });
+  assert.deepEqual(reorders[0], { location: { "parent-uid": "p" }, blocks: ["c", "a", "b"] });
+  await s.w.moveTo("r", "a", { parentUid: "p", afterUid: "c" });
+  assert.deepEqual(reorders[1].blocks, ["b", "c", "a"]);
+  assert.equal(s.writes.length, 0);
+  assert.deepEqual(await s.w.moveTo("r", "b", { parentUid: "p", beforeUid: "c" }), { ok: true, written: false });
+  assert.equal(reorders.length, 2);
+});
+
+test("moveTo to another parent uses block.move with the neighbour's index, or last", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true, ":block/children": kidsOf("x", "y", "z") }, a: {}, q: { ":block/open": true } } });
+  await s.w.moveTo("r", "a", { parentUid: "p", beforeUid: "y" });
+  assert.deepEqual(s.writes.at(-1), ["move", { location: { "parent-uid": "p", order: 1 }, block: { uid: "a" } }]);
+  await s.w.moveTo("r", "a", { parentUid: "p", afterUid: "z" });
+  assert.deepEqual(s.writes.at(-1)[1].location, { "parent-uid": "p", order: 3 });
+  await s.w.moveTo("r", "a", { parentUid: "p" });
+  assert.deepEqual(s.writes.at(-1)[1].location, { "parent-uid": "p", order: "last" });
+  for (const [, arg] of s.writes) assert.ok(!JSON.stringify(arg).includes("props") && !JSON.stringify(arg).includes("string"));
+});
+
+test("moveTo unfolds the target parent first and refuses a missing block, a missing neighbour and its own branch", async () => {
+  const s = setup({ blocks: { p: { ":block/open": false, ":block/children": kidsOf("x") }, a: {}, d: {} }, parents: { d: ["a"] } });
+  await s.w.moveTo("r", "a", { parentUid: "p", beforeUid: "x" });
+  assert.deepEqual(s.writes[0], ["update", { block: { uid: "p", open: true } }]);
+  const n = s.writes.length;
+  assert.deepEqual(await s.w.moveTo("r", "gone", { parentUid: "p" }), { ok: false, reason: "missing" });
+  assert.deepEqual(await s.w.moveTo("r", "a", { parentUid: "nope" }), { ok: false, reason: "missing-target" });
+  assert.deepEqual(await s.w.moveTo("r", "a", { parentUid: "d" }), { ok: false, reason: "inside-source" });
+  assert.deepEqual(await s.w.moveTo("r", "a", { parentUid: "p", beforeUid: "ghost" }), { ok: false, reason: "missing-neighbour" });
+  assert.equal(s.writes.length, n);
+});
+
+test("without reorderBlocks a same-parent move uses block.move and corrects a wrong index once", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true, ":block/children": kidsOf("a", "b", "c") }, a: {}, b: {}, c: {} } });
+  assert.equal(s.api.data.block.reorderBlocks, undefined);
+  // The host lands the block one place early on the first try (index counts the block itself).
+  let calls = 0;
+  s.api.data.block.move = async (a) => {
+    s.writes.push(["move", a]);
+    calls += 1;
+    const order = calls === 1 ? a.location.order - 1 : a.location.order;
+    const rest = ["a", "b", "c"].filter((u) => u !== "a");
+    rest.splice(Math.max(0, order), 0, "a");
+    s.api.data.pull = ((orig) => (pattern, ident) => (ident[1] === "p" && pattern.includes(":block/children") ? { ":block/uid": "p", ":block/children": kidsOf(...rest) } : orig(pattern, ident)))(s.api.data.pull);
+  };
+  await s.w.moveTo("r", "a", { parentUid: "p", afterUid: "c" });
+  assert.equal(s.writes.filter((w) => w[0] === "move").length, 2);
+  assert.equal(s.writes.at(-1)[1].location.order, 3);
+});

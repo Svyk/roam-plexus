@@ -151,7 +151,7 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
 test("show backlinks checkbox defaults on and saves a boolean", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  assert.equal(all.length, 20);
+  assert.equal(all.length, 21);
   const box = all[5];
   assert.equal(box.checked, true);
   box.checked = false; box.fire("change");

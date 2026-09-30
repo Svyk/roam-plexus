@@ -35,7 +35,7 @@ Regions live as children of one collapsed `{{[[plexus-regions]]}}` block, the la
 
 The command palette holds two Plexus entries:
 
-- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, present from here or an outline, print frames, PNG per frame, make slide, audits, cache, settings).
+- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, present from here or an outline, print frames, PNG per frame, make slide, audits, restore, chart from JSON, drawing to outline, mind-map layouts, cache, settings).
 - Plexus: Mind map (Alt+Shift+M).
 
 The list exists because each palette entry costs every keystroke you type in Roam: Roam's key handler walks all registered commands, about 0.055 ms each, so 23 entries added about 1.3 ms per key.
@@ -54,6 +54,13 @@ Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E
 - Present from here (canvas menu, command list, region and frame refs) starts at a chosen frame. "Present this outline" turns a block's child refs into a deck. Press N for speaker notes ("Add notes" creates the notes block). The laser pointer and pen follow the laser color and fade settings.
 - "Print frames..." prints one page per frame; "PNG per frame" downloads one PNG per frame. Page size and margin are in the settings dialog. Real printing in Roam Desktop is worth a check on your machine.
 - Embed labels on the canvas follow the source block after a short delay. Pasting canvas elements into a Roam block pastes their text, one bullet per line.
+
+## Diagrams from outlines
+
+- Mind map layouts "Cause" and "Fishbone" turn an outline into a cause map; "Mind map: attribute blocks as edges" draws `Name::` blocks as labelled edges. Drag a node onto another to reparent it, or between siblings to reorder. Alt+Enter toggles a task node; the "Mind map tag colors" setting fills nodes by `#tag`.
+- "Cause-and-effect from JSON..." inserts a chart from the Plexus Canvas schema. "Drawing to outline..." writes a drawing's text as an outline under a Plexus block; "Copy as Roam markdown" copies it.
+- "Restore an earlier version..." lists this session's changes and versions saved on this device (not kept on encrypted graphs).
+- `RoamPlexus.build()` and `scene(uid).addChart()` script the same from other extensions (`apiVersion` 5).
 
 ## Development
 

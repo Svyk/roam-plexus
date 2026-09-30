@@ -14,8 +14,8 @@ function walk(node, fn) {
 }
 
 // Per-root serialized writer for mind-map trees. Only these write shapes are ever issued:
-// block.create, block.update with ONLY string or ONLY open, block.move, block.delete (deleteBranch
-// and discardPlaceholder). Props are never written.
+// block.create, block.update with ONLY string or ONLY open, block.move (moveBranch, moveTo), block.reorderBlocks
+// (moveTo), block.delete (deleteBranch and discardPlaceholder). Props are never written.
 export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, graph, raf } = {}) {
   const queues = new Map(); // rootUid -> { tail, pending }
   const drainHooks = new Map(); // rootUid -> Set<fn>
@@ -129,6 +129,41 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
     }, targetRootUid && targetRootUid !== rootUid ? [targetRootUid] : []);
   }
 
+  const childUids = (raw) => kids(raw).map((c) => c[":block/uid"]);
+  const CHILDREN = "[:block/uid :block/order {:block/children [:block/uid :block/order]}]";
+
+  // Positioned move (MM-1 drag, MM-2 reorder). Fresh pulls inside the job; never writes a string.
+  // {parentUid} alone is a last child; beforeUid / afterUid place it next to that sibling.
+  function moveTo(rootUid, uid, { parentUid, beforeUid, afterUid } = {}) {
+    return run(rootUid, async () => {
+      const neighbour = beforeUid ?? afterUid ?? null;
+      if (!pullRaw("[:block/uid]", uid)) return { ok: false, reason: "missing" };
+      if (!pullRaw("[:block/uid]", parentUid)) return { ok: false, reason: "missing-target" };
+      if (neighbour === uid) return { ok: false, reason: "self" };
+      if (await insideBranch(uid, parentUid)) return { ok: false, reason: "inside-source" };
+      const current = childUids(pullRaw(CHILDREN, parentUid));
+      if (neighbour != null && !current.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
+      await unfold(parentUid);
+      const same = current.includes(uid);
+      const rest = current.filter((u) => u !== uid);
+      const at = neighbour == null ? rest.length : rest.indexOf(neighbour) + (afterUid != null && beforeUid == null ? 1 : 0);
+      if (same) {
+        const blocks = [...rest.slice(0, at), uid, ...rest.slice(at)];
+        if (blocks.every((u, i) => u === current[i])) return { ok: true, written: false };
+        if (typeof api.data.block.reorderBlocks === "function") {
+          await api.data.block.reorderBlocks({ location: { "parent-uid": parentUid }, blocks });
+          return { ok: true, written: true };
+        }
+        await api.data.block.move({ location: { "parent-uid": parentUid, order: at }, block: { uid } });
+        const actual = childUids(pullRaw(CHILDREN, parentUid)).indexOf(uid);
+        if (actual !== -1 && actual !== at) await api.data.block.move({ location: { "parent-uid": parentUid, order: at + (at - actual) }, block: { uid } });
+        return { ok: true, written: true };
+      }
+      await api.data.block.move({ location: { "parent-uid": parentUid, order: neighbour == null ? "last" : at }, block: { uid } });
+      return { ok: true, written: true };
+    });
+  }
+
   function copyBranch(rootUid, sourceUid, targetParentUid, { targetRootUid, cap = COPY_CAP } = {}) {
     return run(rootUid, async () => {
       const source = pullTree(sourceUid);
@@ -239,5 +274,5 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
     hooks.add(hook);
   }
 
-  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
 }

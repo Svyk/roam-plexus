@@ -32,6 +32,7 @@ const FIELDS = [
   { id: SETTING_IDS.pasteRefs, label: "Paste refs as", type: "select", options: [["text", "Text"], ["embed", "Embed"], ["link", "Link"]] },
   { id: SETTING_IDS.cardHome, label: "New note cards go", type: "select", options: [["drawing", "Under the drawing"], ["page", "On the drawing's page"], ["daily", "On today's page"]] },
   { id: SETTING_IDS.drawingName, label: "New drawing page name", type: "text", fallback: DEFAULT_DRAWING_NAME },
+  { id: SETTING_IDS.mmTagColors, label: "Mind map tag colors", type: "freetext", fallback: "", placeholder: "urgent=#ffc9c9, done=#b2f2bb" },
   { id: SETTING_IDS.printSize, label: "Print page size", type: "select", options: [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]] },
   { id: SETTING_IDS.printMargin, label: "Print margin (mm)", type: "number", fallback: 10, min: 0, max: 30 },
   { id: SETTING_IDS.laserColor, label: "Laser pointer color", type: "color" },
@@ -65,6 +66,7 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     if (f.type === "number") return String(clampInt(v, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, v);
     if (f.type === "text") return drawingNameOf(v);
+    if (f.type === "freetext") return typeof v === "string" ? v : f.fallback;
     if (f.type === "color") return laserColorOf(v);
     return v == null ? f.fallback : !!v;
   };
@@ -72,6 +74,7 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
     if (f.type === "text") return drawingNameOf(input.value);
+    if (f.type === "freetext") return String(input.value ?? "");
     if (f.type === "color") return laserColorOf(input.value);
     return !!input.checked;
   };
@@ -90,9 +93,10 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
         input.append(o);
       }
       input.value = stored(f);
-    } else if (f.type === "text") {
+    } else if (f.type === "text" || f.type === "freetext") {
       input = el("input", "plexus-settings-input");
       input.type = "text";
+      if (f.placeholder) input.placeholder = f.placeholder;
       input.value = stored(f);
     } else if (f.type === "color") {
       input = el("input", "plexus-settings-input");
@@ -143,8 +147,8 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     });
   };
 
-  // A text field is committed on Close and Esc only, so a half-typed name is never saved.
-  for (const [f, input] of inputs) if (f.type !== "text") input.addEventListener("change", () => { if (f.type === "number") input.value = current(f, input); commit(input); });
+  // A text or free-text field is committed on Close and Esc only, so a half-typed name is never saved.
+  for (const [f, input] of inputs) if (f.type !== "text" && f.type !== "freetext") input.addEventListener("change", () => { if (f.type === "number") input.value = current(f, input); commit(input); });
 
   let closed = false;
   const close = () => {

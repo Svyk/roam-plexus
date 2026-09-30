@@ -211,3 +211,90 @@ test("dispose clears the ring and pending closure; directGuard writes plainly", 
   assert.deepEqual(direct.app.updates, [{ elements: [], captureUpdate: "IMMEDIATELY" }]);
   assert.equal(directGuard.restoreLast(), 0);
 });
+
+test("list returns entries newest first with label, time and element count", () => {
+  let clock = 100;
+  const { app, guard } = fixture(30, { now: () => (clock += 1) });
+  assert.deepEqual(guard.list("d1"), []);
+  guard.guardedWrite(app, { drawingUid: "d1", label: "First", next: (cur) => cur.map((e) => (e.id === "e0" ? gone(e) : e)) });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "Second", next: (cur) => cur.map((e) => (e.id === "e1" || e.id === "e2" ? gone(e) : e)) });
+  assert.deepEqual(guard.list("d1"), [
+    { id: 2, index: 0, label: "Second", time: 102, count: 2 },
+    { id: 1, index: 1, label: "First", time: 101, count: 1 },
+  ]);
+  assert.deepEqual(guard.list("other"), []);
+  assert.equal(directGuard.list("d1").length, 0);
+  assert.equal(directGuard.restoreTo(), 0);
+});
+
+test("restoreTo(index) composes entries 0..index in one IMMEDIATELY write and pops them", () => {
+  const { app, toasts, guard } = fixture(30);
+  guard.guardedWrite(app, { drawingUid: "d1", label: "A", next: (cur) => [...cur.map((e) => (e.id === "e0" ? gone(e) : e)), el("madeA")] });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "B", next: (cur) => [...cur.map((e) => (e.id === "e1" ? gone(e) : e)), el("madeB")] });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "C", next: (cur) => cur.map((e) => (e.id === "e2" ? gone(e) : e)) });
+  const updates = app.updates.length;
+  const n = guard.restoreTo(app, "d1", 1);
+  assert.equal(app.updates.length, updates + 1);
+  assert.equal(app.updates.at(-1).captureUpdate, "IMMEDIATELY");
+  const by = new Map(app.els.map((e) => [e.id, e]));
+  assert.equal(by.get("e2").isDeleted, false);
+  assert.equal(by.get("e1").isDeleted, false);
+  assert.equal(by.get("e1").version, 3);
+  assert.equal(by.get("e0").isDeleted, true);
+  assert.equal(by.get("madeB").isDeleted, true);
+  assert.equal(by.get("madeA").isDeleted, false);
+  assert.equal(n, 2);
+  assert.equal(toasts.at(-1).message, "Restored 2 elements; Undo reverses this");
+  assert.deepEqual(guard.list("d1").map((x) => x.label), ["A"]);
+});
+
+test("restoreTo: the older before wins where entries overlap, and out-of-range or inactive is refused", () => {
+  let active = true;
+  const { app, toasts, guard } = fixture(30, { isActive: () => active });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "Move", next: (cur) => cur.map((e) => (e.id === "e0" ? { ...e, x: 50, version: e.version + 1 } : e)) });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "A", next: (cur) => cur.map((e) => (e.id === "e0" ? gone({ ...e, x: 60 }) : e)) });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "B", next: (cur) => cur.map((e) => (e.id === "e1" ? gone(e) : e)) });
+  assert.equal(guard.restoreTo(app, "d1", 9), 0);
+  assert.equal(toasts.at(-1).message, "Nothing to restore");
+  active = false;
+  assert.equal(guard.restoreTo(app, "d1", 0), 0);
+  assert.equal(toasts.at(-1).message, "Drawing is no longer open");
+  active = true;
+  guard.restoreTo(app, "d1", 1);
+  const e0 = app.els.find((e) => e.id === "e0");
+  assert.equal(e0.isDeleted, false);
+  assert.equal(e0.x, 50);
+});
+
+test("restoreTo: an element an older entry added and a newer entry removed stays deleted", () => {
+  const { app, guard } = fixture(30);
+  guard.guardedWrite(app, { drawingUid: "d1", label: "A", next: (cur) => [...cur.map((e) => (e.id === "e0" ? gone(e) : e)), el("X")] });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "B", next: (cur) => cur.map((e) => (e.id === "X" ? gone(e) : e)) });
+  guard.restoreTo(app, "d1", 1);
+  const by = new Map(app.els.map((e) => [e.id, e]));
+  assert.equal(by.get("X").isDeleted, true);
+  assert.equal(by.get("e0").isDeleted, false);
+});
+
+test("restoreTo({id}) follows the entry when the ring shifts and refuses a gone id", () => {
+  const { app, toasts, guard } = fixture(30);
+  guard.guardedWrite(app, { drawingUid: "d1", label: "A", next: (cur) => cur.map((e) => (e.id === "e0" ? gone(e) : e)) });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "B", next: (cur) => cur.map((e) => (e.id === "e1" ? gone(e) : e)) });
+  const picked = guard.list("d1").find((x) => x.label === "A");
+  guard.guardedWrite(app, { drawingUid: "d1", label: "C", next: (cur) => cur.map((e) => (e.id === "e2" ? gone(e) : e)) });
+  assert.equal(guard.restoreTo(app, "d1", { id: picked.id }), 3);
+  const by = new Map(app.els.map((e) => [e.id, e]));
+  assert.equal(by.get("e0").isDeleted, false);
+  assert.equal(by.get("e2").isDeleted, false);
+  assert.equal(guard.restoreTo(app, "d1", { id: picked.id }), 0);
+  assert.equal(toasts.at(-1).message, "The list changed; reopen it");
+});
+
+test("restoreLast is restoreTo(..., 0) and leaves older entries", () => {
+  const { app, guard } = fixture(30);
+  guard.guardedWrite(app, { drawingUid: "d1", label: "A", next: (cur) => cur.map((e) => (e.id === "e0" ? gone(e) : e)) });
+  guard.guardedWrite(app, { drawingUid: "d1", label: "B", next: (cur) => cur.map((e) => (e.id === "e1" ? gone(e) : e)) });
+  assert.equal(guard.restoreLast(app, "d1"), 1);
+  assert.deepEqual(guard.list("d1").map((x) => x.label), ["A"]);
+  assert.equal(app.els.find((e) => e.id === "e0").isDeleted, true);
+});

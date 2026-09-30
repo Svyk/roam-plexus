@@ -126,7 +126,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 
 ## 8. Compass integration contract
 
-`window.RoamPlexus` (frozen, `apiVersion: 4`; v2 and v3 callers are unaffected, since every change is additive):
+`window.RoamPlexus` (frozen, `apiVersion: 5`; v2 to v4 callers are unaffected, since every change is additive):
 
 | Member | Returns | Notes |
 |---|---|---|
@@ -137,7 +137,11 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 | `regionsOf(uid)` | `[{uid, kind, caption, label}]` | one pull, no watch. `label` (v3, additive) is a plain one-line name of at most 80 characters: the caption with markup stripped, else the image alt text (image kinds), else `<drawing title> · <kind word>`. `"Region"` if it cannot be computed. Callers should use it only when it is a non-empty string, so v2 entries still work |
 | `drawingsOn(pageUid)` | `[uid]` | `data.q` over blocks with `:block/props`, capped 50 |
 | `scene(uid).remove(ids, {force})` | | v4. Removals go through the write guard: one that would drop a drawing of more than 10 elements to a fifth or less throws `Not applied: would remove N of M` after offering "Apply anyway" in a toast. `force: true` bypasses the check |
+| `build({style?})` | builder | v5. A pure element builder with a style state (`strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `roughness`, `fontSize`, `fontFamily`). Creators return ids: `rect`, `ellipse`, `diamond`, `text`, `frame`, `line`, `box(text, opts)` (a container with bound text) and `arrow(a, b, {label})` (a real bound arrow; both ends' `boundElements` are updated). `layout(ids, "row" \| "column" \| "grid" \| "tree")` positions elements. `commit(uid?)` appends everything in one guarded write with one undo step and returns every created id in creation order, bound text and labels included. It never goes through paste (which re-ids elements) and never opens a drawing: it throws `Drawing is not open; call RoamPlexus.whenOpen(uid) first` when no editor is open or `uid` is not the open one, and `Already committed` on a second call. It takes a ring snapshot ("before Build") first |
+| `scene(uid).addChart(json, {layout = "tree", at})` | `{chart, ids, skipped}` | v5. Inserts a cause-and-effect chart (`{nodes: [{id, text, role, category}], edges: [{effect, cause}]}`, the Plexus Canvas schema; `layout` is `tree`, `fishbone` or `pentagon`) at the viewport centre or `at`, as one guarded write and one undo step, after a "before Chart" snapshot. Elements carry `customData.plexus.ce = {chart, node}`. Throws on an invalid chart |
 | `addEventListener('change', cb)` / `removeEventListener` | | `{uid, kind: 'drawing' | 'region'}` after own writes and absorbed echoes |
+
+Measuring caveat (v5): builders size text with Plexus's measurer, which measures Excalifont only. For any other `fontFamily` the width is estimated as `0.6 x fontSize` per character, so a text box may be a little wider or narrower than Excalidraw would make it until its first edit.
 
 Compass changes (`~/roam-compass`), all graph-read-only:
 
@@ -349,6 +353,22 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Better Tasks | Installed in Readwisenotes as `window.betterTasks` with `v1`/`v2` objects: `classifyBlock`, `requestDelete`, `createSubtask`, `requestStatusTag` (v2). No due-date call | MM-8 feature-detects it; "Due" is not built (it would need a `BT_attr*` write) |
 | Mind-map storage | Root node: `customData.plexus.mm = {uid, map, root: true, layout: "right", bounds}`; edges: `customData.plexus.mm = {edge: [parentUid, childUid], map}`, ids `pmm-<map>-<uid>` and `-e` / `-t` suffixes | MM-7's per-map toggle and MM-11's layouts live on the root's `customData.plexus.mm` |
 | Cause-and-effect JSON (Plexus Canvas) | `elementsFromCauseEffect(chart)`: `chart.nodes: [{id, text, role, category}]` (`role: "primary"` marks the effect), `chart.edges: [{effect, cause}]`, `chart.connections`; layouts tree / fishbone / pentagon (`~/excalidraw-port-research/thymer-canvas-plugin/plugin.js:2734-2840`) | MM-11's JSON route accepts that shape |
+
+#### Phase 12 live acceptance (2026-09-30, Readwisenotes `1929...`, trusted CDP)
+
+| Item | Result |
+|---|---|
+| DATA-1 | `plexus-snapshots` opened at version 1 with `snapshots` + `snapshotData`; the mount snapshot (27 elements) landed and the "before Build" one was deduplicated. The restore dialog listed it; Restore went 36 → 27 elements with "Restored · Cmd+Z brings the current version back", Cmd+Z brought all 9 back. Three unload/load cycles: listener counts back to baseline, no dialog or ring left, and the dialog still listed saved rows (no stuck open). Encrypted graphs: unit-tested only (no svy check this phase) |
+| API-1 | `RoamPlexus.build()` (apiVersion 5): 3 boxes, 2 arrows and a label committed as 9 elements, both arrows bound at both ends; a trusted drag of a box moved it 120 and the arrow re-routed while staying bound |
+| MM-7 | 0.4.0-era map: a `Relates::` block rendered as a node (toggle absent). Toggle on: carrier gone, labelled edge "Relates" from the root; off again: node back; no block writes either way. New map from an outline: `attrEdges` on by default, carrier hidden, edges "Causes" |
+| MM-11 | Cause layout: ★ effect in red, depth colours, "Causes" / "caused by" labels, dashed `#evidence` node. Fishbone: spine with the head at the right, bones alternating above and below. JSON dialog: 4 nodes (★ primary, category on two lines), 4 bound arrows ("caused by" ×3, dashed "worsens"), 18 elements, one undo step; placed at the viewport centre |
+| MM-8 | `☐` / `☑` / `★` render in Roam's fonts. Alt+Enter: TODO → DONE → TODO, only the macro prefix changed; the `BT_attrDue::` child was byte-identical (string, order, `:edit/time`) and is not drawn |
+| MM-1 / MM-2 | Drop on a node reparented the block (edge from the new parent, no pin, no duplicate). Shift+Tab selected the parent; Alt+Shift+Up/Down reordered siblings (orders swapped and back); Alt+X / Alt+V moved a branch, the `BT_attr` child with it. Pin: drag, then hold Cmd at release (pinned, no reparent, no navigation, no token chooser); Cmd held from the pointer-down does not grab the node |
+| 200-node map | 201 nodes, 200 arrows, 201 texts = 3n − 1, no duplicates; a drag-reparent wrote in about 0.4 s after release and kept 602 elements. One outline edit's echo: Plexus code about 11 ms; the 168 ms long task is Roam (`shared.js` compress / save of the 600-element drawing and a native `check`) |
+| GRAPH-5 | "Drawing to outline…" wrote a collapsed `{{[[plexus-outline]]}}` (`o…` uid) with frame headings (H2, slide order), nested items, image markdown and refs; a re-run kept the container and replaced all children. Above 50 blocks the preview showed "55 blocks will replace the 13…"; Cancel wrote nothing. "Copy as Roam markdown" copied the full outline (with a selection it copies only the selection) |
+| `fromMarkdown` corpus | `## x` → heading 2; `# x` → heading 1 (the `#` is dropped); `- x`, `1. x`, `> x`, `**b**`, `Attr:: v`, refs and a two-line continuation round-trip. Items starting with `#` + space are written block by block |
+| Typing | +0.12 ms/key (two palette entries) |
+| Not measured | OS capture of Ctrl+Alt+Arrow (CDP bypasses the OS); image refetch after a restore; first edit of a builder text with `fontFamily ≠ 5` |
 
 ## Verification (when implementation starts)
 

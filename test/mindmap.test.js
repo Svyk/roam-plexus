@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   plainText, hasMarkup, wrapLines, nodeSize, layoutTree, nearestInDirection, treeFromPull, countHidden,
   visibleNodes, SIBLING_GAP, LEVEL_GAP, RADIAL_RADIUS, RADIAL_STEP, MAX_DISPLAY,
+  LAYOUTS, CAUSE_LAYOUTS, isHiddenString, isExcludedString, taskParts, taskState, tagColor, editableText, visualTree,
+  fishboneLayout,
 } from "../src/model/mindmap.js";
 
 const res = (uid) => ({ abc: "ref **text**", loop: "((loop))", long: "x".repeat(100) }[uid] ?? null);
@@ -197,4 +199,188 @@ test("layout bench: 200 nodes", () => {
     console.log(`[bench] layoutTree ${layout} 201 nodes: ${ms.toFixed(3)} ms`);
     assert.ok(ms < 50);
   }
+});
+
+// ---- Phase 12 ----
+
+test("LAYOUTS stays five; CAUSE_LAYOUTS lists cause and fishbone", () => {
+  assert.deepEqual([...LAYOUTS], ["right", "down", "left", "up", "radial"]);
+  assert.deepEqual([...CAUSE_LAYOUTS], ["cause", "fishbone"]);
+});
+
+test("taskParts / taskState: exact macro plus at most one space", () => {
+  assert.deepEqual(taskParts("{{[[TODO]]}} buy milk"), { state: "TODO", prefix: "{{[[TODO]]}} ", rest: "buy milk" });
+  assert.deepEqual(taskParts("{{[[DONE]]}}"), { state: "DONE", prefix: "{{[[DONE]]}}", rest: "" });
+  assert.deepEqual(taskParts("{{[[TODO]]}}  two"), { state: "TODO", prefix: "{{[[TODO]]}} ", rest: " two" });
+  assert.equal(taskState("x {{[[TODO]]}}"), null);
+  assert.equal(taskState("{{[[todo]]}} x"), null);
+  assert.equal(taskState("plain"), null);
+  assert.equal(taskState("{{[[DONE]]}} a"), "DONE");
+});
+
+test("plainText shows task glyphs; hasMarkup stays in step with plainText (P4 invariant 16)", () => {
+  assert.equal(plainText("{{[[TODO]]}} buy [[milk]]", res), "☐ buy milk");
+  assert.equal(plainText("{{[[DONE]]}} done", res), "☑ done");
+  assert.equal(plainText("{{[[TODO]]}}", res), "☐");
+  assert.equal(plainText("a {{[[TODO]]}}", res), "a ⧉");
+  for (const s of ["{{[[TODO]]}} x", "{{[[DONE]]}}", "{{[[TODO]]}} {{[[DONE]]}} y", "{{[[TODO]]}} #t", "{{[[TODO]]}}x"]) {
+    assert.equal(hasMarkup(s), plainText(s, res) !== s, s);
+    assert.equal(hasMarkup(s), true);
+  }
+  assert.equal(hasMarkup(taskParts("{{[[TODO]]}} plain words").rest), false);
+});
+
+test("isHiddenString hides BT_attr blocks from the tree, but isExcludedString is unchanged", () => {
+  assert.equal(isHiddenString("BT_attrDue:: [[Sept 1st, 2026]]"), true);
+  assert.equal(isHiddenString("  BT_attrGTD:: Someday"), true);
+  assert.equal(isHiddenString("BT_attr"), false);
+  assert.equal(isHiddenString("my BT_attrX:: y"), false);
+  assert.equal(isExcludedString("BT_attrDue:: x"), false);
+  const pull = {
+    ":block/uid": "r", ":block/string": "root",
+    ":block/children": [
+      { ":block/uid": "t", ":block/string": "{{[[TODO]]}} task", ":block/order": 0, ":block/children": [
+        { ":block/uid": "d", ":block/string": "BT_attrDue:: [[x]]", ":block/order": 0 },
+        { ":block/uid": "k", ":block/string": "kid", ":block/order": 1 },
+      ] },
+    ],
+  };
+  const t = treeFromPull(pull);
+  assert.deepEqual(t.children[0].children.map((c) => c.uid), ["k"]);
+  assert.equal(treeFromPull({ ":block/uid": "r", ":block/string": "BT_attrX:: root" }).uid, "r");
+});
+
+test("tagColor: first coloured tag in text order; macro counts as todo / done; case-insensitive", () => {
+  const map = new Map([["urgent", "#ffc9c9"], ["done", "#b2f2bb"], ["todo", "#eee"], ["big tag", "#123456"]]);
+  assert.equal(tagColor("fix #Urgent now", map), "#ffc9c9");
+  assert.equal(tagColor("#[[Big Tag]] x", map), "#123456");
+  assert.equal(tagColor("#plain #urgent", map), "#ffc9c9");
+  assert.equal(tagColor("{{[[DONE]]}} ship", map), "#b2f2bb");
+  assert.equal(tagColor("{{[[TODO]]}} ship #urgent", map), "#eee");
+  assert.equal(tagColor("issue#urgent", map), undefined);
+  assert.equal(tagColor("nothing", map), undefined);
+  assert.equal(tagColor("#urgent", new Map()), undefined);
+  assert.equal(tagColor("#urgent", undefined), undefined);
+});
+
+test("editableText: strips fold suffix, star and glyph; puts the task prefix back; null for markup and no-ops", () => {
+  const plain = { uid: "a", string: "alpha", open: true, children: [] };
+  assert.equal(editableText(plain, "beta"), "beta");
+  assert.equal(editableText(plain, "alpha"), null);
+  assert.equal(editableText(plain, ""), null);
+  assert.equal(editableText(plain, "·"), null);
+  const folded = { uid: "a", string: "alpha", open: false, children: [{ uid: "b", string: "b", open: true, children: [] }] };
+  assert.equal(editableText(folded, "beta (+1)"), "beta");
+  assert.equal(editableText(folded, "beta"), null);
+  const task = { uid: "t", string: "{{[[TODO]]}} buy", open: true, children: [] };
+  assert.equal(editableText(task, "☐ buy milk"), "{{[[TODO]]}} buy milk");
+  assert.equal(editableText(task, "buy"), null);
+  assert.equal(editableText(task, "☐"), null);
+  const done = { uid: "t", string: "{{[[DONE]]}} buy", open: true, children: [] };
+  assert.equal(editableText(done, "☑ sell"), "{{[[DONE]]}} sell");
+  const root = { uid: "r", string: "why", open: true, children: [] };
+  assert.equal(editableText(root, "★ because", { star: true }), "because");
+  assert.equal(editableText(root, "★ because"), "★ because");
+  assert.equal(editableText({ uid: "m", string: "a [[b]]", open: true, children: [] }, "a b c"), null);
+  assert.equal(editableText({ uid: "m", string: "{{[[TODO]]}} a [[b]]", open: true, children: [] }, "☐ a b c"), null);
+});
+
+const S = (uid, kids = [], string, open = true) => ({ uid, string: string ?? uid, open, children: kids });
+const paths = (t) => visibleNodes(t).map((v) => `${v.parent ? v.parent.uid : "-"}>${v.node.uid}${v.node.edgeLabel ? `[${v.node.edgeLabel}|${v.node.via}]` : ""}`);
+
+test("visualTree: off returns the same tree; on splices carrier children with edgeLabel and via", () => {
+  const tree = S("r", [S("a", [S("c", [S("x"), S("y")], "Causes::"), S("z")]), S("b")]);
+  assert.equal(visualTree(tree, { attrEdges: false }), tree);
+  assert.equal(visualTree(tree), tree);
+  const v = visualTree(tree, { attrEdges: true });
+  assert.deepEqual(paths(v), ["->r", "r>a", "a>x[Causes|c]", "a>y[Causes|c]", "a>z", "r>b"]);
+  assert.equal(tree.children[0].children.length, 2, "input not mutated");
+  assert.equal(v.children[1], tree.children[1], "untouched subtrees are shared");
+});
+
+test("visualTree: carrier conditions", () => {
+  const t = (kids) => S("r", [S("a", kids)]);
+  const drawn = (tree) => paths(visualTree(tree, { attrEdges: true })).join(",");
+  // empty carrier, collapsed carrier, BT_attr, colon in name, long name, text after :: stay ordinary nodes
+  assert.match(drawn(t([S("c", [], "Empty::")])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "Folded::", false)])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "BT_attrDue::")])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "A:B::")])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], `${"n".repeat(61)}::`)])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "Name:: value")])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "`code`::")])), /a>c/);
+  assert.match(drawn(t([S("c", [S("x")], "{{x}}::")])), /a>c/);
+  assert.equal(drawn(t([S("c", [S("x")], `${"n".repeat(60)}::`)])).includes("a>c"), false);
+  assert.equal(drawn(t([S("c", [S("x")], "  Spaced ::  ")])).includes("a>c"), false);
+  // root is never a carrier; nested carrier under a carrier is an ordinary node
+  const rootCarrier = S("r", [S("x")], "Root::");
+  assert.equal(visualTree(rootCarrier, { attrEdges: true }), rootCarrier);
+  const nested = paths(visualTree(t([S("c", [S("d", [S("x")], "Inner::")], "Outer::")]), { attrEdges: true })).join(",");
+  assert.match(nested, /a>d\[Outer\|c\]/);
+  assert.match(nested, /d>x/);
+  // folded parents keep their raw children (fold count is the raw count)
+  const foldedParent = S("r", [S("a", [S("c", [S("x")], "K::")], "a", false)]);
+  const fv = visualTree(foldedParent, { attrEdges: true });
+  assert.equal(countHidden(fv.children[0]), 2);
+});
+
+test("visualTree keeps truncated and labels are plain text", () => {
+  const tree = { ...S("r", [S("c", [S("x")], "[[Caused]] by::")]), truncated: true };
+  const v = visualTree(tree, { attrEdges: true });
+  assert.equal(v.truncated, true);
+  assert.equal(v.children[0].edgeLabel, "Caused by");
+});
+
+test("layoutTree gapOf: default unchanged, per-child gap along the axis", () => {
+  const tree = mk(["r", [["a", [["a1"]]], ["b"]]]);
+  const sizes = fixedSizes(tree);
+  assert.deepEqual(layoutTree({ tree, sizes, layout: "right", gapOf: () => LEVEL_GAP }), layoutTree({ tree, sizes, layout: "right" }));
+  const wide = layoutTree({ tree, sizes, layout: "right", gapOf: (uid) => (uid === "a1" ? 200 : LEVEL_GAP) });
+  assert.equal(wide.a1.x, wide.a.x + 100 + 200);
+  const l = layoutTree({ tree, sizes, layout: "left", gapOf: () => 120 });
+  assert.equal(l.a.x, -100 - 120);
+  const d = layoutTree({ tree, sizes, layout: "down", gapOf: () => 90 });
+  assert.equal(d.a.y, 40 + 90);
+});
+
+test("layout cause is the left layout", () => {
+  const tree = mk(["r", [["a", [["a1"]]], ["b"]]]);
+  const sizes = fixedSizes(tree);
+  assert.deepEqual(layoutTree({ tree, sizes, layout: "cause", root: { x: 5, y: 7 } }), layoutTree({ tree, sizes, layout: "left", root: { x: 5, y: 7 } }));
+});
+
+test("fishbone: a pinned rib keeps its pin, its bones do not move, and a second pass is identical", () => {
+  const tree = mk(["r", [["a", [["a1", [["a1x"]]], ["a2"]]], ["b", [["b1"]]], ["c"]]]);
+  const sizes = fixedSizes(tree);
+  const base = fishboneLayout({ tree, sizes, root: { x: 1000, y: 500 } });
+  const pin = { x: 695, y: 397 };
+  const fb = fishboneLayout({ tree, sizes, root: { x: 1000, y: 500 }, pinned: { a1: pin } });
+  assert.deepEqual(fb.positions.a1, pin);
+  for (const u of ["b", "b1"]) assert.deepEqual(fb.positions[u], base.positions[u], u);
+  assert.ok(fb.positions.a1x.x < pin.x);
+  const again = fishboneLayout({ tree, sizes, root: { x: 1000, y: 500 }, pinned: fb.positions });
+  assert.deepEqual(again.positions, fb.positions);
+});
+
+test("fishbone: head at the anchor, bones alternate, subtrees clear the spine, slots do not overlap", () => {
+  const tree = mk(["r", [["a", [["a1"], ["a2"]]], ["b", [["b1"]]], ["c"], ["d", [["d1"], ["d2"], ["d3"]]], ["e"]]]);
+  const sizes = fixedSizes(tree);
+  const fb = fishboneLayout({ tree, sizes, root: { x: 1000, y: 500 } });
+  assert.deepEqual(fb.positions.r, { x: 1000, y: 500 });
+  assert.equal(fb.spine.y, 520);
+  assert.equal(fb.spine.x2, 1000);
+  assert.equal(fb.spine.x1, fb.positions.e.x);
+  const above = ["a", "c", "e"];
+  const below = ["b", "d"];
+  for (const u of above) assert.ok(fb.positions[u].y + 40 <= 520 - 50 + 1e-9, `${u} above`);
+  for (const u of below) assert.ok(fb.positions[u].y >= 520 + 50 - 1e-9, `${u} below`);
+  for (const u of ["a", "b", "c", "d", "e"]) assert.equal(fb.positions[u].x + 100, fb.slotX[u] - 40, `${u} right edge`);
+  assert.equal(fb.slotX.a, fb.slotX.b);
+  assert.ok(fb.slotX.c < fb.slotX.a && fb.slotX.e < fb.slotX.c);
+  // ribs are left of their bone
+  assert.ok(fb.positions.a1.x < fb.positions.a.x);
+  assert.deepEqual(layoutTree({ tree, sizes, layout: "fishbone", root: { x: 1000, y: 500 } }), fb.positions);
+  // no causes: no spine
+  const lone = mk(["r"]);
+  assert.equal(fishboneLayout({ tree: lone, sizes: fixedSizes(lone) }).spine, null);
 });

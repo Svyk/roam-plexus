@@ -26,6 +26,7 @@ export const SETTING_IDS = Object.freeze({
   printMargin: "print-margin",
   laserColor: "laser-color",
   laserDecay: "laser-decay",
+  mmTagColors: "mm-tag-colors",
 });
 
 const DEFAULTS = Object.freeze({
@@ -54,6 +55,7 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.printMargin]: "10",
   [SETTING_IDS.laserColor]: "#e03131",
   [SETTING_IDS.laserDecay]: "1000",
+  [SETTING_IDS.mmTagColors]: "",
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -135,6 +137,7 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.pasteRefs, name: "Paste refs as", description: "What pasting a single ((block)) or [[page]] ref onto the canvas does. text: Excalidraw's normal paste. embed: a live embed. link: a text node linked to the ref. Shift+Ctrl+V always pastes plain text.", action: wrap({ type: "select", items: ["text", "embed", "link"] }) },
       { id: SETTING_IDS.cardHome, name: "New note cards go", description: "Where the block behind a new note card is created. drawing: a collapsed container under the drawing. page: the last block of the drawing's page. daily: today's daily page.", action: { type: "select", items: ["drawing", "page", "daily"] } },
       { id: SETTING_IDS.drawingName, name: "New drawing page name", description: "Title of a page made by New drawing on a page, after Drawings/. Tokens: {date}, {page}, {n}.", action: { type: "input", placeholder: DEFAULT_DRAWING_NAME } },
+      { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
     ],
   };
@@ -151,6 +154,20 @@ const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : f
 export const drawingNameOf = (value) => (typeof value === "string" && value.trim() ? value : DEFAULT_DRAWING_NAME);
 
 export const laserColorOf = (value) => (typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : DEFAULT_LASER_COLOR);
+
+// "urgent=#ffc9c9, #done=#b2f2bb" -> Map(lowercase tag -> colour). Only #rgb and #rrggbb colours are kept.
+export function parseTagColors(raw) {
+  const map = new Map();
+  if (typeof raw !== "string") return map;
+  for (const part of raw.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const tag = part.slice(0, eq).trim().replace(/^#/, "").toLowerCase();
+    const colour = part.slice(eq + 1).trim();
+    if (tag && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colour)) map.set(tag, colour);
+  }
+  return map;
+}
 
 let overridesMemo = { raw: undefined, value: null };
 function memoOverrides(raw) {
@@ -191,6 +208,7 @@ export function readSettings(extensionAPI) {
     printMargin: clampNumber(get(SETTING_IDS.printMargin), 10, 0, 30),
     laserColor: laserColorOf(get(SETTING_IDS.laserColor)),
     laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1000, 300, 3000),
+    mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors)),
   };
 }
 

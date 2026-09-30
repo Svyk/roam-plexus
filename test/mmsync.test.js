@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildNode, buildText, buildEdge, buildBoundary, reconcile, applyOps, isEmptyOps, patchMarker, planMap,
-  nodeId, textId, edgeId, boundaryId, mmOf, makeSizer, projectionIds, FONT_FAMILY,
+  nodeId, textId, edgeId, boundaryId, labelId, spineId, mmOf, makeSizer, projectionIds, FONT_FAMILY, CAUSE_FILLS,
 } from "../src/model/mmsync.js";
-import { BRANCH_COLORS, ROOT_COLOR } from "../src/model/mindmap.js";
+import { BRANCH_COLORS, ROOT_COLOR, LEVEL_GAP, visualTree, visibleNodes } from "../src/model/mindmap.js";
+import { arrowLabelRect, arrowLabelWrapWidth } from "../src/model/arrowlabel.js";
 import { isId } from "../src/model/region.js";
 
 const measure = (s, fs) => s.length * fs * 0.5;
@@ -304,25 +305,57 @@ test("projectionIds lists live elements of a map", () => {
   assert.equal(projectionIds(els, "X").length, 0);
 });
 
-test("bench: full 200-node reconcile (cold and warm)", () => {
+function big(stringOf = (u) => `text ${u}`) {
   const kids = [];
   let n = 1;
   for (let i = 0; i < 10; i++) {
     const sub = [];
-    for (let j = 0; j < 19; j++) sub.push([`n${n++}`]);
-    kids.push([`n${n++}`, sub]);
+    for (let j = 0; j < 19; j++) { const u = `n${n++}`; sub.push([u, [], true, stringOf(u)]); }
+    const u = `n${n++}`;
+    kids.push([u, sub, true, stringOf(u)]);
   }
-  const tree = mk(["R", kids]);
+  return mk(["R", kids]);
+}
+
+function benchOne(label, tree, extra = {}, expectLive) {
   let t0 = performance.now();
-  let els = build(tree);
+  const els = build(tree, [], extra);
   const cold = performance.now() - t0;
-  assert.equal(live(els).length, 201 * 3 - 1);
+  if (expectLive !== undefined) assert.equal(live(els).length, expectLive);
   t0 = performance.now();
-  const ops = run(els, tree);
+  const ops = run(els, tree, extra);
   const warm = performance.now() - t0;
-  assert.ok(isEmptyOps(ops));
-  console.log(`[bench] reconcile 201 nodes: cold add ${cold.toFixed(2)} ms, warm no-op ${warm.toFixed(2)} ms`);
-  assert.ok(warm < 50);
+  assert.ok(isEmptyOps(ops), label);
+  console.log(`[bench] reconcile ${label}: cold add ${cold.toFixed(2)} ms, warm no-op ${warm.toFixed(2)} ms`);
+  assert.ok(warm < 50, `${label} warm ${warm}`);
+  return els;
+}
+
+test("bench: full 200-node reconcile (cold and warm)", () => {
+  benchOne("201 nodes", big(), {}, 201 * 3 - 1);
+});
+
+test("bench: 200-node cause map with a label on every edge", () => {
+  const els = benchOne("201-node cause map (200 labels)", big(), { layout: "cause" }, 201 * 3 - 1 + 200);
+  assert.equal(live(els).filter((e) => e.id.endsWith("-e-t")).length, 200);
+});
+
+test("bench: 200-node map with 20 carriers", () => {
+  const branches = [];
+  let n = 1;
+  for (let i = 0; i < 10; i++) {
+    const carriers = [];
+    for (let c = 0; c < 2; c++) {
+      const sub = [];
+      for (let j = 0; j < 9; j++) sub.push([`n${n++}`]);
+      carriers.push([`c${i}_${c}`, sub, true, `Attr${c}::`]);
+    }
+    branches.push([`b${i}`, carriers]);
+  }
+  const tree = mk(["R", branches]);
+  const els = benchOne("carrier map (20 carriers, 180 targets)", tree, { rootDefaults: { attrEdges: true } });
+  assert.equal(live(els).filter((e) => e.id.endsWith("-e-t")).length, 180);
+  assert.equal(live(els).some((e) => e.id === nodeId("R", "c0_0")), false);
 });
 
 test("a truncated tree keeps stored bounds so they survive until the tree is complete", () => {
@@ -336,4 +369,300 @@ test("a truncated tree keeps stored bounds so they survive until the tree is com
   assert.deepEqual(get(els, nodeId("R", "R")).customData.plexus.mm.bounds, ["b"]);
   els = applyOps(els, run(els, full));
   assert.equal(get(els, boundaryId("R", "b")).isDeleted, false);
+});
+
+// ---- Phase 12 ----
+
+const FIXTURE_0_11 = JSON.parse(String.raw`[{"id":"pmm-R-a-e","type":"arrow","x":100,"y":25,"width":70,"height":31.5,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["R","a"],"map":"R"}}},"points":[[0,0],[70,-31.5]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-R","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-a","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-a1-e","type":"arrow","x":258,"y":-6.5,"width":70,"height":29,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["a","a1"],"map":"R"}}},"points":[[0,0],[70,-29]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-a","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-a1","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-a2-e","type":"arrow","x":258,"y":-6.5,"width":70,"height":29,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["a","a2"],"map":"R"}}},"points":[[0,0],[70,29]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-a","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-a2","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-b-e","type":"arrow","x":100,"y":25,"width":70,"height":58,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["R","b"],"map":"R"}}},"points":[[0,0],[70,58]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-R","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-b","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-c-e","type":"arrow","x":100,"y":25,"width":500,"height":197.5,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["R","c"],"map":"R"}}},"points":[[0,0],[500,197.5]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-R","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-c","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-c1-e","type":"arrow","x":688,"y":222.5,"width":70,"height":0,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"edge":["c","c1"],"map":"R"}}},"points":[[0,0],[70,0]],"lastCommittedPoint":null,"startBinding":{"elementId":"pmm-R-c","focus":0,"gap":4},"endBinding":{"elementId":"pmm-R-c1","focus":0,"gap":4},"startArrowhead":null,"endArrowhead":null,"elbowed":false},{"id":"pmm-R-R","type":"rectangle","x":0,"y":0,"width":100,"height":50,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#ffec99","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-R-t","type":"text"},{"id":"pmm-R-a-e","type":"arrow"},{"id":"pmm-R-b-e","type":"arrow"},{"id":"pmm-R-c-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"R","map":"R","root":true,"layout":"right","bounds":["a"]}}}},{"id":"pmm-R-R-t","type":"text","x":14,"y":10,"width":72,"height":30,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text R","originalText":"text R","fontSize":24,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-R","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-a","type":"rectangle","x":170,"y":-29,"width":88,"height":45,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#a5d8ff","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-a-t","type":"text"},{"id":"pmm-R-a-e","type":"arrow"},{"id":"pmm-R-a1-e","type":"arrow"},{"id":"pmm-R-a2-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"a","map":"R","branch":"a"}}}},{"id":"pmm-R-a-t","type":"text","x":184,"y":-19,"width":60,"height":25,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text a","originalText":"text a","fontSize":20,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-a","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-a1","type":"rectangle","x":328,"y":-55.5,"width":84,"height":40,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#a5d8ff","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-a1-t","type":"text"},{"id":"pmm-R-a1-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"a1","map":"R","branch":"a"}}}},{"id":"pmm-R-a1-t","type":"text","x":342,"y":-45.5,"width":56,"height":20,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text a1","originalText":"text a1","fontSize":16,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-a1","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-a2","type":"rectangle","x":328,"y":2.5,"width":124,"height":40,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#a5d8ff","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-a2-t","type":"text"},{"id":"pmm-R-a2-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"a2","map":"R","branch":"a"}}}},{"id":"pmm-R-a2-t","type":"text","x":342,"y":12.5,"width":96,"height":20,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text a2 (+1)","originalText":"text a2 (+1)","fontSize":16,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-a2","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-b","type":"rectangle","x":170,"y":60.5,"width":88,"height":45,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#b2f2bb","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-b-t","type":"text"},{"id":"pmm-R-b-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"b","map":"R","branch":"b"}}}},{"id":"pmm-R-b-t","type":"text","x":184,"y":70.5,"width":60,"height":25,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text b","originalText":"text b","fontSize":20,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-b","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-c","type":"rectangle","x":600,"y":200,"width":88,"height":45,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#ffc9c9","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-c-t","type":"text"},{"id":"pmm-R-c-e","type":"arrow"},{"id":"pmm-R-c1-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"c","map":"R","branch":"c","pinned":true}}}},{"id":"pmm-R-c-t","type":"text","x":614,"y":210,"width":60,"height":25,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text c","originalText":"text c","fontSize":20,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-c","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-c1","type":"rectangle","x":758,"y":202.5,"width":84,"height":40,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"#ffc9c9","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":[{"id":"pmm-R-c1-t","type":"text"},{"id":"pmm-R-c1-e","type":"arrow"}],"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"uid":"c1","map":"R","branch":"c"}}}},{"id":"pmm-R-c1-t","type":"text","x":772,"y":212.5,"width":56,"height":20,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":null,"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"text":"text c1","originalText":"text c1","fontSize":16,"fontFamily":5,"textAlign":"center","verticalAlign":"middle","containerId":"pmm-R-c1","autoResize":true,"lineHeight":1.25},{"id":"pmm-R-a-b","type":"rectangle","x":158,"y":-67.5,"width":306,"height":122,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent","fillStyle":"solid","strokeWidth":1,"strokeStyle":"dashed","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"index":null,"roundness":{"type":3},"seed":1,"version":1,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":3,"link":null,"locked":false,"customData":{"plexus":{"mm":{"boundary":"a","map":"R"}}}}]`);
+const TREE_0_11 = () => mk(["R", [["a", [["a1"], ["a2", [["a21"]], false]]], ["b"], ["c", [["c1"]]]]]);
+
+test("a map made by 0.11.0 reconciles to zero ops (fixture)", () => {
+  assert.equal(FIXTURE_0_11.length > 10, true);
+  assert.ok(FIXTURE_0_11.some((e) => e.id === boundaryId("R", "a")));
+  assert.ok(isEmptyOps(run(FIXTURE_0_11, TREE_0_11())));
+  assert.ok(isEmptyOps(run(FIXTURE_0_11, TREE_0_11(), { tagColors: new Map(), rootDefaults: { attrEdges: true } })), "rootDefaults never touch an existing root");
+  assert.equal(mmOf(get(FIXTURE_0_11, nodeId("R", "R"))).attrEdges, undefined);
+});
+
+const cs = (uid, kids, string) => [uid, kids, true, string];
+
+test("attribute carriers: children keep ids, the carrier is swept, labels are bound to the moved edges", () => {
+  const tree = mk(["R", [["a", [cs("c", [["x"], ["y"]], "Causes::"), ["z"]]], ["b"]]]);
+  const els = build(tree, [], { rootDefaults: { attrEdges: true } });
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).attrEdges, true);
+  assert.equal(get(els, nodeId("R", "c")), undefined, "carrier never drawn");
+  const ids = live(els).map((e) => e.id);
+  for (const u of ["a", "x", "y", "z", "b"]) assert.ok(ids.includes(nodeId("R", u)) && ids.includes(edgeId("R", u)) && ids.includes(textId("R", u)), u);
+  const ex = get(els, edgeId("R", "x"));
+  assert.equal(ex.startBinding.elementId, nodeId("R", "a"));
+  assert.deepEqual(mmOf(ex), { edge: ["a", "x"], via: "c", map: "R" });
+  assert.deepEqual(mmOf(get(els, edgeId("R", "z"))), { edge: ["a", "z"], map: "R" });
+  const lx = get(els, labelId("R", "x"));
+  assert.equal(lx.id, "pmm-R-x-e-t");
+  assert.equal(lx.containerId, edgeId("R", "x"));
+  assert.equal(lx.originalText, "Causes");
+  assert.deepEqual(mmOf(lx), { label: "x", map: "R" });
+  assert.deepEqual(ex.boundElements, [{ id: labelId("R", "x"), type: "text" }]);
+  assert.equal(get(els, labelId("R", "z")), undefined, "plain children get no label");
+  const r = arrowLabelRect(ex, lx.width, lx.height);
+  assert.ok(Math.abs(r.x - lx.x) < 1e-9 && Math.abs(r.y - lx.y) < 1e-9);
+  assert.ok(isEmptyOps(run(els, tree)));
+  // the gap is widened so the label fits
+  const a = get(els, nodeId("R", "a"));
+  const x = get(els, nodeId("R", "x"));
+  assert.ok(x.x - (a.x + a.width) >= Math.max(LEVEL_GAP, lx.width + 24) - 1e-9);
+  // depth-1 nodes appear in the root's edges after splicing
+  const flat = mk(["R", [cs("c", [["x"], ["y"]], "Causes::")]]);
+  const fe = build(flat, [], { rootDefaults: { attrEdges: true } });
+  assert.deepEqual(get(fe, nodeId("R", "R")).boundElements.map((b) => b.id), [textId("R", "R"), edgeId("R", "x"), edgeId("R", "y")]);
+});
+
+test("attribute carriers: toggle off restores the carrier without adds; toggle on sweeps it again", () => {
+  const tree = mk(["R", [["a", [cs("c", [["x"]], "Causes::")]]]]);
+  let els = build(tree, [], { rootDefaults: { attrEdges: true } });
+  const n = els.length;
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { attrEdges: false }) : e));
+  const off = run(els, tree);
+  assert.ok(off.add.some((e) => e.id === nodeId("R", "c")), "the carrier node is new (never drawn before)");
+  els = applyOps(els, off);
+  assert.ok(get(els, nodeId("R", "c")) && !get(els, nodeId("R", "c")).isDeleted);
+  assert.equal(get(els, labelId("R", "x")).isDeleted, true, "label swept");
+  assert.equal(get(els, edgeId("R", "x")).startBinding.elementId, nodeId("R", "c"));
+  assert.equal(mmOf(get(els, edgeId("R", "x"))).via, undefined);
+  assert.ok(isEmptyOps(run(els, tree)));
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { attrEdges: true }) : e));
+  const on = run(els, tree);
+  assert.ok(on.remove.includes(nodeId("R", "c")) && on.remove.includes(textId("R", "c")) && on.remove.includes(edgeId("R", "c")));
+  assert.equal(on.add.length, 0, "the label is un-deleted, not re-added");
+  els = applyOps(els, on);
+  assert.equal(get(els, labelId("R", "x")).isDeleted, false);
+  assert.equal(get(els, edgeId("R", "x")).startBinding.elementId, nodeId("R", "a"));
+  assert.ok(isEmptyOps(run(els, tree)));
+  assert.ok(els.length >= n);
+});
+
+test("attribute edges are off for maps without the flag, and rootDefaults apply only at creation", () => {
+  const tree = mk(["R", [["a", [cs("c", [["x"]], "Causes::")]]]]);
+  const els = build(tree);
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).attrEdges, undefined);
+  assert.ok(get(els, nodeId("R", "c")), "carrier drawn as an ordinary node");
+  assert.equal(get(els, labelId("R", "x")), undefined);
+  assert.ok(isEmptyOps(run(els, tree, { rootDefaults: { attrEdges: true } })));
+});
+
+test("a user's own edge label is kept and gets no Plexus label", () => {
+  const tree = mk(["R", [["a", [cs("c", [["x"]], "Causes::")]]]]);
+  let els = build(tree, [], { rootDefaults: { attrEdges: true } });
+  const lbl = get(els, labelId("R", "x"));
+  els = els.map((e) => (e.id === lbl.id ? { ...e, isDeleted: true } : e));
+  els = els.map((e) => (e.id === edgeId("R", "x") ? { ...e, boundElements: [{ id: "usertext", type: "text" }] } : e));
+  els = [...els, { ...lbl, id: "usertext", customData: undefined, containerId: edgeId("R", "x"), isDeleted: false }];
+  const ops = run(els, tree);
+  assert.ok(!ops.add.some((e) => e.id === labelId("R", "x")));
+  const out = applyOps(els, ops);
+  assert.deepEqual(get(out, edgeId("R", "x")).boundElements, [{ id: "usertext", type: "text" }]);
+  assert.ok(isEmptyOps(run(out, tree)));
+});
+
+test("a native edit of a label is reverted on the next pass", () => {
+  const tree = mk(["R", [cs("c", [["x"]], "Causes::")]]);
+  let els = build(tree, [], { rootDefaults: { attrEdges: true } });
+  els = els.map((e) => (e.id === labelId("R", "x") ? { ...e, text: "typed", originalText: "typed" } : e));
+  els = applyOps(els, run(els, tree));
+  assert.equal(get(els, labelId("R", "x")).originalText, "Causes");
+});
+
+test("task nodes: glyph in the text, DONE opacity 50 with marker, revert only while still 50", () => {
+  const T = (state) => mk(["R", [["a", [], true, `{{[[${state}]]}} do it`], ["b"]]]);
+  let els = build(T("TODO"));
+  assert.equal(get(els, textId("R", "a")).originalText, "☐ do it");
+  assert.equal(get(els, nodeId("R", "a")).opacity, 100);
+  els = applyOps(els, run(els, T("DONE")));
+  assert.equal(get(els, textId("R", "a")).originalText, "☑ do it");
+  assert.equal(get(els, nodeId("R", "a")).opacity, 50);
+  assert.equal(get(els, textId("R", "a")).opacity, 50);
+  assert.equal(mmOf(get(els, nodeId("R", "a"))).done, true);
+  assert.ok(isEmptyOps(run(els, T("DONE"))));
+  const back = applyOps(els, run(els, T("TODO")));
+  assert.equal(get(back, nodeId("R", "a")).opacity, 100);
+  assert.equal(get(back, textId("R", "a")).opacity, 100);
+  assert.equal(mmOf(get(back, nodeId("R", "a"))).done, undefined);
+  assert.ok(isEmptyOps(run(back, T("TODO"))));
+  const custom = els.map((e) => (e.id === nodeId("R", "a") ? { ...e, opacity: 30 } : e));
+  const kept = applyOps(custom, run(custom, T("TODO")));
+  assert.equal(get(kept, nodeId("R", "a")).opacity, 30, "a native opacity survives");
+  // a new DONE node starts at 50
+  const born = build(T("DONE"));
+  assert.equal(get(born, nodeId("R", "a")).opacity, 50);
+  assert.equal(mmOf(get(born, nodeId("R", "a"))).done, true);
+});
+
+test("task text shows its glyph through planMap", () => {
+  const plan = planMap({ elements: [], tree: mk(["R", [["a", [], true, "{{[[TODO]]}} x"]]]), sizes });
+  assert.equal(plan.info.get("a").text, "☐ x");
+});
+
+test("tag colours: set on create, repaint only on a tag event and only a Plexus fill; native recolour survives", () => {
+  const tags = new Map([["urgent", "#ffc9c9"], ["ok", "#b2f2bb"]]);
+  const T = (s) => mk(["R", [["a", [], true, s], ["b"]]]);
+  let els = build(T("x #urgent"), [], { tagColors: tags });
+  assert.equal(get(els, nodeId("R", "a")).backgroundColor, "#ffc9c9");
+  assert.equal(mmOf(get(els, nodeId("R", "a"))).tag, "#ffc9c9");
+  assert.ok(isEmptyOps(run(els, T("x #urgent"), { tagColors: tags })));
+  // tag changes: Plexus fill follows
+  let out = applyOps(els, run(els, T("x #ok"), { tagColors: tags }));
+  assert.equal(get(out, nodeId("R", "a")).backgroundColor, "#b2f2bb");
+  assert.ok(isEmptyOps(run(out, T("x #ok"), { tagColors: tags })));
+  // tag removed: back to the branch colour
+  out = applyOps(out, run(out, T("x"), { tagColors: tags }));
+  assert.equal(get(out, nodeId("R", "a")).backgroundColor, BRANCH_COLORS[0]);
+  assert.equal(mmOf(get(out, nodeId("R", "a"))).tag, undefined);
+  // native recolour survives a tag change but the marker still updates
+  const native = els.map((e) => (e.id === nodeId("R", "a") ? { ...e, backgroundColor: "#000000" } : e));
+  const kept = applyOps(native, run(native, T("x #ok"), { tagColors: tags }));
+  assert.equal(get(kept, nodeId("R", "a")).backgroundColor, "#000000");
+  assert.equal(mmOf(get(kept, nodeId("R", "a"))).tag, "#b2f2bb");
+  assert.ok(isEmptyOps(run(kept, T("x #ok"), { tagColors: tags })));
+  // a colour map change alone repaints the Plexus fill
+  const remap = new Map([["urgent", "#111111"]]);
+  const re = applyOps(els, run(els, T("x #urgent"), { tagColors: remap }));
+  assert.equal(get(re, nodeId("R", "a")).backgroundColor, "#111111");
+  // the DONE macro counts as the tag "done"
+  const D = mk(["R", [["a", [], true, "{{[[DONE]]}} y"]]]);
+  const de = build(D, [], { tagColors: new Map([["done", "#b2f2bb"]]) });
+  assert.equal(get(de, nodeId("R", "a")).backgroundColor, "#b2f2bb");
+});
+
+test("cause map: star on the effect, caused by labels, palette by depth, evidence dash, zero-op", () => {
+  const tree = mk(["R", [["a", [["a1"], ["a2", [], true, "seen #evidence"]]], ["b"]]]);
+  const els = build(tree, [], { layout: "cause" });
+  const root = get(els, nodeId("R", "R"));
+  assert.equal(get(els, textId("R", "R")).originalText, "★ text R");
+  assert.equal(root.backgroundColor, CAUSE_FILLS[0]);
+  assert.equal(get(els, nodeId("R", "a")).backgroundColor, CAUSE_FILLS[1]);
+  assert.equal(get(els, nodeId("R", "a1")).backgroundColor, CAUSE_FILLS[2]);
+  assert.equal(get(els, nodeId("R", "b")).backgroundColor, CAUSE_FILLS[1]);
+  assert.equal(mmOf(root).scheme, "cause");
+  assert.equal(mmOf(root).layout, "cause");
+  assert.equal(get(els, nodeId("R", "a2")).strokeStyle, "dashed");
+  assert.equal(mmOf(get(els, nodeId("R", "a2"))).dash, true);
+  assert.equal(get(els, nodeId("R", "a1")).strokeStyle, "solid");
+  for (const u of ["a", "a1", "a2", "b"]) assert.equal(get(els, labelId("R", u)).originalText, "caused by", u);
+  assert.equal(get(els, labelId("R", "R")), undefined);
+  // left geometry: children left of the root
+  assert.ok(get(els, nodeId("R", "a")).x + get(els, nodeId("R", "a")).width < root.x);
+  const e = get(els, edgeId("R", "a"));
+  assert.equal(e.x, root.x);
+  assert.ok(isEmptyOps(run(els, tree, { layout: "cause" })));
+  // label wrap follows the Excalidraw formula
+  const lbl = get(els, labelId("R", "a"));
+  assert.ok(lbl.width <= arrowLabelWrapWidth(Math.abs(e.points[1][0]), 16) + 1e-9);
+  assert.equal(lbl.fontSize, 16);
+});
+
+test("cause map: an attribute label wins over caused by", () => {
+  const tree = mk(["R", [cs("c", [["x"]], "Because::"), ["y"]]]);
+  const els = build(tree, [], { layout: "cause", rootDefaults: { attrEdges: true } });
+  assert.equal(get(els, labelId("R", "x")).originalText, "Because");
+  assert.equal(get(els, labelId("R", "y")).originalText, "caused by");
+});
+
+test("switching cause <-> right repaints only what Plexus coloured; a second pass is empty", () => {
+  const tree = mk(["R", [["a", [["a1"]]], ["b"]]]);
+  let els = build(tree, [], { layout: "right" });
+  els = els.map((e) => (e.id === nodeId("R", "a1") ? { ...e, backgroundColor: "#000000" } : e));
+  const rootBefore = get(els, nodeId("R", "R"));
+  els = els.map((e) => (e === rootBefore ? patchMarker(e, { layout: "cause" }) : e));
+  els = applyOps(els, run(els, tree));
+  assert.equal(get(els, nodeId("R", "R")).backgroundColor, CAUSE_FILLS[0]);
+  assert.equal(get(els, nodeId("R", "a")).backgroundColor, CAUSE_FILLS[1]);
+  assert.equal(get(els, nodeId("R", "a1")).backgroundColor, "#000000", "native recolour survives");
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).scheme, "cause");
+  assert.ok(isEmptyOps(run(els, tree)));
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "right" }) : e));
+  els = applyOps(els, run(els, tree));
+  assert.equal(get(els, nodeId("R", "R")).backgroundColor, ROOT_COLOR);
+  assert.equal(get(els, nodeId("R", "a")).backgroundColor, BRANCH_COLORS[0]);
+  assert.equal(get(els, nodeId("R", "b")).backgroundColor, BRANCH_COLORS[1]);
+  assert.equal(get(els, nodeId("R", "a1")).backgroundColor, "#000000");
+  assert.equal(mmOf(get(els, nodeId("R", "R"))).scheme, undefined);
+  assert.equal(get(els, textId("R", "R")).originalText, "text R");
+  assert.equal(get(els, labelId("R", "a")).isDeleted, true);
+  assert.ok(isEmptyOps(run(els, tree)));
+});
+
+test("evidence dash reverts when the tag or the cause layout goes away, only while still dashed", () => {
+  const T = (s) => mk(["R", [["a", [], true, s]]]);
+  let els = build(T("x #[[Evidence]]"), [], { layout: "cause" });
+  assert.equal(get(els, nodeId("R", "a")).strokeStyle, "dashed");
+  const off = applyOps(els, run(els, T("x")));
+  assert.equal(get(off, nodeId("R", "a")).strokeStyle, "solid");
+  assert.ok(isEmptyOps(run(off, T("x"))));
+  const native = els.map((e) => (e.id === nodeId("R", "a") ? { ...e, strokeStyle: "dotted" } : e));
+  assert.equal(get(applyOps(native, run(native, T("x"))), nodeId("R", "a")).strokeStyle, "dotted");
+  // evidence is a cause-map feature
+  assert.equal(get(build(T("x #evidence")), nodeId("R", "a")).strokeStyle, "solid");
+  assert.equal(get(build(T("x #evidenceX"), [], { layout: "cause" }), nodeId("R", "a")).strokeStyle, "solid");
+});
+
+test("fishbone: head at the anchor, spine, bones alternate, level-1 edges start unbound on the spine", () => {
+  const tree = mk(["R", [["a", [["a1"]]], ["b"], ["c"], ["d"]]]);
+  let els = build(tree, [], { layout: "fishbone", rootPos: { x: 900, y: 400 } });
+  const root = get(els, nodeId("R", "R"));
+  assert.deepEqual([root.x, root.y], [900, 400]);
+  const spine = get(els, spineId("R"));
+  assert.equal(spine.type, "line");
+  assert.equal(spine.id, "pmm-R-R-s");
+  assert.deepEqual(mmOf(spine), { spine: "R", map: "R" });
+  assert.equal(spine.startBinding, null);
+  assert.equal(spine.y, root.y + root.height / 2);
+  assert.equal(spine.x + spine.points[1][0], root.x);
+  assert.equal(spine.points[1][1], 0);
+  const cy = (u) => get(els, nodeId("R", u)).y + get(els, nodeId("R", u)).height / 2;
+  assert.ok(cy("a") < spine.y && cy("b") > spine.y && cy("c") < spine.y && cy("d") > spine.y);
+  const ea = get(els, edgeId("R", "a"));
+  assert.equal(ea.startBinding, null);
+  assert.equal(ea.y, spine.y);
+  assert.ok(ea.x >= spine.x && ea.x <= root.x);
+  assert.equal(ea.endBinding.elementId, nodeId("R", "a"));
+  assert.equal(get(els, edgeId("R", "a1")).startBinding.elementId, nodeId("R", "a"), "ribs bind to their bone");
+  assert.deepEqual(root.boundElements.map((b) => b.id), [textId("R", "R")]);
+  assert.equal(get(els, labelId("R", "a")).originalText, "caused by");
+  assert.ok(isEmptyOps(run(els, tree, { layout: "fishbone" })));
+  // leaving fishbone: bindings and spine go back to the normal rule
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "cause" }) : e));
+  els = applyOps(els, run(els, tree));
+  assert.equal(get(els, spineId("R")).isDeleted, true);
+  assert.equal(get(els, edgeId("R", "a")).startBinding.elementId, nodeId("R", "R"));
+  assert.ok(get(els, nodeId("R", "R")).boundElements.some((b) => b.id === edgeId("R", "a")));
+  assert.ok(isEmptyOps(run(els, tree)));
+  els = els.map((e) => (e.id === nodeId("R", "R") ? patchMarker(e, { layout: "fishbone" }) : e));
+  els = applyOps(els, run(els, tree));
+  assert.equal(get(els, spineId("R")).isDeleted, false);
+  assert.equal(get(els, edgeId("R", "a")).startBinding, null);
+  assert.ok(isEmptyOps(run(els, tree)));
+});
+
+test("copy rule covers labels and the spine: copies lose the marker and are never deleted", () => {
+  const tree = mk(["R", [["a"], ["b"]]]);
+  let els = build(tree, [], { layout: "fishbone" });
+  const lbl = get(els, labelId("R", "a"));
+  const sp = get(els, spineId("R"));
+  els = [...els, { ...lbl, id: "lblcopy" }, { ...sp, id: "spinecopy" }];
+  const out = applyOps(els, run(els, tree, { layout: "fishbone" }));
+  assert.equal(mmOf(get(out, "lblcopy")), undefined);
+  assert.equal(mmOf(get(out, "spinecopy")), undefined);
+  assert.equal(get(out, "lblcopy").isDeleted, false);
+  assert.ok(isEmptyOps(run(out, tree, { layout: "fishbone" })));
+});
+
+test("planMap exposes the drawn tree and the raw tree stays untouched", () => {
+  const tree = mk(["R", [["a", [cs("c", [["x"]], "K::")]]]]);
+  const snap = JSON.stringify(tree);
+  const plan = planMap({ elements: [], tree, sizes, rootDefaults: { attrEdges: true } });
+  assert.equal(JSON.stringify(tree), snap);
+  assert.deepEqual(plan.nodes.map((v) => v.node.uid), ["R", "a", "x"]);
+  assert.equal(plan.vtree.children[0].children[0].via, "c");
+  assert.deepEqual(visibleNodes(visualTree(tree, { attrEdges: true })).map((v) => v.node.uid), ["R", "a", "x"]);
+  assert.ok(plan.positions.x);
 });

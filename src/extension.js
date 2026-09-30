@@ -19,6 +19,10 @@ import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublic
 import { createMindMap } from "./view/mindmap.js";
 import { createMmWriter } from "./host/mmwrites.js";
 import { createWriteGuard } from "./host/guard.js";
+import { createSnapshotScheduler, createSnapshotStore, planRestore } from "./host/snapshots.js";
+import { openRestoreDialog } from "./view/restore-dialog.js";
+import { openChartDialog } from "./view/chart-dialog.js";
+import { createOutlineActions } from "./actions-outline.js";
 import * as camera from "./host/camera.js";
 import { createRegionsLayer } from "./view/regions-layer.js";
 import { installRegionLanding } from "./view/landing.js";
@@ -104,6 +108,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let toggleLayer = null;
     let backCommand = null;
     let showDockParent = null;
+    let tools = null;
     let mountedApp = null;
     const hotkeyHandlers = {};
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
@@ -167,9 +172,24 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         },
       });
       lifecycle.add(() => guard.dispose());
-      const scenes = createSceneRegistry({ native, doc, guard });
-      lifecycle.add(() => scenes.dispose());
+      const measurer = createMeasurer({ doc });
+      // The snapshot store is created before the unmount lifecycle entry, so its dispose runs after the final unmount put.
+      const snapshotStore = createSnapshotStore({
+        idb: doc.defaultView?.indexedDB ?? globalThis.indexedDB,
+        keyRange: doc.defaultView?.IDBKeyRange ?? globalThis.IDBKeyRange,
+        graphName: host.graphName(),
+        isEncrypted: host.isEncrypted(),
+      });
+      lifecycle.add(() => snapshotStore.dispose());
       let mounted = null;
+      const scenes = createSceneRegistry({
+        native,
+        doc,
+        guard,
+        measure: measurer.measure,
+        beforeBulk: (app, uid, label) => { if (mounted?.app === app && mounted.uid === uid) mounted.scheduler?.snapshotNow(label); },
+      });
+      lifecycle.add(() => scenes.dispose());
       mountedApp = () => mounted?.app ?? null;
       let layerOn = false;
       const toggleRegionsLayer = () => {
@@ -230,8 +250,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const presenter = createPresenter({ doc, api, host });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
-      const measurer = createMeasurer({ doc });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, guardedWrite: guard.guardedWrite, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, guardedWrite: guard.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
@@ -350,7 +369,108 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         mounted.noteTool.arm();
       };
 
-      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
+      // Phase 12 dialogs and their commands. Each handle is closed on editor unmount and on unload.
+      const mac = /mac|iphone|ipad/i.test(String(doc.defaultView?.navigator?.platform ?? ""));
+      const outline = createOutlineActions({ host, native, api, toaster, clipboard: globalThis.navigator?.clipboard, doc });
+      lifecycle.add(() => outline.dispose());
+      let restoreHandle = null;
+      let chartHandle = null;
+      const closeDialogs = () => {
+        for (const handle of [restoreHandle, chartHandle]) {
+          try { handle?.close?.(); } catch (error) { console.warn("[plexus] dialog close failed", error); }
+        }
+        restoreHandle = null;
+        chartHandle = null;
+        try { outline.closePreview(); } catch (error) { console.warn("[plexus] outline preview close failed", error); }
+      };
+      lifecycle.add(closeDialogs);
+      const openEditor = () => {
+        const editor = native.activeEditor(doc);
+        if (!editor?.drawingUid) { toaster.show("Open a drawing full-screen first", { kind: "error" }); return null; }
+        return editor;
+      };
+      const restoreEntry = async (editor, entry) => {
+        const { app, drawingUid } = editor;
+        const live = () => native.activeEditor(doc)?.app === app && native.activeEditor(doc)?.drawingUid === drawingUid;
+        const st = app.state ?? {};
+        if (st.editingTextElement || st.newElement || st.cursorButton === "down") return void toaster.show("Finish the current edit first", { kind: "error" });
+        const scheduler = mounted?.app === app ? mounted.scheduler : null;
+        if (entry.kind === "session") {
+          scheduler?.snapshotNow("before restore");
+          guard.restoreTo(app, drawingUid, entry.id !== undefined ? { id: entry.id } : entry.index);
+          return;
+        }
+        const snapshot = await snapshotStore.get(entry.key);
+        if (!snapshot) return void toaster.show("That version could not be read", { kind: "error" });
+        if (!live()) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        scheduler?.snapshotNow("before restore");
+        const plan = planRestore({ current: app.getSceneElementsIncludingDeleted?.() ?? [], snapshot, files: app.files ?? app.getFiles?.() });
+        const ok = guard.guardedWrite(app, {
+          drawingUid, label: "Restore", next: plan.next, captureUpdate: "IMMEDIATELY", force: true,
+          appState: { selectedElementIds: {}, selectedGroupIds: {} },
+        });
+        if (!ok) return void toaster.show("Could not restore the drawing", { kind: "error" });
+        toaster.show(`Restored \u00b7 ${mac ? "Cmd" : "Ctrl"}+Z brings the current version back${plan.missingFiles ? ` \u00b7 ${plan.missingFiles} images missing` : ""}`);
+      };
+      const restoreDialog = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        closeDialogs();
+        restoreHandle = openRestoreDialog({
+          doc, zIndex: zIndexFor(editor.el), mac,
+          session: guard.list(editor.drawingUid),
+          loadSaved: () => (snapshotStore.isEnabled() ? snapshotStore.list(editor.drawingUid) : Promise.resolve(host.isEncrypted() ? { encrypted: true } : [])),
+          onRestore: (entry) => restoreEntry(editor, entry).catch((error) => {
+            console.warn("[plexus] restore failed", error);
+            toaster.show("Could not restore the drawing", { kind: "error" });
+          }),
+          onClose: () => { restoreHandle = null; refocus(editor.el); },
+        });
+        return restoreHandle;
+      };
+      const chartDialog = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        closeDialogs();
+        const { drawingUid } = editor;
+        chartHandle = openChartDialog({
+          doc, zIndex: zIndexFor(editor.el),
+          onInsert: ({ text, layout }) => {
+            const scene = scenes.sceneOf(drawingUid);
+            if (!scene) throw new Error("Drawing is not open");
+            const out = scene.addChart(text, { layout });
+            toaster.show(`Chart inserted \u00b7 ${out.ids.length} elements${out.skipped ? ` \u00b7 ${out.skipped} skipped` : ""}`);
+          },
+          onClose: () => { chartHandle = null; refocus(editor.el); },
+        });
+        return chartHandle;
+      };
+      const outlineTarget = (ctx) => native.activeEditor(doc)?.drawingUid ?? ctx?.focusedUid ?? null;
+      const withTarget = (ctx, fn) => {
+        const uid = outlineTarget(ctx);
+        if (!uid) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return Promise.resolve(fn(uid)).catch((error) => console.warn("[plexus] outline failed", error));
+      };
+      const mmEditor = () => {
+        const editor = openEditor();
+        if (!editor) return null;
+        if (!mindmap.mapOptions(editor.app)) { toaster.show("Select a mind-map node first", { kind: "error" }); return null; }
+        return editor;
+      };
+      tools = {
+        restore: restoreDialog,
+        chart: chartDialog,
+        outline: (ctx) => withTarget(ctx, (uid) => outline.drawingToOutline(uid, { selection: !!native.activeEditor(doc) && native.selectedElementIds(native.activeEditor(doc).app).length > 0 })),
+        copyMarkdown: (ctx) => withTarget(ctx, (uid) => outline.copyMarkdown(uid, { selection: !!native.activeEditor(doc) && native.selectedElementIds(native.activeEditor(doc).app).length > 0 })),
+        setLayout: (layout) => { const editor = mmEditor(); return editor ? mindmap.setLayout(editor.app, layout) : false; },
+        toggleAttrEdges: () => {
+          const editor = mmEditor();
+          if (!editor) return false;
+          return mindmap.setAttrEdges(editor.app, !mindmap.mapOptions(editor.app).attrEdges);
+        },
+      };
+
+      const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, measure: measurer.measure, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
 
@@ -468,6 +588,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const unmountEditor = ({ unloading = false } = {}) => {
         const current = mounted;
         mounted = null;
+        closeDialogs();
         if (!current) return Promise.resolve();
         if (Date.now() - navigatedAt <= 2000) clearLinkTooltip(doc);
         const pending = [];
@@ -548,6 +669,11 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(() => pickerHandle?.close?.());
           mounted.disposers.push(() => history.clear());
           let backlinks = null;
+          if (mountUid && snapshotStore.isEnabled()) {
+            const scheduler = createSnapshotScheduler({ store: snapshotStore, app, drawingUid: mountUid });
+            mounted.scheduler = scheduler;
+            mounted.disposers.push(() => scheduler.dispose({ final: true }));
+          }
           if (mountUid) {
             const layer = createRegionsLayer({
               doc, app, containerEl: el, host, drawingUid: mountUid, native,
@@ -614,7 +740,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(installCanvasMenu({
             doc, app, containerEl: el,
             getItems: (point) => plexusCanvasItems({
-              app, native, actions, openSettings, drawingUid: mountUid, guard, point,
+              app, native, actions, openSettings, drawingUid: mountUid, guard, point, tools, mindmap,
               openPicker: (p) => openPicker(p),
               noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
               toScene: (p) => sceneAt(app, p),
@@ -723,6 +849,14 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "auditPage", label: "Audit regions on this page", run: guarded("auditPage", () => audit && (() => audit("page"))) },
       { id: "auditGraph", label: "Audit regions in graph", run: guarded("auditGraph", () => audit && (() => audit("graph"))) },
       { id: "restore", label: "Restore before last Plexus change", run: guarded("restore", () => actions && (() => actions.restoreBeforeLastPlexusChange())) },
+      { id: "restoreVersion", label: "Restore an earlier version\u2026", run: () => (tools ? tools.restore() : unavailable("restoreVersion")) },
+      { id: "chartFromJson", label: "Cause-and-effect from JSON\u2026", run: () => (tools ? tools.chart() : unavailable("chartFromJson")) },
+      { id: "drawingToOutline", label: "Drawing to outline\u2026", run: (ctx) => (tools ? tools.outline(ctx) : unavailable("drawingToOutline")) },
+      { id: "copyMarkdown", label: "Copy as Roam markdown", run: (ctx) => (tools ? tools.copyMarkdown(ctx) : unavailable("copyMarkdown")) },
+      { id: "mmLayoutRight", label: "Mind map layout: Right", run: () => (tools ? tools.setLayout("right") : unavailable("mmLayout")) },
+      { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => (tools ? tools.setLayout("cause") : unavailable("mmLayout")) },
+      { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => (tools ? tools.setLayout("fishbone") : unavailable("mmLayout")) },
+      { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => (tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges")) },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },

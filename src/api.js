@@ -1,11 +1,14 @@
 import { directGuard } from "./host/guard.js";
 import { drawingTitleOf, imageAltAt, isImageKind, regionLabel } from "./model/label.js";
+import { createBuilder } from "./model/build.js";
+import { chartToElements } from "./model/ce.js";
 import { parseRegion } from "./model/region.js";
-import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport } from "./model/scene.js";
+import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport, viewportToScene } from "./model/scene.js";
 
-export const API_VERSION = 4;
+export const API_VERSION = 5;
 
 const GONE = "Scene is no longer open";
+const NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
 const FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
 const DRAWING_RE = /^\s*\{\{(\[\[excalidraw\]\]|excalidraw)\}\}/;
 const isPlain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
@@ -22,8 +25,30 @@ function invisible(el) {
 
 // Per-editor scene objects for window.RoamPlexus.scene(uid). native supplies activeEditor, addViaPaste,
 // waitNotLoading, captureSelectionSvg and zoomTo. guard supplies guardedWrite (the shrink guard; default: a direct write).
-export function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard } = {}) {
+// beforeBulk(app, uid, label) runs before every bulk write (builder commit, addChart); setBeforeBulk rebinds it later.
+// measure(text, fontSize) sizes text for builders and charts (Excalifont only; other families are estimated).
+export function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard, beforeBulk: initialBeforeBulk, measure } = {}) {
   let disposed = false;
+  let beforeBulk = typeof initialBeforeBulk === "function" ? initialBeforeBulk : null;
+  const runBeforeBulk = (app, uid, label) => {
+    try { beforeBulk?.(app, uid, label); } catch (error) { console.warn("[plexus] beforeBulk failed", error); }
+  };
+  // One guarded, single-undo-step append of new elements (a builder commit or a chart). Never goes through paste.
+  function commitNew(app, uid, elements, label) {
+    const existing = new Set((app.getSceneElementsIncludingDeleted?.() || []).map((e) => e.id));
+    for (const el of elements) if (existing.has(el.id)) throw new Error(`Element ${el.id} already exists`);
+    runBeforeBulk(app, uid, `before ${label}`);
+    const selectedElementIds = {};
+    for (const el of elements) if (!el.containerId) selectedElementIds[el.id] = true;
+    const ok = writeGuard.guardedWrite(app, {
+      drawingUid: uid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => [...current, ...elements],
+      appState: { selectedElementIds, selectedGroupIds: {} },
+    });
+    if (!ok) throw new Error(`Not applied: ${label} was refused`);
+  }
   const scenes = new WeakMap();
   const subs = new Map();
   const disposeHooks = new Set();
@@ -126,6 +151,16 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
         if (!applied) throw new Error(`Not applied: would remove ${n} of ${els.filter((e) => !e.isDeleted).length}`);
         return hit.size;
       },
+      addChart(json, { layout = "tree", at } = {}) {
+        guard();
+        const st = app.state || {};
+        const centre = at && Number.isFinite(at.x) && Number.isFinite(at.y)
+          ? { x: at.x, y: at.y }
+          : viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+        const chart = chartToElements(json, { layout, origin: centre, measure });
+        commitNew(app, uid, chart.elements, "Chart");
+        return { chart: chart.chart, ids: chart.ids, skipped: chart.skipped };
+      },
       select(ids) {
         guard();
         const selection = {};
@@ -195,6 +230,16 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
       const ed = native.activeEditor(doc);
       return ed?.app && ed.drawingUid === uid ? registry.sceneFor(ed.app, uid) : null;
     },
+    measure,
+    setBeforeBulk(fn) { beforeBulk = typeof fn === "function" ? fn : null; },
+    beforeBulk(app, uid, label) { runBeforeBulk(app, uid, label); },
+    // Appends builder elements to the open drawing (of uid, when given). Refuses when it is not open; never opens one.
+    commit(elements, { uid, label = "Build" } = {}) {
+      if (disposed) throw new Error(GONE);
+      const ed = native.activeEditor(doc);
+      if (!ed?.app || (uid && ed.drawingUid !== uid)) throw new Error(NOT_OPEN);
+      commitNew(ed.app, ed.drawingUid, elements, label);
+    },
     activeApp() { return native.activeEditor(doc)?.app ?? null; },
     activeUid() { return native.activeEditor(doc)?.drawingUid ?? null; },
     ready(app, timeoutMs) { return native.waitNotLoading(app, timeoutMs, { doc }); },
@@ -231,7 +276,7 @@ function unsubscribe(emitter, type, cb) {
 
 // Wraps host + actions into the frozen window.RoamPlexus object. Nothing here throws into a caller's event loop
 // for listener errors; API calls themselves reject/throw normally.
-export function createPublicApi({ host, actions, emitter, version, scenes, openDrawing } = {}) {
+export function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure } = {}) {
   const listeners = new Map();
   const opening = new Map();
 
@@ -272,6 +317,25 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
     },
     drawingsOn(pageUid) { return host.drawingsOn(pageUid); },
     scene(uid) { return scenes?.sceneOf?.(uid) ?? null; },
+    build({ style } = {}) {
+      const builder = createBuilder({ style, measure: measure ?? scenes?.measure });
+      let committed = false;
+      const pub = {};
+      for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(builder))) {
+        if (key !== "seal") Object.defineProperty(pub, key, { ...desc, enumerable: true });
+      }
+      pub.commit = (uid) => {
+        if (committed) throw new Error("Already committed");
+        if (!scenes?.commit) throw new Error("Scenes unavailable");
+        const elements = builder.elements();
+        if (!elements.length) throw new Error("Nothing to commit");
+        scenes.commit(elements, { uid, label: "Build" });
+        committed = true;
+        builder.seal();
+        return builder.ids();
+      };
+      return Object.freeze(pub);
+    },
     whenOpen(uid, { timeoutMs = 10000, sidebar = false } = {}) {
       if (opening.has(uid)) return opening.get(uid).promise;
       if (opening.size) return Promise.reject(new Error(`Busy opening ${[...opening.keys()][0]}`));

@@ -74,7 +74,7 @@ async function loadWithCommands(api, callbacks) {
   return { cleanup, openList, captured: () => captured };
 }
 
-async function loadWithFakeRoam({ isEncrypted }) {
+async function loadWithFakeRoam({ isEncrypted, rows = [] }) {
   const opens = [];
   const removed = [];
   const api = fakeExtensionApi();
@@ -94,7 +94,9 @@ async function loadWithFakeRoam({ isEncrypted }) {
   globalThis.indexedDB = { open: () => { opens.push(1); const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
   globalThis.MutationObserver = class { observe() {} disconnect() {} };
   const { openList } = await loadWithCommands(api, callbacks);
-  await openList().get("Clear crop cache")();
+  const list = openList();
+  await list.get("Clear crop cache")();
+  for (const label of rows) await list.get(label)();
   await extension.onunload();
   return { opens };
 }
@@ -107,6 +109,20 @@ test("wired runtime never opens IndexedDB for an encrypted graph", async () => {
   try {
     const { opens } = await loadWithFakeRoam({ isEncrypted: true });
     assert.equal(opens.length, 0);
+  } finally {
+    dropFakeRoam();
+  }
+});
+
+test("wired runtime: the P12 rows with no editor open do nothing, leave the snapshot store closed and unload cleanly", async () => {
+  try {
+    const base = await loadWithFakeRoam({ isEncrypted: false });
+    dropFakeRoam();
+    const { opens } = await loadWithFakeRoam({
+      isEncrypted: false,
+      rows: ["Restore an earlier version\u2026", "Cause-and-effect from JSON\u2026", "Mind map layout: Cause", "Mind map: attribute blocks as edges"],
+    });
+    assert.equal(opens.length, base.opens.length, "only the crop cache opens IndexedDB, not the snapshot store");
   } finally {
     dropFakeRoam();
   }
@@ -271,7 +287,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 30 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 38 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -292,7 +308,10 @@ test("the command list carries all 30 labels and hotkeys, and captures the focus
       "Embed page or block\u2026", "New note card", "Present open drawing", "Present from here", "Present this outline", "Print frames\u2026", "PNG per frame", "Make slide", "Back to previous view", "Toggle regions layer",
       "Toggle outline dock", "Outline dock: show parent",
       "Refresh crops for open drawing", "Clear crop cache", "Audit regions on this page", "Audit regions in graph",
-      "Restore before last Plexus change", "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)", "Region settings",
+      "Restore before last Plexus change",
+      "Restore an earlier version\u2026", "Cause-and-effect from JSON\u2026", "Drawing to outline\u2026", "Copy as Roam markdown",
+      "Mind map layout: Right", "Mind map layout: Cause", "Mind map layout: Fishbone", "Mind map: attribute blocks as edges",
+      "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)", "Region settings",
     ]);
     assert.deepEqual(Object.fromEntries(commands.filter((c) => c.hotkey).map((c) => [c.label, c.hotkey])), {
       "Create region from selection": "Shift+Alt+R",
@@ -306,5 +325,74 @@ test("the command list carries all 30 labels and hotkeys, and captures the focus
     await cleanup();
   } finally {
     if (saved === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved;
+  }
+});
+
+async function mountFakeEditor({ isEncrypted }) {
+  const subs = { count: 0 };
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...a) => warns.push(a.map(String).join(" "));
+  const api = fakeExtensionApi();
+  const app = {
+    state: { isLoading: false, selectedElementIds: {}, zoom: { value: 1 }, scrollX: 0, scrollY: 0, width: 800, height: 600, offsetLeft: 0, offsetTop: 0 },
+    actionManager: {},
+    files: {},
+    scene: { getSceneNonce: () => 1 },
+    getSceneElementsIncludingDeleted: () => [],
+    updateScene() {},
+    onChangeEmitter: { on: () => { subs.count += 1; return () => { subs.count -= 1; }; } },
+    onScrollChangeEmitter: { on: () => () => {} },
+    onPointerDownEmitter: { on: () => () => {} },
+    onPointerUpEmitter: { on: () => () => {} },
+  };
+  const outer = {
+    closest: () => null, classList: { contains: () => false, add() {}, remove() {} }, style: {},
+    addEventListener() {}, removeEventListener() {}, append() {}, appendChild() {}, setAttribute() {}, querySelector: () => null, querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+  };
+  const editorEl = {
+    __reactFiber$t: { stateNode: app },
+    isConnected: true,
+    closest: (sel) => (sel.includes("outer-container") && !sel.includes("plexus") ? outer : sel.includes("block-input-") ? { id: "block-input-abcdefghi" } : null),
+    addEventListener() {}, removeEventListener() {}, setAttribute() {}, focus() {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+  };
+  const fakeNode = () => ({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 30 }), querySelector: () => null, querySelectorAll: () => [], contains: () => false, style: {}, classList: { add() {}, remove() {} }, append() {}, appendChild() {}, remove() {}, addEventListener() {}, removeEventListener() {}, setAttribute() {} });
+  const body = { append() {}, appendChild() {}, querySelectorAll: (sel) => (String(sel).includes(".excalidraw-outer-container.full-screen .excalidraw") ? [editorEl] : []) };
+  globalThis.document = {
+    body,
+    defaultView: { MutationObserver: undefined, addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, getComputedStyle: () => ({ zIndex: "1000", getPropertyValue: () => "" }), requestAnimationFrame: (fn) => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout, innerWidth: 1000, innerHeight: 800 },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener() {}, removeEventListener() {},
+    createElement: fakeNode,
+  };
+  globalThis.roamAlphaAPI = { graph: { name: "g", isEncrypted }, util: { generateUID: () => "x" }, data: { pull: () => null }, ui: { components: {} } };
+  globalThis.indexedDB = { open: () => { const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
+  globalThis.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} };
+  try {
+    await extension.onload({ extensionAPI: api, extension: { version: "t" } });
+    await new Promise((r) => setTimeout(r, 20));
+    const during = subs.count;
+    await extension.onunload();
+    return { during, after: subs.count, warns };
+  } finally {
+    console.warn = origWarn;
+    delete globalThis.IDBKeyRange;
+  }
+}
+
+test("wired runtime with a mounted editor: a snapshot scheduler subscribes only on an unencrypted graph and unsubscribes on unload", async () => {
+  try {
+    const open = await mountFakeEditor({ isEncrypted: false });
+    dropFakeRoam();
+    const locked = await mountFakeEditor({ isEncrypted: true });
+    assert.ok(open.during > locked.during, `open ${open.during} locked ${locked.during} ${open.warns.join("|")}`);
+    assert.equal(open.after, 0);
+    assert.equal(locked.after, 0);
+  } finally {
+    dropFakeRoam();
   }
 });

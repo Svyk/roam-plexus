@@ -425,7 +425,7 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
 }
 
 // The canvas-menu items, built fresh on every right-click so each `enabled` reads the current selection.
-export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
+export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, tools, mindmap, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
   const kbd = (id) => hotkeyFor(id, { mac });
   const can = (fn) => { try { return !!fn(); } catch { return false; } };
   const call = (name, fn) => () => {
@@ -447,6 +447,8 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
   const hasSnapshot = () => (actions.hasSnapshot ?? guard?.hasSnapshot)?.(drawingUid);
   const pending = () => { try { return actions.pendingRegionUpdate?.() ?? null; } catch { return null; } };
   const pend = pending();
+  const mm = (() => { try { return mindmap?.mapOptions?.(app) ?? null; } catch { return null; } })();
+  const layoutItem = (layout, name) => ({ id: `mm-layout-${layout}`, label: `Plexus: Mind map layout: ${name}${mm?.layout === layout ? " (current)" : ""}`, enabled: !!mm, run: call(`mm-layout-${layout}`, () => mindmap.setLayout(app, layout)) });
   const placing = (() => { try { return actions.pendingPlace?.() ?? null; } catch { return null; } })();
 
   return [
@@ -467,6 +469,14 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "copy-embed", label: "Plexus: Copy drawing embed", enabled: can(() => drawingUid && noSelection()), run: call("copy-embed", () => actions.copyDrawingEmbed()) },
     { id: "frames-regions", label: "Plexus: Regions for all frames", enabled: can(() => noSelection() && actions.hasFrames()), run: call("frames-regions", () => actions.regionsForAllFrames()) },
     { id: "restore", label: "Plexus: Restore before last Plexus change", enabled: can(() => noSelection() && drawingUid && hasSnapshot()), run: call("restore", () => actions.restoreBeforeLastPlexusChange()) },
+    { id: "restore-version", label: "Plexus: Restore an earlier version\u2026", enabled: !!tools?.restore && !!drawingUid, run: call("restore-version", () => tools.restore()) },
+    { id: "chart-json", label: "Plexus: Cause-and-effect from JSON\u2026", enabled: !!tools?.chart && !!drawingUid, run: call("chart-json", () => tools.chart()) },
+    { id: "to-outline", label: "Plexus: Drawing to outline\u2026", enabled: !!tools?.outline && !!drawingUid, run: call("to-outline", () => tools.outline({ focusedUid: drawingUid })) },
+    { id: "copy-markdown", label: "Plexus: Copy as Roam markdown", enabled: !!tools?.copyMarkdown && !!drawingUid, run: call("copy-markdown", () => tools.copyMarkdown({ focusedUid: drawingUid })) },
+    layoutItem("right", "Right"),
+    layoutItem("cause", "Cause"),
+    layoutItem("fishbone", "Fishbone"),
+    { id: "mm-attr-edges", label: `Plexus: Attribute blocks as edges${mm ? (mm.attrEdges ? ": on" : ": off") : ""}`, enabled: !!mm, run: call("mm-attr-edges", () => mindmap.setAttrEdges(app, !mm.attrEdges)) },
     { id: "text-only", label: "Plexus: Select text only", enabled: can(() => {
       const els = selectedElements();
       return els.length >= 2 && els.some(freeText);

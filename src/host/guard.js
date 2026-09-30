@@ -4,7 +4,7 @@ const MAX_DRAWINGS = 10;
 const nonce = () => Math.floor(Math.random() * 2 ** 31);
 const liveCount = (els) => (els || []).reduce((n, e) => n + (e && !e.isDeleted ? 1 : 0), 0);
 const versionSum = (els) => (els || []).reduce((n, e) => n + (e?.version || 0), 0);
-const signature = (els) => `${liveCount(els)}|${versionSum(els)}`;
+export const signature = (els) => `${liveCount(els)}|${versionSum(els)}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // A write with no protection, for callers that run without a guard (tests, or before the extension wires one).
@@ -15,6 +15,8 @@ export const directGuard = Object.freeze({
     return true;
   },
   restoreLast: () => 0,
+  restoreTo: () => 0,
+  list: () => [],
   hasSnapshot: () => false,
   dispose() {},
 });
@@ -35,9 +37,10 @@ export function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAW
     if (!token || pending === token) pending = null;
   };
 
+  let nextId = 1;
   function push(drawingUid, entry) {
     const ring = rings.get(drawingUid) ?? [];
-    ring.push(entry);
+    ring.push({ ...entry, id: nextId++ });
     while (ring.length > ringSize) ring.shift();
     rings.delete(drawingUid);
     rings.set(drawingUid, ring);
@@ -113,22 +116,44 @@ export function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAW
     toast(`Not applied: would remove ${n} of ${m}`, { kind: "error", action: { label: "Apply anyway", run }, onHide: () => dropPending(token) });
   }
 
-  function restoreLast(app, drawingUid) {
+  // Entries newest first; index 0 is what restoreLast undoes.
+  function list(drawingUid) {
+    const ring = rings.get(drawingUid) ?? [];
+    return ring.map((entry, i) => ({ id: entry.id, index: ring.length - 1 - i, label: entry.label, time: entry.time, count: entry.before.length })).reverse();
+  }
+
+  // Undo entries 0..index (newest to oldest) in one write. Where entries overlap the older "before" wins, and every
+  // element any of them added is deleted again.
+  function restoreTo(app, drawingUid, index = 0) {
     if (disposed) return 0;
     if (!app || !isActive(app, drawingUid)) {
       toast("Drawing is no longer open");
       return 0;
     }
     const ring = rings.get(drawingUid);
-    const entry = ring?.[ring.length - 1];
-    if (!entry) {
+    let at = Number.isInteger(index) && index >= 0 ? index : 0;
+    if (index && typeof index === "object") {
+      const found = ring ? ring.findIndex((e) => e.id === index.id) : -1;
+      if (found === -1) {
+        toast("The list changed; reopen it");
+        return 0;
+      }
+      at = ring.length - 1 - found;
+    }
+    const entries = ring && ring.length > at ? ring.slice(ring.length - 1 - at).reverse() : [];
+    if (!entries.length) {
       toast("Nothing to restore");
       return 0;
     }
+    const before = new Map();
+    const added = new Set();
+    for (const entry of entries) {
+      for (const old of entry.before) before.set(old.id, old);
+      for (const id of entry.added) added.add(id);
+    }
+    for (const id of added) before.delete(id);
     const current = app.getSceneElementsIncludingDeleted?.() ?? [];
     const byId = new Map(current.map((e) => [e?.id, e]));
-    const before = new Map(entry.before.map((e) => [e.id, e]));
-    const added = new Set(entry.added);
     const stamp = Date.now();
     const elements = current.map((el) => {
       const old = before.get(el?.id);
@@ -136,7 +161,7 @@ export function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAW
       if (el && added.has(el.id) && !el.isDeleted) return { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
       return el;
     });
-    for (const old of entry.before) {
+    for (const old of before.values()) {
       if (!byId.has(old.id)) elements.push({ ...old, version: (old.version || 0) + 1, versionNonce: nonce(), updated: stamp });
     }
     try {
@@ -147,21 +172,25 @@ export function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAW
       return 0;
     }
     const after = new Map((app.getSceneElementsIncludingDeleted?.() ?? []).map((e) => [e?.id, e]));
-    if (entry.before.some((old) => after.get(old.id)?.isDeleted !== false)) {
-      console.warn("[plexus] restore was not applied by the drawing", entry.before.length);
+    if ([...before.values()].some((old) => after.get(old.id)?.isDeleted !== false)) {
+      console.warn("[plexus] restore was not applied by the drawing", before.size);
       toast("Could not restore the drawing", { kind: "error" });
       return 0;
     }
-    ring.pop();
+    ring.splice(ring.length - 1 - at, at + 1);
     if (!ring.length) rings.delete(drawingUid);
-    const n = entry.before.length;
+    const n = before.size;
     toast(`Restored ${plural(n, "element")}; Undo reverses this`);
     return n;
   }
 
+  const restoreLast = (app, drawingUid) => restoreTo(app, drawingUid, 0);
+
   return {
     guardedWrite,
     restoreLast,
+    restoreTo,
+    list,
     hasSnapshot: (drawingUid) => (rings.get(drawingUid)?.length ?? 0) > 0,
     dispose() {
       disposed = true;
