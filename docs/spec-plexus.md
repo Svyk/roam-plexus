@@ -400,6 +400,20 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Typing | +0.04 ms/key. Five interleaved rounds, 42 keys, 5 s settle, editor closed. Loaded means 12.645, 12.540, 12.476, 12.543, 12.538 (mean 12.548). Unloaded means 12.383, 12.595, 12.462, 12.593, 12.510 (mean 12.509). A `body:has()` rule that hid the toolbar was on the keystroke path and measured about +0.20 to +0.25 before it was replaced by a class set only while the editor is mounted |
 | Palette | Still exactly "Plexus: Commands…" and "Plexus: Mind map" |
 
+#### Phase 14 live acceptance (2026-09-30, Readwisenotes, trusted CDP)
+
+| Item | Result |
+|---|---|
+| Show in Compass | The drawing block menu focused the node. With Compass unloaded the toast was "Compass is not loaded" and nothing was written |
+| Either alone | Compass opened a drawing with Plexus unloaded. Plexus stayed loaded with Compass unloaded |
+| Labels | Loaded region labels were not the bare word Region. Unloaded Compass can still say Region for an empty caption |
+| linksOf | Five rows (link, embed, mindmap) and no app-excalidraw.js request. apiVersion 6 |
+| Related | A drawing that shared two block refs ranked above one that shared one. The excalidraw syntax page is excluded |
+| Centre | Frames in slide order, then regions. Hover requested a 480px thumbnail with render false |
+| Follow | A route change recentred the overlay. rightSidebar.addWindow was not called |
+| Typing | +0.142 ms/key. Five rounds, 42 keys, 5 s settle, editor closed. Loaded 13.043, 12.886, 12.686, 12.717, 12.671 (mean 12.801). Unloaded 12.845, 12.745, 12.579, 12.598, 12.524 (mean 12.658) |
+| Palette | Plexus stays two entries. Compass registers its three on Cmd/Ctrl+P and removes them when the palette closes |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.

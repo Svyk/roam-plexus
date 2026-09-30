@@ -646,7 +646,7 @@ M · value medium · depends: none · Fable next 3/3 · Opus later 2/3
 2. "New drawing from template" (HACCP flow, fishbone, swab-site map, 16:9 slide) opens with remapped ids; "Save selection as template" round-trips; no props write outside Excalidraw.
 3. "Arrange as row" re-routes bound arrows in one undo step.
 
-### P14: Compass hookup
+### P14: Compass hookup — done 2026-09-30, v0.14.0 (`0c2b348`), Compass 0.5.0 (`6420aca`)
 
 **Goal.** Compass and Plexus call each other: "Show in Compass", larger hover thumbnails, element links as graph edges, related drawings, a drawing centre that lists frames and regions, and follow mode.
 
