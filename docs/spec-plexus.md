@@ -339,6 +339,17 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Lifecycle | Unload removes the `window` paste listener (1 → 0) and returns `window`/`document` listener counts to their pre-load values; no presenter, notes pane, canvas, print iframe or flyout left |
 | CDP notes | A preset clicked through a stale flyout did nothing (harness, not Plexus). Separate `Input.dispatchMouseEvent` moves from new CDP sessions produced no `pointermove`; moves sent within one session did |
 
+#### Phase 12 measured facts (2026-09-30, Readwisenotes `1929...`)
+
+| Item | Result | Consequence |
+|---|---|---|
+| `data.block.fromMarkdown` | Present (also `reorderBlocks`). `fromMarkdown({location: {"parent-uid", order}, "markdown-string": "- a\n  - b ((uid))\n- c"})` returned `{uids: [<top-level uids>]}`; nesting and `((refs))` were kept | GRAPH-5 writes an outline in one call |
+| Encryption flag | `roamAlphaAPI.graph.isEncrypted` exists (`false` in Readwisenotes); `graph.type` is `"hosted"` | DATA-1's IndexedDB ring is off when it is true |
+| IndexedDB | Available in Roam Desktop | DATA-1 ring store |
+| Better Tasks | Installed in Readwisenotes as `window.betterTasks` with `v1`/`v2` objects: `classifyBlock`, `requestDelete`, `createSubtask`, `requestStatusTag` (v2). No due-date call | MM-8 feature-detects it; "Due" is not built (it would need a `BT_attr*` write) |
+| Mind-map storage | Root node: `customData.plexus.mm = {uid, map, root: true, layout: "right", bounds}`; edges: `customData.plexus.mm = {edge: [parentUid, childUid], map}`, ids `pmm-<map>-<uid>` and `-e` / `-t` suffixes | MM-7's per-map toggle and MM-11's layouts live on the root's `customData.plexus.mm` |
+| Cause-and-effect JSON (Plexus Canvas) | `elementsFromCauseEffect(chart)`: `chart.nodes: [{id, text, role, category}]` (`role: "primary"` marks the effect), `chart.edges: [{effect, cause}]`, `chart.connections`; layouts tree / fishbone / pentagon (`~/excalidraw-port-research/thymer-canvas-plugin/plugin.js:2734-2840`) | MM-11's JSON route accepts that shape |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.
