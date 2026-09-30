@@ -530,7 +530,7 @@ S · value medium · depends: none · Fable next 3/4 · Opus later 2/3
 5. Laser leaves `:edit/time` unchanged.
 6. Copying a text element and pasting into a block inserts its text; a JSON paste into a code block is untouched.
 
-### P12: Diagrams from outlines
+### P12: Diagrams from outlines — done 2026-09-30, v0.12.0 (`554116a`)
 
 **Goal.** Cause-and-effect maps inside the two-way mind-map sync, attribute blocks as labelled edges, task nodes, drag-to-reparent, canvas to outline, builder helpers, and durable snapshots with a restore list before the bulk operations of P12-P13.
 
