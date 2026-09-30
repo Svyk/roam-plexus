@@ -9,6 +9,8 @@ import { isExcludedString } from "./model/mindmap.js";
 import { drawingTitleOf, imageAltAt, isPlaceholderCaption, plainCaption, regionLabel } from "./model/label.js";
 import { fnv1a } from "./model/hash.js";
 import { cropKey } from "./host/cache.js";
+import { directGuard } from "./host/guard.js";
+import { isHostDark } from "./host/theme.js";
 import { lockName, withLock } from "./host/locks.js";
 import { cropCanvasToBlob } from "./host/cold-render.js";
 import { clearImageMemo, loadImageBitmap } from "./host/image-source.js";
@@ -27,6 +29,11 @@ const SVG_HREF_RE = /(?:xlink:)?href\s*=\s*["']([^"']*)["']/gi;
 const REFS_RE = /\(\([\w-]+\)\)|\[\[[^\]]+\]\]/g;
 const refTokens = (text) => new Set(String(text ?? "").match(REFS_RE) || []);
 const REGION_HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:[^}]*\}\}/;
+const WARM_KINDS = new Set(["area", "group", "frame", "cframe"]);
+const AUDIT_ROW_CAP = 2000;
+const AUDIT_YIELD_EVERY = 20;
+const REPAIR_OF = { partial: "auto", "no-elements": "reselect", "outside-crop": "reselect", "not-image": "reselect", rotated: "reselect", "not-frame": "reselect" };
+const BOX_PROBLEM = { "no-elements": "no-elements", "outside-crop": "outside-crop", "not-image": "not-image", "rotated-image": "rotated", "not-frame": "not-frame" };
 
 // The exact current head plus " " + tail (or the bare head): the string is never re-serialized, so token order and
 // extras survive. Null when the result is not the same region with exactly that caption.
@@ -167,6 +174,10 @@ export function createActions({
   frame = () => new Promise((resolve) => (typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(() => resolve()) : setTimeout(resolve, 16))),
   verifyPollMs = 100,
   verifyTimeoutMs = 3000,
+  guard = directGuard,
+  camera = null,
+  motionOk = () => false,
+  viewHistory = () => null,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -185,6 +196,13 @@ export function createActions({
   let undoSlot = null;
   const closePolls = new Map();
   const revokers = new Set();
+  let pendingUpdate = null;
+  const cameraTo = camera ?? {
+    animateTo: async (app, bbox, { maxZoom } = {}) => {
+      native.zoomTo(app, bbox, { maxZoom });
+      return { moved: true };
+    },
+  };
 
   async function once(name, fn) {
     if (busy.has(name)) return null;
@@ -427,11 +445,13 @@ export function createActions({
       cleanupDialog?.dispose();
       cleanupDialog = null;
       closePolls.clear();
+      pendingUpdate = null;
       for (const revoke of [...revokers]) revoke();
     },
 
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
     cancelDrawingTool() {
+      pendingUpdate = null;
       if (activeToolIsDrawing) activeTool?.cancel?.();
       if (activePromptIsDrawing) activePrompt?.cancel?.();
     },
@@ -806,6 +826,101 @@ export function createActions({
 
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
 
+    // One cframe region per frame that has none, in slide order (cap 50 per run).
+    regionsForAllFrames: () => once("all-frames", regionsForAllFramesOnce),
+
+    updateRegionFromSelection: (regionUid) => once(`update:${regionUid}`, () => updateRegionOnce(regionUid)),
+
+    pendingRegionUpdate() {
+      if (!pendingUpdate) return null;
+      const block = safe(() => host.pullBlock(pendingUpdate.uid));
+      const region = block ? parseRegion(block.string) : null;
+      if (!region?.supported) {
+        pendingUpdate = null;
+        return null;
+      }
+      return { uid: pendingUpdate.uid, label: labelOf(region) };
+    },
+
+    applyPendingUpdate: () => once("apply-pending", applyPendingOnce),
+
+    cancelPendingUpdate() { pendingUpdate = null; },
+
+    repairRegion: (regionUid) => once(`repair:${regionUid}`, () => repairRegionOnce(regionUid)),
+
+    selectRegionOnDrawing: (regionUid) => once(`select:${regionUid}`, () => selectRegionOnce(regionUid)),
+
+    auditRegions: ({ scope = "page" } = {}) => once("audit", () => auditRegionsOnce(scope)),
+
+    copyRegionLink(uid) {
+      if (!isId(uid)) return Promise.resolve(false);
+      const hash = safe(() => doc.defaultView?.location?.hash) ?? "";
+      const route = String(hash).startsWith("#/offline/") ? "offline" : "app";
+      return copyText(`https://roamresearch.com/#/${route}/${encodeURIComponent(host.graphName())}/page/${uid}`, "Region link copied");
+    },
+
+    copyDrawingRef() {
+      const editor = native.activeEditor(doc);
+      if (!isId(editor?.drawingUid)) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return Promise.resolve(false);
+      }
+      return copyText(`((${editor.drawingUid}))`, "Drawing ref copied");
+    },
+
+    copyDrawingEmbed() {
+      const editor = native.activeEditor(doc);
+      if (!isId(editor?.drawingUid)) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return Promise.resolve(false);
+      }
+      return copyText(`{{[[embed]]: ((${editor.drawingUid}))}}`, "Drawing embed copied");
+    },
+
+    selectTextOnly() {
+      const editor = native.activeEditor(doc);
+      if (!editor) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return 0;
+      }
+      const { app } = editor;
+      const free = sceneElements(app).filter((e) => e && !e.isDeleted && e.type === "text" && !e.containerId);
+      const ids = native.selectedElementIds(app);
+      const pick = ids.length ? free.filter((e) => ids.includes(e.id)) : free;
+      if (!pick.length) {
+        toaster.show("No free text to select", { kind: "error" });
+        return 0;
+      }
+      const selection = {};
+      for (const el of pick) selection[el.id] = true;
+      app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {} } });
+      return pick.length;
+    },
+
+    removeElementLink: () => once("remove-link", removeElementLinkOnce),
+
+    hasSnapshot() {
+      const editor = native.activeEditor(doc);
+      return !!editor?.drawingUid && !!guard.hasSnapshot?.(editor.drawingUid);
+    },
+
+    restoreBeforeLastPlexusChange() {
+      const editor = native.activeEditor(doc);
+      if (!editor?.drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return 0;
+      }
+      try {
+        const n = guard.restoreLast(editor.app, editor.drawingUid);
+        if (guard === directGuard) toaster.show("Nothing to restore");
+        return n;
+      } catch (error) {
+        console.warn("[plexus] restore failed", error);
+        toaster.show("Could not restore the drawing", { kind: "error" });
+        return 0;
+      }
+    },
+
     async refreshCropsForOpenDrawing() {
       const editor = native.activeEditor(doc);
       if (!editor) {
@@ -833,6 +948,455 @@ export function createActions({
       toaster.show("Crop cache cleared");
     },
   };
+
+  // Writes text through the clipboard helper; the write starts synchronously so the user gesture still counts.
+  function copyText(text, done) {
+    let pending;
+    try {
+      const write = () => clipboard.writeText(text);
+      pending = native.withClipboard ? native.withClipboard(write) : write();
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    return Promise.resolve(pending).then(
+      () => {
+        toaster.show(done);
+        return true;
+      },
+      (error) => {
+        console.warn("[plexus] clipboard failed", error);
+        toaster.show("Clipboard access was blocked", { kind: "error" });
+        return false;
+      },
+    );
+  }
+
+  // Crisp 2x PNG of a drawing-kind region while its editor is mounted (memory only). Never throws.
+  async function warmPng2x(app, regionUid, region, svg) {
+    if (!WARM_KINDS.has(region.kind) || typeof native.captureSelectionPng !== "function") return;
+    try {
+      const dark = !!safe(() => isHostDark(doc)) && !!settingsNow().darkCrops;
+      const blob = await native.captureSelectionPng(app, hotIds(region, sceneElements(app)), { scale: 2, dark });
+      if (!blob || disposed) return;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (bytes.length < 24) return;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const pw = view.getUint32(16);
+      const ph = view.getUint32(20);
+      const want = svgSize(svg);
+      if (Math.abs(pw - want.w * 2) > 4 || Math.abs(ph - want.h * 2) > 4) {
+        console.warn("[plexus] png2x size differs from the svg, dropped", regionUid, `${pw}x${ph}`, `${want.w * 2}x${want.h * 2}`);
+        return;
+      }
+      const drawing = host.drawing(region.drawingUid);
+      if (!drawing) return;
+      const key = cropKey({ regionUid, geometryKey: geometryKey(region), drawingHash: drawing.hash, tier: dark ? "png2x-dark" : "png2x" });
+      await cache.put(key, blob, { w: pw / 2, h: ph / 2, persist: false });
+    } catch (error) {
+      console.warn("[plexus] png2x capture failed", regionUid, error);
+    }
+  }
+
+  function tokenReplaced(before, key, value) {
+    const head = REGION_HEAD_RE.exec(before)?.[0];
+    if (!head) return null;
+    const re = new RegExp(`(\\s)${key}=[^\\s}]*`);
+    if (!re.test(head)) return null;
+    return before.replace(head, () => head.replace(re, (whole, sp) => `${sp}${key}=${value}`));
+  }
+
+  // The one token a selection changes for this region kind, as { next } or { error }. Kind never changes.
+  function geometryFromSelection(region, before, app) {
+    if (isImageKind(region.kind)) return { error: "Image regions cannot be updated from a selection" };
+    const elements = sceneElements(app);
+    const ids = native.selectedElementIds(app);
+    if (!ids.length) return { error: "Select the new elements first" };
+    let key;
+    let value;
+    if (region.kind === "area") {
+      const sel = new Set(ids);
+      key = "ids";
+      value = elements.filter((e) => e && !e.isDeleted && sel.has(e.id)).map((e) => e.id).join(",");
+    } else if (region.kind === "group") {
+      const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
+      if (detected.kind !== "group") return { error: "Select exactly one group" };
+      key = "g";
+      value = detected.groupId;
+    } else if (region.kind === "frame" || region.kind === "cframe") {
+      const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
+      if (detected.kind !== "cframe") return { error: "Select exactly one frame" };
+      key = "fr";
+      value = detected.frame.id;
+    } else {
+      const el = ids.length === 1 ? elements.find((e) => e.id === ids[0] && !e.isDeleted) : null;
+      if (!el || el.type !== "image") return { error: "Select exactly one image" };
+      if (el.angle) return { error: "Rotated images are not supported" };
+      const fits = region.kind === "rect" ? displayedRect(el, region.f) : displayedPoly(el, region.p);
+      if (!fits) return { error: "The region does not fit that image" };
+      key = "el";
+      value = el.id;
+    }
+    if (!value || !value.split(",").every(isId)) return { error: "Could not read the selection" };
+    const next = tokenReplaced(before, key, value);
+    const check = next ? parseRegion(next) : null;
+    if (!check?.supported || check.kind !== region.kind || check.drawingUid !== region.drawingUid || check.caption !== region.caption) {
+      console.warn("[plexus] geometry update round-trip mismatch");
+      return { error: "Could not update region" };
+    }
+    if (geometryKey(check) === geometryKey(region)) return { same: true };
+    return { next, region: check };
+  }
+
+  async function writeGeometry(regionUid, app, block, region, next, nextRegion) {
+    try {
+      await host.updateRegionString(region.drawingUid, regionUid, next, { expect: block.string });
+    } catch (error) {
+      if (error?.code === "changed" || /changed elsewhere/.test(String(error?.message))) {
+        toaster.show("Region changed elsewhere; not updated", { kind: "error" });
+      } else {
+        console.warn("[plexus] region update failed", error);
+        toaster.show("Could not update region, try again", { kind: "error" });
+      }
+      return false;
+    }
+    try {
+      const svg = await hotSvg(app, nextRegion);
+      if (svg) {
+        await putSvg(regionUid, nextRegion, svg);
+        await warmPng2x(app, regionUid, nextRegion, svg);
+      }
+    } catch (error) {
+      console.warn("[plexus] crop refresh after update failed", error);
+    }
+    emitChange(regionUid);
+    try {
+      await refreshRegion?.(regionUid, { purge: false });
+    } catch (error) {
+      console.warn("[plexus] refresh after update failed", error);
+    }
+    return true;
+  }
+
+  async function applyGeometryUpdate(regionUid, editor, block, region) {
+    const r = geometryFromSelection(region, block.string, editor.app);
+    if (r.error) {
+      toaster.show(r.error, { kind: "error" });
+      return false;
+    }
+    if (r.same) {
+      toaster.show("Region already matches the selection");
+      return false;
+    }
+    const ok = await writeGeometry(regionUid, editor.app, block, region, r.next, r.region);
+    if (ok) toaster.show("Region updated");
+    return ok;
+  }
+
+  function readRegion(regionUid) {
+    const block = isId(regionUid) ? safe(() => host.pullBlock(regionUid)) : null;
+    const region = block ? parseRegion(block.string) : null;
+    return { block, region };
+  }
+
+  async function updateRegionOnce(regionUid) {
+    const { block, region } = readRegion(regionUid);
+    if (!region?.supported) {
+      toaster.show("Region cannot be updated", { kind: "error" });
+      return false;
+    }
+    if (isImageKind(region.kind)) {
+      toaster.show("Image regions cannot be updated from a selection", { kind: "error" });
+      return false;
+    }
+    const editor = native.activeEditor(doc);
+    if (editor && editor.drawingUid === region.drawingUid && native.selectedElementIds(editor.app).length) {
+      pendingUpdate = null;
+      return applyGeometryUpdate(regionUid, editor, block, region);
+    }
+    await armPending(regionUid, region);
+    return false;
+  }
+
+  // Opens the drawing with the region's elements selected (when any survive) and waits for the user's new selection.
+  async function armPending(regionUid, region) {
+    await selectRegionInner(regionUid, { quiet: true });
+    if (disposed) return false;
+    const editor = native.activeEditor(doc);
+    if (!editor || editor.drawingUid !== region.drawingUid) return false;
+    pendingUpdate = { uid: regionUid };
+    toaster.show("Select the new elements, then right-click → Plexus: Update region from selection");
+    return true;
+  }
+
+  async function applyPendingOnce() {
+    if (!pendingUpdate) return false;
+    const { uid } = pendingUpdate;
+    const { block, region } = readRegion(uid);
+    if (!region?.supported) {
+      pendingUpdate = null;
+      return false;
+    }
+    const editor = native.activeEditor(doc);
+    if (!editor || editor.drawingUid !== region.drawingUid) {
+      pendingUpdate = null;
+      toaster.show("Drawing is no longer open", { kind: "error" });
+      return false;
+    }
+    const ok = await applyGeometryUpdate(uid, editor, block, region);
+    if (ok && pendingUpdate?.uid === uid) pendingUpdate = null;
+    return ok;
+  }
+
+  function selectionFor(region, elements) {
+    const live = elements.filter((e) => e && !e.isDeleted);
+    const has = (id) => live.some((e) => e.id === id);
+    let ids = [];
+    let groups = {};
+    if (region.kind === "area") ids = (region.ids || []).filter(has);
+    else if (region.kind === "group") {
+      ids = live.filter((e) => Array.isArray(e.groupIds) && e.groupIds.includes(region.groupId)).map((e) => e.id);
+      if (ids.length) groups = { [region.groupId]: true };
+    } else if (region.kind === "frame" || region.kind === "cframe") ids = has(region.frameId) ? [region.frameId] : [];
+    else if (region.kind === "rect" || region.kind === "poly") ids = has(region.el) ? [region.el] : [];
+    if (!ids.length) return null;
+    const selectedElementIds = {};
+    for (const id of ids) selectedElementIds[id] = true;
+    return { selectedElementIds, selectedGroupIds: groups };
+  }
+
+  async function selectRegionInner(regionUid, { quiet = false } = {}) {
+    const { region } = readRegion(regionUid);
+    if (!region?.supported || isImageKind(region.kind)) {
+      if (!quiet) toaster.show(region?.supported ? "Select on drawing is for drawing regions" : "Region cannot be selected", { kind: "error" });
+      return false;
+    }
+    let editor = native.activeEditor(doc);
+    if (!editor || editor.drawingUid !== region.drawingUid) {
+      if (!(await openRegionOnce(regionUid, { select: true }))) return false;
+      editor = native.activeEditor(doc);
+      if (!editor || editor.drawingUid !== region.drawingUid) return false;
+    }
+    const picked = selectionFor(region, sceneElements(editor.app));
+    if (!picked) {
+      if (!quiet) toaster.show("Region elements are gone; use Repair region", { kind: "error" });
+      return false;
+    }
+    editor.app.updateScene({ appState: picked });
+    return true;
+  }
+
+  function selectRegionOnce(regionUid) {
+    return selectRegionInner(regionUid);
+  }
+
+  async function repairRegionOnce(regionUid) {
+    const { block, region } = readRegion(regionUid);
+    if (!region?.supported || isImageKind(region.kind)) {
+      toaster.show("Region cannot be repaired", { kind: "error" });
+      return { fixed: false, reason: "unsupported" };
+    }
+    const editor = native.activeEditor(doc);
+    const mounted = editor && editor.drawingUid === region.drawingUid ? editor : null;
+    const drawing = mounted ? null : safe(() => host.drawing(region.drawingUid));
+    const elements = mounted ? sceneElements(mounted.app) : drawing?.elements ?? null;
+    if (!elements) {
+      toaster.show("Drawing not found", { kind: "error" });
+      return { fixed: false, reason: "no-drawing" };
+    }
+    const box = regionSceneBBox(region, elements, mounted ? mounted.app.state : drawing.appState);
+    if (!box.error && !(box.missing?.length)) {
+      toaster.show("Region looks fine");
+      return { fixed: false, reason: "ok" };
+    }
+    if (region.kind === "area" && !box.error && box.missing.length) {
+      const gone = new Set(box.missing);
+      const value = region.ids.filter((id) => !gone.has(id)).join(",");
+      const next = tokenReplaced(block.string, "ids", value);
+      const check = next ? parseRegion(next) : null;
+      if (!check?.supported || check.kind !== "area" || check.caption !== region.caption || check.drawingUid !== region.drawingUid) {
+        toaster.show("Could not repair region", { kind: "error" });
+        return { fixed: false, reason: "mismatch" };
+      }
+      if (mounted) {
+        const ok = await writeGeometry(regionUid, mounted.app, block, region, next, check);
+        if (ok) toaster.show("Region repaired");
+        return { fixed: ok, reason: ok ? "dropped-missing" : "write-failed" };
+      }
+      try {
+        await host.updateRegionString(region.drawingUid, regionUid, next, { expect: block.string });
+      } catch (error) {
+        console.warn("[plexus] region repair failed", error);
+        toaster.show(error?.code === "changed" ? "Region changed elsewhere; not updated" : "Could not repair region, try again", { kind: "error" });
+        return { fixed: false, reason: "write-failed" };
+      }
+      emitChange(regionUid);
+      try { await refreshRegion?.(regionUid); } catch (error) { console.warn("[plexus] refresh after repair failed", error); }
+      toaster.show("Region repaired");
+      return { fixed: true, reason: "dropped-missing" };
+    }
+    await armPending(regionUid, region);
+    return { fixed: false, reason: "reselect" };
+  }
+
+  async function regionsForAllFramesOnce() {
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const { app, drawingUid } = editor;
+    if (!isId(drawingUid)) {
+      toaster.show("Could not identify this drawing", { kind: "error" });
+      return null;
+    }
+    const named = new Set();
+    for (const { region } of safe(() => host.regionsOf(drawingUid)) || []) {
+      if (region?.supported && (region.kind === "frame" || region.kind === "cframe")) named.add(region.frameId);
+    }
+    const todo = orderFrames(sceneElements(app)).filter((f) => !named.has(f.id) && isId(f.id));
+    if (!todo.length) {
+      toaster.show("Every frame already has a region");
+      return { created: 0, uids: [] };
+    }
+    const batch = todo.slice(0, 50);
+    const strings = batch.map((f) => serializeRegion({ kind: "cframe", drawingUid, frameId: f.id, caption: String(f.name ?? "").trim() }));
+    let uids;
+    try {
+      uids = await host.createRegions(drawingUid, strings);
+    } catch (error) {
+      console.warn("[plexus] regions for all frames failed", error);
+      toaster.show("Could not create regions, try again", { kind: "error" });
+      return null;
+    }
+    for (const uid of uids) emitChange(uid);
+    if (!uids.length) toaster.show("Could not create regions, try again", { kind: "error" });
+    else if (uids.length < batch.length) toaster.show(`Created ${uids.length} of ${batch.length} frame regions; run again for the rest`, { kind: "error" });
+    else if (todo.length > batch.length) toaster.show("Created 50; run again for the rest");
+    else toaster.show(`Created ${uids.length} frame region${uids.length === 1 ? "" : "s"}`);
+    return { created: uids.length, uids };
+  }
+
+  async function removeElementLinkOnce() {
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return 0;
+    }
+    const { app, drawingUid } = editor;
+    const ids = new Set(native.selectedElementIds(app));
+    const linked = sceneElements(app).filter((e) => e && !e.isDeleted && ids.has(e.id) && e.link);
+    if (!linked.length) {
+      toaster.show("No links on the selection");
+      return 0;
+    }
+    const hit = new Set(linked.map((e) => e.id));
+    let ok = false;
+    try {
+      ok = guard.guardedWrite(app, {
+        drawingUid,
+        label: "Remove link",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => current.map((e) => (hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)),
+      });
+    } catch (error) {
+      console.warn("[plexus] remove link failed", error);
+      toaster.show("Could not remove the link", { kind: "error" });
+      return 0;
+    }
+    if (!ok) return 0;
+    toaster.show(`Removed ${hit.size} link${hit.size === 1 ? "" : "s"}`);
+    return hit.size;
+  }
+
+
+  async function auditRegionsOnce(scope) {
+    let pageUid = null;
+    if (scope !== "graph") {
+      try { pageUid = (await host.openPageUid?.()) ?? null; } catch { pageUid = null; }
+      if (!pageUid) {
+        toaster.show("Open a page first", { kind: "error" });
+        return null;
+      }
+    }
+    let blocks;
+    let containers;
+    try {
+      blocks = host.regionBlocksForAudit(pageUid ? { pageUid } : {});
+      containers = host.containersForAudit(pageUid ? { pageUid } : {});
+    } catch (error) {
+      console.warn("[plexus] region audit query failed", error);
+      toaster.show("Could not scan for regions", { kind: "error" });
+      return null;
+    }
+    const containerOf = new Map(containers.map((c) => [c.uid, c]));
+    const byDrawing = new Map();
+    for (const row of blocks) {
+      const region = parseRegion(row.string);
+      if (!region) continue;
+      const key = region.drawingUid || "";
+      if (!byDrawing.has(key)) byDrawing.set(key, []);
+      byDrawing.get(key).push({ row, region });
+    }
+    const out = [];
+    let truncated = false;
+    let drawings = 0;
+    const push = (row, region, problem, detail = "") => {
+      out.push({
+        uid: row.uid,
+        kind: region.kind,
+        problem,
+        detail,
+        drawingUid: region.drawingUid || null,
+        label: labelOf(region),
+        pageTitle: row.pageTitle ?? null,
+        repair: REPAIR_OF[problem] ?? null,
+      });
+    };
+    for (const [drawingUid, list] of byDrawing) {
+      if (disposed) return null;
+      if (out.length >= AUDIT_ROW_CAP) { truncated = true; break; }
+      let target = null;
+      let ownerBlock = null;
+      const needsTarget = list.some(({ region }) => region.supported);
+      if (needsTarget && isId(drawingUid)) {
+        ownerBlock = safe(() => host.pullBlock(drawingUid));
+        target = ownerBlock && DRAWING_BLOCK_RE.test(ownerBlock.string) ? safe(() => host.drawing(drawingUid)) ?? null : null;
+      }
+      for (const { row, region } of list) {
+        if (out.length >= AUDIT_ROW_CAP) { truncated = true; break; }
+        if (!region.supported) { push(row, region, "unsupported", region.error || ""); continue; }
+        if (!isContainerString(row.parentString)) { push(row, region, "outside-container"); continue; }
+        const container = containerOf.get(row.parentUid);
+        if (container && container.ownerUid !== region.drawingUid) { push(row, region, "owner-mismatch", `container is under ${container.ownerUid}`); continue; }
+        if (isImageKind(region.kind)) {
+          const has = ownerBlock && parseImageRefs(ownerBlock.string).some((r) => r.index === region.i);
+          if (!has) push(row, region, ownerBlock ? "no-image" : "no-owner");
+          continue;
+        }
+        if (!ownerBlock || !target) { push(row, region, "no-owner"); continue; }
+        const box = regionSceneBBox(region, target.elements, target.appState);
+        if (box.error) push(row, region, BOX_PROBLEM[box.error] ?? "no-elements", box.error);
+        else if (box.missing?.length) push(row, region, "partial", `missing ${box.missing.join(", ")}`);
+      }
+      drawings += 1;
+      if (drawings % AUDIT_YIELD_EVERY === 0) await sleep(0);
+    }
+    const perOwner = new Map();
+    for (const c of containers) {
+      if (!perOwner.has(c.ownerUid)) perOwner.set(c.ownerUid, []);
+      perOwner.get(c.ownerUid).push(c);
+    }
+    for (const c of containers) {
+      const isDrawing = DRAWING_BLOCK_RE.test(c.ownerString);
+      const hasImages = !isDrawing && parseImageRefs(c.ownerString).length > 0;
+      const many = perOwner.get(c.ownerUid).length > 1;
+      const problem = many ? "two-containers" : isDrawing || hasImages ? null : "orphan-container";
+      if (problem) out.push({ uid: c.uid, kind: "container", problem, detail: many ? `${perOwner.get(c.ownerUid).length} containers on ${c.ownerUid}` : "", drawingUid: c.ownerUid, label: "Region container", pageTitle: c.pageTitle ?? null, repair: null });
+    }
+    out.sort((a, b) => String(a.pageTitle ?? "").localeCompare(String(b.pageTitle ?? "")) || String(a.drawingUid ?? "").localeCompare(String(b.drawingUid ?? "")) || (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
+    Object.defineProperty(out, "truncated", { value: truncated, enumerable: false });
+    return out;
+  }
 
   function plainCachePut(region, ref) {
     return async (uid) => {
@@ -1128,6 +1692,7 @@ export function createActions({
       keys: {
         png: cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
         svg: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+        png2x: target.url ? null : cropKey({ regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png2x" }),
       },
     };
   }
@@ -1177,6 +1742,7 @@ export function createActions({
     const prep = cropPrep(regionUid);
     if (!prep) return null;
     const { region, target, keys } = prep;
+    const mem2x = keys.png2x ? readEntry(cache.peek?.(keys.png2x)) : null;
     const memSvg = keys.svg ? readEntry(cache.peek?.(keys.svg)) : null;
     const memPng = readEntry(cache.peek?.(keys.png));
     const job = { region, lowRes: false, promise: null };
@@ -1192,6 +1758,8 @@ export function createActions({
       }
     };
     job.promise = (async () => {
+      const blob2x = await mem2x;
+      if (blob2x) return asPng(blob2x);
       let png = await fromSvg(memSvg);
       if (png) return png;
       const pngBlob = await (memPng || readEntry(await cache.get(keys.png)));
@@ -1449,6 +2017,7 @@ export function createActions({
           const svg = await hotSvg(editor.app, region);
           if (!svg) continue;
           await putSvg(regionUid, region, svg);
+          await warmPng2x(editor.app, regionUid, region, svg);
           await refreshRegion?.(regionUid, { purge: false });
         } else {
           await refreshRegion?.(regionUid);
@@ -1955,7 +2524,7 @@ export function createActions({
     return editor || null;
   }
 
-  async function openRegionOnce(regionUid, { sidebar = false } = {}) {
+  async function openRegionOnce(regionUid, { sidebar = false, select = false } = {}) {
     const block = host.pullBlock(regionUid);
     const region = block ? parseRegion(block.string) : null;
     if (!region || !region.supported) {
@@ -2048,16 +2617,34 @@ export function createActions({
       return null;
     }
     const { app } = editor;
+    await native.waitNotLoading?.(app, 5000, { doc });
+    await frame();
+    await frame();
+    if (disposed || native.activeEditor(doc)?.app !== app) return null;
     const box = regionSceneBBox(region, sceneElements(app), app.state);
     if (box.error) {
+      if (select) return uid;
       toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
       return null;
     }
-    native.zoomTo(app, box.bbox, { maxZoom: 1 });
-    await sleep(60);
+    const settings = settingsNow();
+    const maxZoom = Number.isFinite(Number(settings.zoomCap)) && Number(settings.zoomCap) > 0 ? Number(settings.zoomCap) : 1;
+    const animate = !!safe(() => motionOk(doc, settings.animation));
+    const hist = safe(() => viewHistory(app));
+    const sizeBefore = safe(() => hist?.size?.()) ?? 0;
+    safe(() => hist?.push(app));
+    let moved = null;
+    try {
+      moved = await cameraTo.animateTo(app, box.bbox, { maxZoom, animate, doc });
+    } catch (error) {
+      console.warn("[plexus] camera move failed", error);
+    }
+    // Already framed: the pushed entry equals the current view, so drop it rather than leave a no-op Back.
+    if (!moved?.moved && hist && (safe(() => hist.size()) ?? 0) > sizeBefore) safe(() => hist.discard?.());
     if (disposed) return null;
+    if (select || moved?.aborted) return uid;
     stopSpotlight?.();
-    stopSpotlight = spotlight({ rect: native.viewportRectOf(app, box.bbox), doc }) || null;
+    stopSpotlight = spotlight({ rect: native.viewportRectOf(app, box.bbox), doc, motion: animate }) || null;
     return uid;
   }
 }

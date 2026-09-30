@@ -36,11 +36,14 @@ test("extension exports the Roam lifecycle contract and survives repeated unload
   await extension.onunload();
   await extension.onunload();
 
-  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 10);
-  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 10);
+  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 16);
+  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 16);
   assert.ok(api.calls.some(([name, label]) => name === "panel:create" && label === "Plexus"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Clear crop cache"));
   assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Legacy drawings (dry run)"));
+  for (const label of ["Plexus: Regions for all frames", "Plexus: Audit regions on this page", "Plexus: Audit regions in graph", "Plexus: Restore before last Plexus change", "Plexus: Toggle regions layer", "Plexus: Back to previous view"]) {
+    assert.ok(api.calls.some(([name, l]) => name === "command:add" && l === label), label);
+  }
 });
 
 test("a second load disposes the previous runtime before registering again", async () => {
@@ -50,8 +53,8 @@ test("a second load disposes the previous runtime before registering again", asy
   await extension.onload({ extensionAPI: firstApi, extension: { version: "one" } });
   const cleanup = await extension.onload({ extensionAPI: secondApi, extension: { version: "two" } });
 
-  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 10);
-  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 10);
+  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 16);
+  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 16);
   await cleanup();
 });
 

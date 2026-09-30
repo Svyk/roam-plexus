@@ -1,3 +1,4 @@
+import { createWriteGuard } from "../src/host/guard.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createMindMap } from "../src/view/mindmap.js";
@@ -12,7 +13,7 @@ function rawTree() {
   return blk("R", "Root", [blk("a", "Alpha", [blk("a1", "Alpha one")]), blk("b", "Beta")]);
 }
 
-function setup({ raw = rawTree(), state = {} } = {}) {
+function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}) {
   const rafQ = [];
   const raf = (fn) => { rafQ.push(fn); return rafQ.length; };
   const caf = (id) => { rafQ[id - 1] = null; };
@@ -43,8 +44,16 @@ function setup({ raw = rawTree(), state = {} } = {}) {
     focus() { containerEl.focused = true; },
   };
   const body = { children: [], append(el) { this.children.push(el); } };
+  const docListeners = [];
+  const viewListeners = [];
+  const reg = (list) => (t, fn) => list.push([t, fn]);
+  const unreg = (list) => (t, fn) => { const i = list.findIndex(([tt, f]) => tt === t && f === fn); if (i >= 0) list.splice(i, 1); };
   const doc = {
     body,
+    visibilityState: "visible",
+    addEventListener: reg(docListeners),
+    removeEventListener: unreg(docListeners),
+    defaultView: { addEventListener: reg(viewListeners), removeEventListener: unreg(viewListeners) },
     createElement: () => {
       const l = [];
       const el = {
@@ -83,8 +92,8 @@ function setup({ raw = rawTree(), state = {} } = {}) {
     zoomTo() {},
   };
   const measurer = { measure, ensureFonts: async () => false, clear() {} };
-  const mm = createMindMap({ doc, api, writer, measurer, native, toaster, raf, caf, now: () => Date.now() });
-  const unmount = mm.mount({ app, containerEl, outerEl: null, zIndex: 100 });
+  const mm = createMindMap({ doc, api, writer, measurer, native, toaster, raf, caf, now: () => Date.now(), ...mmOpts });
+  const unmount = mm.mount({ app, containerEl, outerEl: null, zIndex: 100, ...mountOpts });
   flush();
   const key = (init) => {
     const e = { code: "", key: "", altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, repeat: false, isComposing: false, keyCode: 0, target: containerEl, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; }, stopImmediatePropagation() {}, ...init };
@@ -94,7 +103,7 @@ function setup({ raw = rawTree(), state = {} } = {}) {
   const select = (uid) => { app.state.selectedElementIds = { [nodeId("R", uid)]: true }; };
   const live = () => elements.filter((e) => !e.isDeleted);
   const el = (uid) => elements.find((e) => e.id === nodeId("R", uid));
-  return { mm, app, key, select, flush, toasts, calls, watches, listeners, containerListeners, doc, unmount, el, live, elements: () => elements, setElements: (e) => { elements = e; app.scene.nonce += 1; }, fireChange: () => { for (const cb of [...listeners.change]) cb(); }, writer };
+  return { docListeners, viewListeners, mm, app, key, select, flush, toasts, calls, watches, listeners, containerListeners, doc, unmount, el, live, elements: () => elements, setElements: (e) => { elements = e; app.scene.nonce += 1; }, fireChange: () => { for (const cb of [...listeners.change]) cb(); }, writer };
 }
 
 const tab = { code: "Tab", key: "Tab" };
@@ -423,4 +432,163 @@ test("commit persists projection writes with captureUpdate NEVER", () => {
   t.key(tab);
   assert.ok(seen.length > 0);
   assert.ok(seen.every((c) => c === "NEVER"));
+});
+
+const fire = (list, type) => { for (const [t, fn] of [...list]) if (t === type) fn(); };
+
+test("pagehide writes a pending native text edit synchronously even when raf never fires", () => {
+  const t = setup();
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha3", originalText: "Alpha3", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.fireChange();
+  assert.equal(t.calls.length, 0);
+  fire(t.viewListeners, "pagehide");
+  assert.deepEqual(t.calls.at(-1), ["updateString", "R", "a", "Alpha3", "Alpha"]);
+});
+
+test("pagehide writes an open node input; visibilitychange to hidden flushes but keeps the input", () => {
+  const t = setup();
+  t.select("b");
+  t.key(tab);
+  const input = t.doc.body.children[0];
+  input.value = "typed";
+  t.doc.visibilityState = "hidden";
+  fire(t.docListeners, "visibilitychange");
+  assert.equal(t.doc.body.children.length, 1);
+  assert.ok(!t.calls.some((c) => c[0] === "updateString"));
+  fire(t.viewListeners, "pagehide");
+  assert.equal(t.doc.body.children.length, 0);
+  assert.ok(t.calls.some((c) => c[0] === "updateString" && c[3] === "typed"));
+});
+
+test("visibilitychange to visible does not flush; listeners are removed on unmount", () => {
+  const t = setup();
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha4", originalText: "Alpha4", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.fireChange();
+  fire(t.docListeners, "visibilitychange");
+  assert.equal(t.calls.length, 0);
+  assert.equal(t.docListeners.length, 1);
+  assert.equal(t.viewListeners.length, 1);
+  t.unmount();
+  assert.equal(t.docListeners.length, 0);
+  assert.equal(t.viewListeners.length, 0);
+});
+
+test("flush ignores a stale gesture, and a pass deferred over 4 s runs forced on the next change", () => {
+  let clock = 1000;
+  const t = setup({ mmOpts: { now: () => clock } });
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha5", originalText: "Alpha5", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.app.state.cursorButton = "down";
+  t.fireChange();
+  t.flush();
+  assert.equal(t.calls.length, 0);
+  clock += 4500;
+  t.fireChange();
+  t.flush();
+  assert.deepEqual(t.calls.at(-1), ["updateString", "R", "a", "Alpha5", "Alpha"]);
+});
+
+test("pagehide with a stale pointer-down flag still flushes", () => {
+  const t = setup();
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha6", originalText: "Alpha6", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.app.state.cursorButton = "down";
+  fire(t.viewListeners, "pagehide");
+  assert.deepEqual(t.calls.at(-1), ["updateString", "R", "a", "Alpha6", "Alpha"]);
+});
+
+test("dispose flushes a pending pass before teardown", () => {
+  const t = setup();
+  const txt = t.elements().find((e) => e.containerId === t.el("a").id);
+  t.app.state.editingTextElement = { id: txt.id };
+  t.fireChange();
+  t.flush();
+  t.setElements(t.elements().map((e) => (e.id === txt.id ? { ...e, text: "Alpha7", originalText: "Alpha7", version: e.version + 1 } : e)));
+  t.app.state.editingTextElement = null;
+  t.fireChange();
+  t.unmount();
+  assert.deepEqual(t.calls.at(-1), ["updateString", "R", "a", "Alpha7", "Alpha"]);
+});
+
+test("commit goes through the injected guardedWrite; a refusal keeps the tree and skips the snapshot", () => {
+  const seen = [];
+  let allow = false;
+  const guardedWrite = (app, opts) => { seen.push(opts); if (!allow && !opts.force) return false; const next = typeof opts.next === "function" ? opts.next(app.getSceneElementsIncludingDeleted()) : opts.next; app.updateScene({ elements: next, captureUpdate: opts.captureUpdate }); return true; };
+  const t = setup({ mmOpts: { guardedWrite }, mountOpts: { drawingUid: "D1" } });
+  const before = t.elements();
+  const base = seen.length;
+  t.select("b");
+  t.key(tab);
+  const call = seen.at(base);
+  assert.ok(call);
+  assert.equal(call.drawingUid, "D1");
+  assert.equal(call.label, "Mind map");
+  assert.equal(call.captureUpdate, "NEVER");
+  assert.equal(call.force, false);
+  assert.equal(t.elements(), before);
+  allow = true;
+  call.onApplyAnyway();
+  assert.equal(seen.at(-1).force, true);
+  assert.notEqual(t.elements(), before);
+});
+
+test("detach through the guard: a refusal keeps the watch and projection; the Alt+Backspace double press forces", async () => {
+  const seen = [];
+  const guardedWrite = (app, opts) => { seen.push(opts); if (!opts.force) return false; app.updateScene({ elements: typeof opts.next === "function" ? opts.next(app.getSceneElementsIncludingDeleted()) : opts.next }); return true; };
+  const t = setup({ mmOpts: { guardedWrite } });
+  t.select("R");
+  t.key(altBack);
+  t.key(altBack);
+  await Promise.resolve();
+  assert.equal(seen.at(-1).force, true);
+  assert.equal(t.watches.get("R").live, false);
+  assert.equal(t.live().length, 0);
+});
+
+const realGuardSetup = (raw) => {
+  const refusals = [];
+  const guard = createWriteGuard({ toaster: { show: (m) => refusals.push(String(m)) } });
+  const t = setup({ raw, mmOpts: { guardedWrite: guard.guardedWrite }, mountOpts: { drawingUid: "D1" } });
+  return { t, refusals };
+};
+
+const bigRaw = (rootExtra = {}) => blk("R", "Root", ["c1", "c2", "c3", "c4", "c5"].map((u) => blk(u, `Child ${u}`)), rootExtra);
+
+test("F on a root with many children folds through the guard without a refusal", async () => {
+  const { t, refusals } = realGuardSetup(bigRaw());
+  assert.ok(t.live().length > 10);
+  t.select("R");
+  t.key({ code: "KeyF", key: "f", altKey: true });
+  await Promise.resolve();
+  assert.ok(t.live().length <= 2, `live ${t.live().length}`);
+  assert.deepEqual(t.calls.at(-1), ["setOpen", "R", "R", false]);
+  assert.deepEqual(refusals, []);
+});
+
+test("an outline fold of the root (open false, no block removed) is applied, not refused", () => {
+  const { t, refusals } = realGuardSetup(bigRaw());
+  const before = t.live().length;
+  assert.ok(before > 10);
+  t.watches.get("R").cb(bigRaw({ ":block/open": false }));
+  t.flush();
+  assert.ok(t.live().length <= 2, `live ${t.live().length}`);
+  assert.deepEqual(refusals, []);
 });

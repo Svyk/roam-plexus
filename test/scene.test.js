@@ -334,3 +334,37 @@ test("crop == null keeps rect/poly identical", () => {
   nearAll(regionSceneBBox({ kind: "rect", el: "p", f: [0.25, 0.5, 0.5, 0.25] }, [img]).bbox, [60, 70, 160, 95]);
   nearAll(regionSceneBBox({ kind: "poly", el: "p", p: [0.2, 0.2, 0.6, 0.2, 0.4, 0.8] }, [img]).bbox, [50, 40, 130, 100]);
 });
+
+test("regionSceneBBox with a shared index matches the unindexed result for every kind", () => {
+  const img = { id: "img", type: "image", x: 10, y: 20, width: 200, height: 100, angle: 0, isDeleted: false };
+  const els = [
+    { id: "a", type: "rectangle", x: 0, y: 0, width: 50, height: 50, angle: 0, isDeleted: false, groupIds: ["g1"] },
+    { id: "b", type: "rectangle", x: 100, y: 100, width: 50, height: 50, angle: 0, isDeleted: false, groupIds: ["g1", "g2"] },
+    { id: "dead", type: "rectangle", x: 900, y: 900, width: 5, height: 5, angle: 0, isDeleted: true },
+    { id: "frm", type: "frame", name: "F", x: 0, y: 0, width: 300, height: 200, angle: 0, isDeleted: false },
+    { id: "txt", type: "text", x: 0, y: 0, width: 5, height: 5, angle: 0, isDeleted: false },
+    img,
+  ];
+  const live = els.filter((e) => !e.isDeleted);
+  const index = { live, byId: new Map(live.map((e) => [e.id, e])) };
+  const regions = [
+    { kind: "area", ids: ["a", "b", "nope"], pad: 5 },
+    { kind: "area", ids: ["nope"] },
+    { kind: "rect", el: "img", f: [0.1, 0.1, 0.5, 0.5] },
+    { kind: "rect", el: "a", f: [0, 0, 1, 1] },
+    { kind: "rect", el: "nope", f: [0, 0, 1, 1] },
+    { kind: "poly", el: "img", p: [0, 0, 1, 0, 1, 1] },
+    { kind: "group", groupId: "g1", pad: 2 },
+    { kind: "group", groupId: "g2" },
+    { kind: "group", groupId: "zzz" },
+    { kind: "frame", frameId: "frm", pad: 4 },
+    { kind: "cframe", frameId: "frm" },
+    { kind: "cframe", frameId: "txt" },
+    { kind: "cframe", frameId: "nope" },
+    { kind: "imgrect", el: "img" },
+  ];
+  for (const region of regions) {
+    assert.deepEqual(regionSceneBBox(region, els, {}, index), regionSceneBBox(region, els, {}), JSON.stringify(region));
+  }
+  assert.ok(index.byGroup instanceof Map);
+});

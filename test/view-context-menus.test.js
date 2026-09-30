@@ -51,11 +51,13 @@ test("every label is registered and removed on dispose", () => {
     "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Refresh crop",
     "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG",
     "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Region settings…",
+    "Plexus: Copy region link",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
     "Plexus: Region on image", "Plexus: Present frames", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
+    "Plexus: Select on drawing", "Plexus: Update region from selection", "Plexus: Repair region", "Plexus: Copy region link",
   ]);
   dispose();
   assert.equal(api.commands.blockRefContextMenu.size, 0);

@@ -60,3 +60,14 @@ export function isHostDark(doc) {
 export function resetThemeMemo() {
   memo = null;
 }
+
+export function motionOk(doc, animationSetting) {
+  if (animationSetting === "off") return false;
+  if (animationSetting === "on") return true;
+  try {
+    const mq = doc?.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)");
+    return mq ? !mq.matches : true;
+  } catch {
+    return true;
+  }
+}

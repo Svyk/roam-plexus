@@ -189,3 +189,12 @@ test("put with persist:false stays in memory only", async () => {
   assert.ok(cache.peek("v3|mem"));
   assert.equal(idb.rows.size, 0);
 });
+
+test("png2x tier keys and thumbKey follow the cropKey shape", async () => {
+  const { png2xKey, thumbKey, TIER_PNG2X, TIER_PNG2X_DARK, cropKey: ck } = await import("../src/host/cache.js");
+  assert.equal(TIER_PNG2X, "png2x");
+  assert.equal(TIER_PNG2X_DARK, "png2x-dark");
+  assert.equal(png2xKey({ regionUid: "r", geometryKey: "g", drawingHash: "h" }), "v3|r|g|h|png2x");
+  assert.equal(png2xKey({ regionUid: "r", geometryKey: "g", drawingHash: "h", dark: true }), "v3|r|g|h|png2x-dark");
+  assert.equal(thumbKey({ uid: "u", hash: "hh", maxWidth: 160 }), ck({ regionUid: "u", geometryKey: "thumb", drawingHash: "hh|160", tier: "png" }));
+});

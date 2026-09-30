@@ -4,6 +4,7 @@ const MAX_W = 480;
 const MAX_H = 360;
 const GAP = 6;
 const EDGE = 4;
+const HEAD_H = 18;
 
 export function createCropPopover({ doc, delayMs = 300 }) {
   let portal = null;
@@ -38,12 +39,62 @@ export function createCropPopover({ doc, delayMs = 300 }) {
     const scale = Math.min(1, MAX_W / nw, MAX_H / nh);
     const w = Math.max(1, Math.round(nw * scale));
     const h = Math.max(1, Math.round(nh * scale));
+    // With a source peek the box is header + crop | thumbnail; flip and clamp use the combined size.
+    const peek = entry.peek;
+    const totalW = peek ? w + GAP + peek.w : w;
+    const totalH = peek ? HEAD_H + Math.max(h, peek.h) : h;
     const rect = anchor.getBoundingClientRect?.() || { left: 0, top: 0, bottom: 0 };
     let top = rect.bottom + GAP;
-    if (top + h > vh - EDGE) top = rect.top - GAP - h;
-    top = Math.max(EDGE, Math.min(top, vh - h - EDGE));
-    const left = Math.max(EDGE, Math.min(rect.left, vw - w - EDGE));
+    if (top + totalH > vh - EDGE) top = rect.top - GAP - totalH;
+    top = Math.max(EDGE, Math.min(top, vh - totalH - EDGE));
+    const left = Math.max(EDGE, Math.min(rect.left, vw - totalW - EDGE));
     return { w, h, top, left };
+  }
+
+  function peekHead(peek) {
+    const head = doc.createElement("div");
+    head.className = "plexus-peek-head";
+    head.style.height = `${HEAD_H}px`;
+    head.style.overflow = "hidden";
+    head.style.whiteSpace = "nowrap";
+    head.style.textOverflow = "ellipsis";
+    head.style.fontSize = "12px";
+    head.textContent = [peek.title, peek.kind].filter(Boolean).join(" \u00b7 ");
+    return head;
+  }
+
+  // Crop on the left; the thumbnail on the right with an absolutely positioned outline div (no canvas, no decode).
+  function peekRow(img, peek, invertClass) {
+    const row = doc.createElement("div");
+    row.className = "plexus-peek-row";
+    row.style.display = "flex";
+    row.style.alignItems = "flex-start";
+    row.style.gap = `${GAP}px`;
+    const thumb = doc.createElement("div");
+    thumb.className = "plexus-peek-thumb";
+    thumb.style.position = "relative";
+    thumb.style.flex = "none";
+    thumb.style.width = `${peek.w}px`;
+    thumb.style.height = `${peek.h}px`;
+    const timg = doc.createElement("img");
+    timg.className = `plexus-crop plexus-peek-img${invertClass}`;
+    timg.draggable = false;
+    timg.style.width = `${peek.w}px`;
+    timg.style.height = `${peek.h}px`;
+    timg.src = peek.url;
+    const outline = doc.createElement("div");
+    outline.className = "plexus-peek-outline";
+    outline.style.position = "absolute";
+    outline.style.boxSizing = "border-box";
+    outline.style.border = "2px solid #e8590c";
+    outline.style.pointerEvents = "none";
+    outline.style.left = `${peek.rect.x}px`;
+    outline.style.top = `${peek.rect.y}px`;
+    outline.style.width = `${peek.rect.w}px`;
+    outline.style.height = `${peek.rect.h}px`;
+    thumb.append(timg, outline);
+    row.append(img, thumb);
+    return row;
   }
 
   function show(anchor, getEntry) {
@@ -61,14 +112,16 @@ export function createCropPopover({ doc, delayMs = 300 }) {
         portal.style.zIndex = "100001";
         portal.style.left = `${box.left}px`;
         portal.style.top = `${box.top}px`;
+        const invertClass = `${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
         const img = doc.createElement("img");
-        img.className = `plexus-crop${entry.invertible ? " plexus-crop--invertible" : ""}${entry.invertible && isHostDark(doc) && !hostDarkMarker(doc) ? " plexus-crop--invert" : ""}`;
+        img.className = `plexus-crop${invertClass}`;
         img.draggable = false;
         img.style.width = `${box.w}px`;
         img.style.height = `${box.h}px`;
         img.onerror = () => { if (mine === token) hide(); };
         img.src = entry.url;
-        portal.append(img);
+        if (entry.peek) portal.append(peekHead(entry.peek), peekRow(img, entry.peek, invertClass));
+        else portal.append(img);
         doc.body.append(portal);
         scrollTarget = doc.defaultView;
         scrollTarget?.addEventListener?.("scroll", onDismiss, true);

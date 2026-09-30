@@ -4,6 +4,23 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.8.0]
+
+- Regions layer: a "Regions" toolbar toggle (and `Plexus: Toggle regions layer`) outlines every drawing region in the open editor with a small caption chip. Click selects the region's elements, Shift-click opens the region block in the sidebar. Image kinds are not drawn; the layer is capped at 150 regions.
+- `Plexus: Regions for all frames` creates a frame region for each frame that has none (at most 50 per run).
+- `Plexus: Audit regions on this page` and `Plexus: Audit regions in graph` list broken regions in an in-page dialog with Open and Repair.
+- Block menu: Select on drawing, Update region from selection, Repair region, Copy region link. Canvas menu: Copy drawing ref, Copy drawing embed, Regions for all frames, Restore before last Plexus change, Select text only, Remove element link.
+- Write guard: a Plexus scene write that would remove four fifths or more of a drawing of more than 10 elements is refused with an "Apply anyway" toast. `Plexus: Restore before last Plexus change` undoes the last removing write (five per drawing, kept after the editor closes). Mind-map projection writes are guarded but not snapshotted, because the outline is their source of truth.
+- Guard exemptions (only add elements, or write no elements): `addViaPaste` (migration, API `add`), `native.insertElements` (embeds), crop-to-region and the refresh paths. The roadmap's list of these as guarded was wrong.
+- Automation API v4: `scene(uid).remove(ids, {force})`. Without `force`, a refused removal throws after the toast.
+- Opening a region tweens the view (`Animation`: system / on / off; system follows reduced motion), respects a new "Zoom limit" (100 / 150 / 200), and pushes view history. Toolbar Back and Alt+Left (with nothing selected) return to the previous view. The spotlight is two pulses, or static under reduced motion.
+- Setting "Open region links in the drawing": a page navigation to a region block opens the region (fresh load, or a push or replace navigation where the browser has the Navigation API; without it only the fresh-load check lands, never on Back or Forward).
+- Crops: 2x PNG tier (`png2x`, plus a dark variant) captured natively when the editor is open, used by Copy crop as PNG and download; hovering a region ref shows a source peek from the cached thumbnail.
+- Mind map: pending edits flush on `pagehide` and when the tab is hidden; a pass deferred by a gesture runs after 4 s. Limit: an unload with a native node-text edit still in progress can lose that edit, because Roam gives no unload hook that waits.
+- Compass 0.4.0 opens drawing and region nodes through `RoamPlexus.open`.
+- View history: only region opens push (Open region, region-link landing, Compass). Presenter slide jumps, Roam link jumps, mind-map arrow pans and API zoomTo do not. "Return to source block" is deferred.
+- Crop tiers: hot crops already painted crisp from the svg, and 0.7.0 already rasterized a warm svg at 2x for Copy crop as PNG. The new png2x tiers add an exact dark paint (including regions over images) and a PNG when the svg cannot rasterize. The cold 1x path after a reload is unchanged and is the only path on encrypted graphs, so the "1x cold crops" open item stays open.
+
 ## [0.7.0]
 
 - Quiet regions: new regions no longer get a placeholder caption. Captions come from the selection (visual order, container labels first, joined with " · ", 60 characters), or stay empty. Setting "Caption under crops" (written / always / never) plus per-ref "Hide caption" / "Show caption"; "Caption mode" (auto / ask / none).

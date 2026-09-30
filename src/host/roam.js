@@ -139,14 +139,77 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return lock.value;
   }
 
-  async function updateRegionString(drawingUid, regionUid, regionString) {
+  // Creates several region blocks under one lock and one container. Stops at the first failure and returns the uids made.
+  async function createRegions(drawingUid, regionStrings) {
+    const graph = api.graph.name;
+    const made = [];
+    const lock = await withLockFn(lockName(graph, drawingUid), async () => {
+      const containerUid = await ensureRegionContainer(drawingUid);
+      for (const string of regionStrings || []) {
+        const uid = api.util.generateUID();
+        try {
+          await api.data.block.create({
+            location: { "parent-uid": containerUid, order: "last" },
+            block: { uid, string },
+          });
+        } catch (error) {
+          console.warn("[plexus] create regions stopped", error);
+          break;
+        }
+        made.push(uid);
+      }
+      return made;
+    });
+    if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
+    return lock.value;
+  }
+
+  // With { expect }, the block is re-pulled inside the lock and the write throws (code "changed") when its string differs.
+  async function updateRegionString(drawingUid, regionUid, regionString, { expect } = {}) {
     const graph = api.graph.name;
     const lock = await withLockFn(lockName(graph, drawingUid), async () => {
+      if (expect !== undefined && pullBlock(regionUid)?.string !== expect) {
+        throw Object.assign(new Error("[plexus] region changed elsewhere"), { code: "changed" });
+      }
       await api.data.block.update({ block: { uid: regionUid, string: regionString } });
       return regionUid;
     });
     if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
     return lock.value;
+  }
+
+  const AUDIT_REGION_QUERY = (page) => `[:find ?u ?s ?pu ?ps ?pt ${page ? ":in $ ?pg" : ""} :where [?r :node/title "plexus-region"] [?b :block/refs ?r] [?b :block/uid ?u] [?b :block/string ?s] [?b :block/page ?p] [?p :block/uid ?pg2] [?p :node/title ?pt] ${page ? "[(= ?pg2 ?pg)]" : ""} [?par :block/children ?b] [?par :block/uid ?pu] [(get-else $ ?par :block/string "") ?ps]]`;
+  const AUDIT_CONTAINER_QUERY = (page) => `[:find ?cu ?pu ?ps ?pt ${page ? ":in $ ?pg" : ""} :where [?c :block/string "${CONTAINER_STRING}"] [?c :block/uid ?cu] [?c :block/page ?p] [?p :block/uid ?pg2] [?p :node/title ?pt] ${page ? "[(= ?pg2 ?pg)]" : ""} [?par :block/children ?c] [?par :block/uid ?pu] [(get-else $ ?par :block/string "") ?ps]]`;
+  const byUid = (a, b) => (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0);
+
+  // Uid of the page the main window shows (a block resolves to its page); null when nothing is open.
+  async function openPageUid() {
+    let uid;
+    try { uid = await api.ui?.mainWindow?.getOpenPageOrBlockUid?.(); } catch { uid = null; }
+    if (!uid) return null;
+    let raw;
+    try { raw = api.data.pull("[:node/title {:block/page [:block/uid]}]", [":block/uid", uid]); } catch { raw = null; }
+    if (!raw) return null;
+    if (raw[":node/title"] != null) return uid;
+    const page = raw[":block/page"];
+    return (Array.isArray(page) ? page[0] : page)?.[":block/uid"] ?? null;
+  }
+
+  // Blocks that reference page plexus-region, each with its parent: [{ uid, string, parentUid, parentString, pageTitle }].
+  // { pageUid } limits the query to one page.
+  function regionBlocksForAudit({ pageUid } = {}) {
+    const rows = (pageUid ? api.data.q(AUDIT_REGION_QUERY(true), pageUid) : api.data.q(AUDIT_REGION_QUERY(false))) || [];
+    return rows
+      .map((r) => ({ uid: r[0], string: String(r[1] ?? ""), parentUid: r[2], parentString: String(r[3] ?? ""), pageTitle: r[4] ?? null }))
+      .sort(byUid);
+  }
+
+  // Region containers with the block that owns each: [{ uid, ownerUid, ownerString, pageTitle }].
+  function containersForAudit({ pageUid } = {}) {
+    const rows = (pageUid ? api.data.q(AUDIT_CONTAINER_QUERY(true), pageUid) : api.data.q(AUDIT_CONTAINER_QUERY(false))) || [];
+    return rows
+      .map((r) => ({ uid: r[0], ownerUid: r[1], ownerString: String(r[2] ?? ""), pageTitle: r[3] ?? null }))
+      .sort(byUid);
   }
 
   function pageUidByTitle(title) {
@@ -281,7 +344,11 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     allRegionBlocks,
     ensureRegionContainer,
     createRegion,
+    createRegions,
     updateRegionString,
+    openPageUid,
+    regionBlocksForAudit,
+    containersForAudit,
     createDrawing,
     drawingsOn,
     resolveUidKind,

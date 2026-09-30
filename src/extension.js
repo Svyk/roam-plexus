@@ -5,7 +5,7 @@ import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
 import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
-import { baseZIndex, createEditorToolbar } from "./view/toolbar.js";
+import { baseZIndex, createEditorToolbar, installBackKey } from "./view/toolbar.js";
 import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
 import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
@@ -17,20 +17,27 @@ import { clearLinkTooltip, installLinkInterception, navigateToTarget } from "./h
 import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublicApi } from "./api.js";
 import { createMindMap } from "./view/mindmap.js";
 import { createMmWriter } from "./host/mmwrites.js";
+import { createWriteGuard } from "./host/guard.js";
+import * as camera from "./host/camera.js";
+import { createRegionsLayer } from "./view/regions-layer.js";
+import { installRegionLanding } from "./view/landing.js";
+import { auditOpenTarget, openAuditDialog } from "./view/audit-dialog.js";
 import { createMeasurer } from "./host/measure.js";
 import { createActions } from "./actions.js";
 import { clearImageMemo } from "./host/image-source.js";
 import { createLinkSuggest, installSuggestAutoAttach } from "./view/link-suggest.js";
-import { installCanvasMenu, installRoamMenus } from "./view/context-menus.js";
+import { installCanvasMenu, installRoamMenus, plexusCanvasItems } from "./view/context-menus.js";
 import { openCaptionPrompt } from "./view/caption-prompt.js";
 import { openSettingsDialog } from "./view/settings-dialog.js";
-import { isHostDark, resetThemeMemo } from "./host/theme.js";
+import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
+import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
 
 let activeLifecycle = null;
 
 const THUMB_WIDTHS = [160, 480];
 const THUMB_WARM_DELAY_MS = 1500;
 const REFRESH_DEBOUNCE_MS = 300;
+const LAYER_REFRESH_MS = 200;
 
 function createEmitter() {
   const listeners = new Map();
@@ -77,6 +84,9 @@ export async function onload({ extensionAPI, extension }) {
     const getSettings = () => readSettings(extensionAPI);
 
     let actions = null;
+    let audit = null;
+    let toggleLayer = null;
+    let backCommand = null;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
@@ -109,11 +119,36 @@ export async function onload({ extensionAPI, extension }) {
         onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
         onEditEmbed: () => actions.editEmbed(),
         canEditEmbed: () => actions.canEditEmbed(),
+        onToggleRegions: () => toggleRegionsLayer(),
+        regionsVisible: () => !!mounted?.layer?.visible(),
+        onBack: () => goBack(),
+        canBack: () => (mounted?.history?.size() ?? 0) > 0,
       });
       lifecycle.add(() => toolbar.dispose());
-      const scenes = createSceneRegistry({ native, doc });
+      const guard = createWriteGuard({
+        toaster,
+        isActive: (app, uid) => {
+          const editor = native.activeEditor(doc);
+          return editor?.app === app && editor.drawingUid === uid;
+        },
+      });
+      lifecycle.add(() => guard.dispose());
+      const scenes = createSceneRegistry({ native, doc, guard });
       lifecycle.add(() => scenes.dispose());
       let mounted = null;
+      let layerOn = false;
+      const toggleRegionsLayer = () => {
+        layerOn = !layerOn;
+        const layer = mounted?.layer;
+        if (layer) { if (layerOn) layer.show(); else layer.hide(); }
+        toolbar.refresh();
+        return layerOn;
+      };
+      const goBack = async () => {
+        const current = mounted;
+        if (!current?.history) return false;
+        return current.history.back(current.app, { animate: motionOk(doc, getSettings().animation), doc });
+      };
       let regionref = null;
       const zIndexFor = (el) => {
         const outer = el?.closest?.(".excalidraw-outer-container");
@@ -125,7 +160,7 @@ export async function onload({ extensionAPI, extension }) {
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
       const measurer = createMeasurer({ doc });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native, toaster, guardedWrite: guard.guardedWrite, zIndexFor: (outer) => (outer ? baseZIndex(doc, outer) : 1000) });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
@@ -144,12 +179,57 @@ export async function onload({ extensionAPI, extension }) {
         mindmap,
         getEmbedOverlay: () => mounted?.overlay ?? null,
         refreshRegion: (uid, opts) => regionref?.refreshRegion(uid, opts),
+        guard,
+        camera,
+        motionOk,
+        viewHistory: (app) => (mounted?.app === app ? mounted.history : null),
       });
       lifecycle.add(() => actions.dispose());
 
       const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
       lifecycle.add(() => uninstallPublicApi(publicApi, { win: flagTarget }));
+
+      lifecycle.add(installRegionLanding({
+        doc,
+        api,
+        host,
+        getSettings,
+        openRegion: (uid) => actions.openRegion(uid).catch((error) => console.warn("[plexus] open failed", error)),
+      }));
+      const labelOf = (region) => {
+        try {
+          const src = host.labelSource?.(region.drawingUid) ?? { string: "", pageTitle: null };
+          return regionLabel({
+            kind: region.kind,
+            caption: region.caption ?? "",
+            drawingTitle: drawingTitleOf(src.string, src.pageTitle),
+            imageAlt: isImageKind(region.kind) ? imageAltAt(src.string, region.i) : null,
+            resolveBlock: (u) => host.labelSource?.(u)?.string ?? "",
+          });
+        } catch { return "Region"; }
+      };
+      let auditHandle = null;
+      lifecycle.add(() => auditHandle?.close?.());
+      const openAudit = async (scope) => {
+        const rows = await actions.auditRegions({ scope });
+        if (!rows) return;
+        const previous = auditHandle;
+        auditHandle = openAuditDialog({
+          doc,
+          rows,
+          dark: isHostDark(doc),
+          onOpen: (row) => {
+            const target = auditOpenTarget(row);
+            return target.via === "region" ? actions.openRegion(target.uid) : host.openBlock(target.uid);
+          },
+          onRepair: (row) => actions.repairRegion(row.uid),
+        });
+        previous?.close?.();
+      };
+      audit = openAudit;
+      toggleLayer = toggleRegionsLayer;
+      backCommand = goBack;
 
       regionref = createRegionRefRenderer({
         host,
@@ -255,7 +335,8 @@ export async function onload({ extensionAPI, extension }) {
           const mountUid = host.blockUidFromNode(el);
           let mountHash = "";
           try { mountHash = (mountUid && host.drawing(mountUid)?.hash) || ""; } catch (error) { console.warn("[plexus] mount hash failed", error); }
-          mounted = { uid: mountUid, app, disposers: [], overlay: null, hash: mountHash };
+          const history = camera.createViewHistory({ onChange: () => toolbar.refresh() });
+          mounted = { uid: mountUid, app, disposers: [], overlay: null, hash: mountHash, history, layer: null };
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -270,27 +351,44 @@ export async function onload({ extensionAPI, extension }) {
           mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
           mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
-          mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000 }));
+          mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000, drawingUid: mountUid }));
+          mounted.disposers.push(installBackKey({ containerEl: el, app, canBack: () => history.size() > 0, onBack: () => goBack() }));
+          mounted.disposers.push(() => history.clear());
+          let backlinks = null;
+          if (mountUid) {
+            const layer = createRegionsLayer({
+              doc, app, containerEl: el, host, drawingUid: mountUid, native,
+              zIndex: outer ? baseZIndex(doc, outer) : 1000,
+              labelOf,
+              debug: () => getSettings().debug,
+              onSelect: (regionUid) => actions.selectRegionOnDrawing(regionUid),
+              onOpenSidebar: (regionUid) => {
+                Promise.resolve(host.openBlock(regionUid, { sidebar: true }))
+                  .then(() => toaster.show("Opened in sidebar"))
+                  .catch((error) => console.warn("[plexus] open in sidebar failed", error));
+              },
+            });
+            mounted.layer = layer;
+            mounted.disposers.push(() => { layer.dispose(); if (mounted?.layer === layer) mounted.layer = null; });
+            if (layerOn) layer.show();
+            let layerTimer = null;
+            const onChange = (detail) => {
+              if (detail?.kind !== "region") return;
+              if (layerTimer != null) clearTimeout(layerTimer);
+              layerTimer = setTimeout(() => {
+                layerTimer = null;
+                try { layer.refresh(); backlinks?.refresh(); } catch (error) { console.warn("[plexus] layer refresh failed", error); }
+              }, LAYER_REFRESH_MS);
+            };
+            emitter.on("change", onChange);
+            mounted.disposers.push(() => { emitter.off("change", onChange); if (layerTimer != null) clearTimeout(layerTimer); layerTimer = null; });
+          }
           mounted.disposers.push(installCanvasMenu({
             doc, app, containerEl: el,
-            getItems: () => {
-              const guard = (fn) => { try { return !!fn(); } catch { return false; } };
-              const call = (name, fn) => () => fn().catch?.((error) => console.warn("[plexus]", name, "failed", error));
-              return [
-                { id: "region", label: "Plexus: Create region", enabled: guard(() => native.selectedElementIds(app).length > 0), run: call("region", () => actions.createAreaRegion()) },
-                { id: "frame", label: "Plexus: Frame region", enabled: guard(() => actions.isFrameSelected()), run: call("frame", () => actions.createFrameRegion()) },
-                { id: "crop", label: "Plexus: Region from crop", enabled: guard(() => actions.hasCroppedImageSelected()), run: call("crop", () => actions.regionFromCrop()) },
-                { id: "image", label: "Plexus: Image region", enabled: guard(() => actions.hasSingleImageSelected()), run: call("image", () => actions.createImageRegion()) },
-                { id: "embed", label: "Plexus: Embed block from clipboard", enabled: true, run: call("embed", () => actions.insertEmbedFromClipboard()) },
-                { id: "edit-embed", label: "Plexus: Edit embed", enabled: guard(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
-                { id: "present", label: "Plexus: Present", enabled: guard(() => actions.hasFrames()), run: call("present", () => actions.presentDrawing()) },
-                { id: "mindmap", label: "Plexus: Mind map", enabled: true, run: call("mindmap", () => actions.startMindMap()) },
-                { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
-              ];
-            },
+            getItems: () => plexusCanvasItems({ app, native, actions, openSettings, drawingUid: mountUid, guard }),
           }));
           if (mounted.uid && getSettings().showBacklinks) {
-            const backlinks = createCanvasBacklinks({
+            backlinks = createCanvasBacklinks({
               doc, api, host, app, containerEl: el, drawingUid: mounted.uid, zIndex: outer ? baseZIndex(doc, outer) : 1000, native,
               openTarget: (target, { sidebar } = {}) => {
                 if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
@@ -334,6 +432,26 @@ export async function onload({ extensionAPI, extension }) {
       await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });
     }
     await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Region settings", callback: () => openSettings() });
+    const unavailable = (name) => console.warn("[plexus] unavailable outside Roam:", name);
+    const guarded = (name, fn) => () => {
+      if (!fn()) return unavailable(name);
+      try {
+        const out = fn()();
+        if (out && typeof out.catch === "function") return out.catch((error) => console.warn("[plexus]", name, "failed", error));
+        return out;
+      } catch (error) { console.warn("[plexus]", name, "failed", error); }
+    };
+    const extraCommands = [
+      ["Plexus: Regions for all frames", "regionsForAllFrames", () => actions && (() => actions.regionsForAllFrames())],
+      ["Plexus: Audit regions on this page", "auditPage", () => audit && (() => audit("page"))],
+      ["Plexus: Audit regions in graph", "auditGraph", () => audit && (() => audit("graph"))],
+      ["Plexus: Restore before last Plexus change", "restore", () => actions && (() => actions.restoreBeforeLastPlexusChange())],
+      ["Plexus: Toggle regions layer", "toggleLayer", () => toggleLayer && (() => toggleLayer())],
+      ["Plexus: Back to previous view", "back", () => backCommand && (() => backCommand())],
+    ];
+    for (const [label, name, resolve] of extraCommands) {
+      await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: guarded(name, resolve) });
+    }
     await lifecycle.command(extensionAPI.ui.commandPalette, {
       label: "Plexus: Mind map from outline",
       callback: () => {

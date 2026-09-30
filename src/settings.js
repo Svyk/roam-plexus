@@ -15,6 +15,9 @@ export const SETTING_IDS = Object.freeze({
   pinSize: "pin-size",
   numberPins: "number-pins",
   debug: "debug",
+  zoomCap: "zoom-cap",
+  animation: "animation",
+  regionLanding: "region-landing",
 });
 
 const DEFAULTS = Object.freeze({
@@ -32,10 +35,15 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.pinSize]: "8",
   [SETTING_IDS.numberPins]: false,
   [SETTING_IDS.debug]: false,
+  [SETTING_IDS.zoomCap]: "100",
+  [SETTING_IDS.animation]: "system",
+  [SETTING_IDS.regionLanding]: false,
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 export const PIN_SIZES = Object.freeze([4, 8, 12]);
+export const ZOOM_CAPS = Object.freeze(["100", "150", "200"]);
+export const ANIMATIONS = Object.freeze(["system", "on", "off"]);
 
 export async function initializeSettings(extensionAPI) {
   if (extensionAPI.settings.canSet === false) return;
@@ -66,6 +74,9 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.captionMode, name: "Caption mode", description: "auto: fill a new region's caption from its text and source blocks. ask: prompt for it. none: stores no words; links to source blocks are still stored.", action: { type: "select", items: ["auto", "ask", "none"] } },
       { id: SETTING_IDS.pinSize, name: "Pin size (%)", description: "Side of a pin dropped by clicking an image, as a percent of the image's shorter side.", action: { type: "select", items: ["4", "8", "12"] } },
       { id: SETTING_IDS.numberPins, name: "Number pins", description: "Pre-fill each new pin's caption with the next number on that image.", action: { type: "switch" } },
+      { id: SETTING_IDS.zoomCap, name: "Zoom limit (%)", description: "Highest zoom when Plexus moves the view to a region.", action: { type: "select", items: ["100", "150", "200"] } },
+      { id: SETTING_IDS.animation, name: "Animation", description: "system: follow the operating system's reduced-motion setting. on: always animate. off: never animate.", action: { type: "select", items: ["system", "on", "off"] } },
+      { id: SETTING_IDS.regionLanding, name: "Open region links in the drawing", description: "Opening a region's own page link (for example from a shared URL) opens the drawing zoomed to that region.", action: { type: "switch" } },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
     ],
   };
@@ -107,6 +118,9 @@ export function readSettings(extensionAPI) {
     pinSize: PIN_SIZES.includes(Number(get(SETTING_IDS.pinSize))) ? Number(get(SETTING_IDS.pinSize)) : 8,
     numberPins: !!get(SETTING_IDS.numberPins),
     debug: !!get(SETTING_IDS.debug),
+    zoomCap: Number(oneOf(String(get(SETTING_IDS.zoomCap)), ZOOM_CAPS, "100")) / 100,
+    animation: oneOf(get(SETTING_IDS.animation), ANIMATIONS, "system"),
+    regionLanding: !!get(SETTING_IDS.regionLanding),
   };
 }
 

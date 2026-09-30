@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isHostDark, luminance, parseColor, resetThemeMemo } from "../src/host/theme.js";
+import { isHostDark, luminance, motionOk, parseColor, resetThemeMemo } from "../src/host/theme.js";
 
 const el = (classes = [], bg = "rgba(0, 0, 0, 0)") => ({ classList: { contains: (c) => classes.includes(c) }, bg });
 const mk = ({ html = [], body = [], htmlBg, bodyBg } = {}) => {
@@ -47,4 +47,14 @@ test("no body gives false; the result is memoized for a second", () => {
   assert.equal(isHostDark(d), true);
   d.body.bg = "rgb(255, 255, 255)";
   assert.equal(isHostDark(d), true);
+});
+
+test("motionOk: off/on override; system follows prefers-reduced-motion; missing matchMedia counts as ok", () => {
+  const withMq = (matches) => ({ defaultView: { matchMedia: (q) => { assert.match(q, /prefers-reduced-motion: reduce/); return { matches }; } } });
+  assert.equal(motionOk(withMq(false), "off"), false);
+  assert.equal(motionOk(withMq(true), "on"), true);
+  assert.equal(motionOk(withMq(true), "system"), false);
+  assert.equal(motionOk(withMq(false), "system"), true);
+  assert.equal(motionOk({}, "system"), true);
+  assert.equal(motionOk({ defaultView: { matchMedia: () => { throw new Error("x"); } } }, "system"), true);
 });

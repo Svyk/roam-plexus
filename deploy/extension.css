@@ -651,3 +651,151 @@ input.plexus-portal.plexus-mm-input.plexus-caption-prompt {
   font-size: 14px;
   text-align: left;
 }
+
+/* == p8:layer == */
+.plexus-portal.plexus-regions-layer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-regions-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-regions-svg {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-region-outline {
+  fill: none;
+  stroke: #2d72d2;
+  stroke-width: 1px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-region-chip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  max-width: 240px;
+  height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid #2d72d2;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #1c2127;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.plexus-portal.plexus-regions-layer .plexus-region-chip:hover,
+.plexus-portal.plexus-regions-layer .plexus-region-chip:focus-visible {
+  background: #edf3fb;
+  outline: 2px solid #2d72d2;
+  outline-offset: 1px;
+}
+
+.plexus-portal.plexus-regions-layer--dark .plexus-region-outline {
+  stroke: #8abbff;
+}
+
+.plexus-portal.plexus-regions-layer--dark .plexus-region-chip {
+  border-color: #8abbff;
+  background: #252a31;
+  color: #dce0e5;
+}
+
+.plexus-portal.plexus-regions-layer--dark .plexus-region-chip:hover,
+.plexus-portal.plexus-regions-layer--dark .plexus-region-chip:focus-visible {
+  background: #30404d;
+  outline-color: #8abbff;
+}
+
+/* == p8:ui == */
+.plexus-audit .plexus-audit-page {
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.plexus-audit .plexus-audit-drawing {
+  margin-top: 4px;
+}
+
+.plexus-audit .plexus-audit-problem {
+  flex: 1 1 auto;
+}
+
+.plexus-audit .plexus-audit-status {
+  min-width: 3em;
+  opacity: 0.8;
+}
+
+.plexus-portal .plexus-toolbar-button[aria-pressed="true"] {
+  border-color: currentColor;
+}
+
+/* == p8:toast == */
+.plexus-portal.plexus-toast .plexus-toast-action {
+  margin-left: 12px;
+  padding: 2px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.plexus-portal.plexus-toast .plexus-toast-action:hover,
+.plexus-portal.plexus-toast .plexus-toast-action:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* == p8:motion == */
+@keyframes plexus-spotlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); }
+  50% { box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.7); }
+}
+
+@keyframes plexus-spotlight-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.plexus-portal.plexus-spotlight--pulse {
+  animation: plexus-spotlight-pulse 450ms ease-in-out 2, plexus-spotlight-fade 500ms ease-out 900ms forwards;
+}
+
+.plexus-portal.plexus-spotlight--static {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plexus-portal.plexus-spotlight--pulse {
+    animation: none;
+  }
+}

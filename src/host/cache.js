@@ -7,6 +7,19 @@ export function cropKey({ regionUid, geometryKey, drawingHash, tier }) {
   return `v${CACHE_VERSION}|${regionUid}|${geometryKey}|${drawingHash}|${tier}`;
 }
 
+export const TIER_PNG2X = "png2x";
+export const TIER_PNG2X_DARK = "png2x-dark";
+
+// Warm 2x PNG of a drawing-kind region (dark = the dark export). Read with peek only, never get.
+export function png2xKey({ regionUid, geometryKey, drawingHash, dark = false }) {
+  return cropKey({ regionUid, geometryKey, drawingHash, tier: dark ? TIER_PNG2X_DARK : TIER_PNG2X });
+}
+
+// Whole-drawing (or region-scoped) thumbnail key at one width; actions.thumbnailRun stores under the same shape.
+export function thumbKey({ uid, hash, maxWidth }) {
+  return cropKey({ regionUid: uid, geometryKey: "thumb", drawingHash: `${hash}|${maxWidth}`, tier: "png" });
+}
+
 const reqPromise = (request) => new Promise((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error);

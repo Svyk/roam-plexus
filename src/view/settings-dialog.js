@@ -26,6 +26,9 @@ const FIELDS = [
   { id: SETTING_IDS.captionMode, label: "Caption mode", type: "select", options: [["auto", "Auto"], ["ask", "Ask"], ["none", "None"]] },
   { id: SETTING_IDS.pinSize, label: "Pin size", type: "select", defaultIndex: 1, options: [["4", "4%"], ["8", "8%"], ["12", "12%"]] },
   { id: SETTING_IDS.numberPins, label: "Number pins", type: "checkbox", fallback: false },
+  { id: SETTING_IDS.zoomCap, label: "Zoom limit", type: "select", options: [["100", "100%"], ["150", "150%"], ["200", "200%"]] },
+  { id: SETTING_IDS.animation, label: "Animation", type: "select", options: [["system", "Follow system"], ["on", "On"], ["off", "Off"]] },
+  { id: SETTING_IDS.regionLanding, label: "Open region links in the drawing", type: "checkbox", fallback: false },
 ];
 
 export function openSettingsDialog({ doc, get = () => undefined, set = () => {}, onChanged = () => {}, zIndex = 100000, dark = false } = {}) {

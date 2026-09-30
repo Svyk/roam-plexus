@@ -126,7 +126,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 
 ## 8. Compass integration contract
 
-`window.RoamPlexus` (frozen, `apiVersion: 3`; v2 callers are unaffected, since every change is additive):
+`window.RoamPlexus` (frozen, `apiVersion: 4`; v2 and v3 callers are unaffected, since every change is additive):
 
 | Member | Returns | Notes |
 |---|---|---|
@@ -136,6 +136,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 | `thumbnail(uid, {maxWidth, render=false})` | `Promise<Blob|null>` | cache only unless `render`; never loads the module when `render=false` |
 | `regionsOf(uid)` | `[{uid, kind, caption, label}]` | one pull, no watch. `label` (v3, additive) is a plain one-line name of at most 80 characters: the caption with markup stripped, else the image alt text (image kinds), else `<drawing title> · <kind word>`. `"Region"` if it cannot be computed. Callers should use it only when it is a non-empty string, so v2 entries still work |
 | `drawingsOn(pageUid)` | `[uid]` | `data.q` over blocks with `:block/props`, capped 50 |
+| `scene(uid).remove(ids, {force})` | | v4. Removals go through the write guard: one that would drop a drawing of more than 10 elements to a fifth or less throws `Not applied: would remove N of M` after offering "Apply anyway" in a toast. `force: true` bypasses the check |
 | `addEventListener('change', cb)` / `removeEventListener` | | `{uid, kind: 'drawing' | 'region'}` after own writes and absorbed echoes |
 
 Compass changes (`~/roam-compass`), all graph-read-only:

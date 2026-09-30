@@ -1,8 +1,9 @@
+import { directGuard } from "./host/guard.js";
 import { drawingTitleOf, imageAltAt, isImageKind, regionLabel } from "./model/label.js";
 import { parseRegion } from "./model/region.js";
 import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport } from "./model/scene.js";
 
-export const API_VERSION = 3;
+export const API_VERSION = 4;
 
 const GONE = "Scene is no longer open";
 const FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
@@ -20,8 +21,8 @@ function invisible(el) {
 }
 
 // Per-editor scene objects for window.RoamPlexus.scene(uid). native supplies activeEditor, addViaPaste,
-// waitNotLoading, captureSelectionSvg and zoomTo.
-export function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame } = {}) {
+// waitNotLoading, captureSelectionSvg and zoomTo. guard supplies guardedWrite (the shrink guard; default: a direct write).
+export function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard } = {}) {
   let disposed = false;
   const scenes = new WeakMap();
   const subs = new Map();
@@ -33,11 +34,7 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
     const live = () => !released && !disposed && native.activeEditor(doc)?.app === app && native.activeEditor(doc)?.drawingUid === uid;
     const guard = () => { if (!live()) throw new Error(GONE); };
     const all = () => app.getSceneElementsIncludingDeleted?.() || [];
-    const write = (elements, appState) => {
-      const u = { elements };
-      if (appState) u.appState = appState;
-      app.updateScene({ ...u, captureUpdate: "IMMEDIATELY" });
-    };
+    const write = (next, label, { force = false } = {}) => writeGuard.guardedWrite(app, { drawingUid: uid, next, label, captureUpdate: "IMMEDIATELY", force });
 
     const scene = {
       uid,
@@ -96,7 +93,7 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
           groups = {};
           for (const el of next) if (keyOf.has(el.id) && !el.containerId) selection[el.id] = true;
         }
-        app.updateScene({ elements: next, appState: { selectedElementIds: selection, selectedGroupIds: groups } });
+        writeGuard.guardedWrite(app, { drawingUid: uid, next, label: "Add", appState: { selectedElementIds: selection, selectedGroupIds: groups } });
         for (const [k, id] of byKey) ids[k] = id;
         return ids;
       },
@@ -114,17 +111,19 @@ export function createSceneRegistry({ native, doc = globalThis.document, raf = g
         }
         if (typeof patch.text === "string" && patch.originalText === undefined) extra.originalText = patch.text;
         const updated = bump(el, extra);
-        write(all().map((e) => (e.id === id ? updated : e)));
+        if (!write(all().map((e) => (e.id === id ? updated : e)), "Update")) throw new Error("Not applied: update was refused");
         return structuredClone(updated);
       },
-      remove(ids) {
+      remove(ids, { force = false } = {}) {
         guard();
         const set = new Set(Array.isArray(ids) ? ids : [ids]);
         const els = all();
         const hit = new Set(els.filter((e) => set.has(e.id)).map((e) => e.id));
         const doomed = new Set([...hit, ...els.filter((e) => e.containerId && hit.has(e.containerId)).map((e) => e.id)]);
         if (!doomed.size) return 0;
-        write(els.map((e) => (doomed.has(e.id) && !e.isDeleted ? bump(e, { isDeleted: true }) : e)));
+        const n = els.filter((e) => doomed.has(e.id) && !e.isDeleted).length;
+        const applied = write(els.map((e) => (doomed.has(e.id) && !e.isDeleted ? bump(e, { isDeleted: true }) : e)), "Remove", { force: force === true });
+        if (!applied) throw new Error(`Not applied: would remove ${n} of ${els.filter((e) => !e.isDeleted).length}`);
         return hit.size;
       },
       select(ids) {

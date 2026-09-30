@@ -189,11 +189,13 @@ export function sceneToNatural(el, [sx, sy]) {
 // rect/poly: the fraction (poly: its bbox fraction) of an unrotated image element.
 // group: union of live members + pad. frame: frame bbox + pad. cframe: frame bbox exactly.
 // imgrect/imgpoly have no scene geometry (unsupported-kind).
-export function regionSceneBBox(region, elements, appState) {
-  const live = liveElements(elements);
+// index ({ live, byId }) lets a caller resolving many regions share one live list and id map; byGroup is built lazily on it.
+export function regionSceneBBox(region, elements, appState, index) {
+  const live = index?.live ?? liveElements(elements);
+  const lookup = (id) => (index?.byId ? index.byId.get(id) : live.find((e) => e.id === id));
   if (!region || !live.length) return { error: "no-elements" };
   if (region.kind === "area") {
-    const byId = new Map(live.map((el) => [el.id, el]));
+    const byId = index?.byId ?? new Map(live.map((el) => [el.id, el]));
     const found = [];
     const missing = [];
     for (const id of region.ids ?? []) {
@@ -205,7 +207,7 @@ export function regionSceneBBox(region, elements, appState) {
     return { bbox: [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad], missing };
   }
   if (region.kind === "rect" || region.kind === "poly") {
-    const el = live.find((e) => e.id === region.el);
+    const el = lookup(region.el);
     if (!el) return { error: "no-elements" };
     if (el.type !== "image") return { error: "not-image" };
     if (Number(el.angle) || 0) return { error: "rotated-image" };
@@ -241,7 +243,16 @@ export function regionSceneBBox(region, elements, appState) {
   }
   if (region.kind === "group") {
     const g = region.groupId ?? region.g;
-    const members = live.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+    let members;
+    if (index) {
+      if (!index.byGroup) {
+        index.byGroup = new Map();
+        for (const el of live) for (const gid of Array.isArray(el.groupIds) ? el.groupIds : []) (index.byGroup.get(gid) ?? index.byGroup.set(gid, []).get(gid)).push(el);
+      }
+      members = index.byGroup.get(g) ?? [];
+    } else {
+      members = live.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(g));
+    }
     if (!members.length) return { error: "no-elements" };
     const b = commonBounds(members);
     const pad = region.pad ?? 10;
@@ -249,7 +260,7 @@ export function regionSceneBBox(region, elements, appState) {
   }
   if (region.kind === "frame" || region.kind === "cframe") {
     const id = region.frameId ?? region.fr;
-    const frame = live.find((el) => el.id === id);
+    const frame = lookup(id);
     if (!frame) return { error: "no-elements" };
     if (frame.type !== "frame" && frame.type !== "magicframe") return { error: "not-frame" };
     const b = elementBounds(frame);

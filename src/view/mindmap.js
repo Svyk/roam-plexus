@@ -1,9 +1,11 @@
-import { LAYOUTS, isExcludedString, plainText, hasMarkup, treeFromPull, visibleNodes, countHidden, nearestInDirection, isFolded } from "../model/mindmap.js";
+import { LAYOUTS, allUids, isExcludedString, plainText, hasMarkup, treeFromPull, visibleNodes, countHidden, nearestInDirection, isFolded } from "../model/mindmap.js";
 import { applyOps, boundaryId, bump, edgeId, isEmptyOps, makeSizer, mmOf, nodeId, patchMarker, planMap, projectionIds, reconcile, textId } from "../model/mmsync.js";
 
 const NODE_CAP = 500;
 const DELETE_WINDOW_MS = 3000;
 const LOAD_WAIT_MS = 5000;
+const MAX_WAIT_MS = 4000;
+const FORCE_MARK_MS = 5000;
 const PLACEHOLDER_CHILD = "New idea";
 const PLACEHOLDER_ROOT = "Central idea";
 const GROW_HINT = "Use Tab / Enter to grow this map";
@@ -17,6 +19,11 @@ const ARROWS = { ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", Arro
 const LETTERS = new Set(["KeyF", "KeyL", "KeyP", "KeyB", "KeyX", "KeyC", "KeyV"]);
 
 const defaultRaf = (fn) => (typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16));
+const defaultGuardedWrite = (app, { next, captureUpdate } = {}) => {
+  const current = app.getSceneElementsIncludingDeleted?.() ?? [];
+  app.updateScene({ elements: typeof next === "function" ? next(current) : next, ...(captureUpdate ? { captureUpdate } : {}) });
+  return true;
+};
 const defaultCaf = (id) => (typeof globalThis.cancelAnimationFrame === "function" ? globalThis.cancelAnimationFrame(id) : clearTimeout(id));
 
 function findNode(tree, uid) {
@@ -40,7 +47,7 @@ function rawWalk(raw, fn) {
 }
 
 // Controller for mind maps. Nothing is registered until mount(); every listener, watch and portal dies with the editor.
-export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1000 }) {
+export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1000, guardedWrite = defaultGuardedWrite }) {
   const sessions = new Map();
   let disposed = false;
 
@@ -57,14 +64,14 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
   const textOf = (uid, node) => plainText(node.string, blockString);
   const sizer = makeSizer((text, size) => measurer.measure(text, size));
 
-  function mount({ app, containerEl, outerEl, zIndex } = {}) {
+  function mount({ app, containerEl, outerEl, zIndex, drawingUid = null } = {}) {
     if (disposed || !app || !containerEl) return () => {};
-    const s = createSession({ app, containerEl, outerEl, zIndex });
+    const s = createSession({ app, containerEl, outerEl, zIndex, drawingUid });
     sessions.set(app, s);
     return () => { s.dispose(); if (sessions.get(app) === s) sessions.delete(app); };
   }
 
-  function createSession({ app, containerEl, outerEl, zIndex }) {
+  function createSession({ app, containerEl, outerEl, zIndex, drawingUid }) {
     let alive = true;
     const trees = new Map();
     const watches = new Map();
@@ -86,6 +93,8 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     let input = null;
     const fontSig = new Map();
     let loadedTimer = null;
+    let deferredSince = null;
+    const forceMarks = new Map();
 
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard = () => alive && !disposed && native.activeEditor(doc)?.app === app;
@@ -106,7 +115,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     }
 
     // One updateScene per apply; read and write happen in the same synchronous task (amendment 34).
-    function commit(mutate, roots) {
+    function commit(mutate, roots, { force = false } = {}) {
       if (!guard()) return false;
       let next = els();
       if (mutate) next = mutate(next);
@@ -120,7 +129,10 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
         staged.push(tree);
       }
       if (!changed) return false;
-      app.updateScene({ elements: next, captureUpdate: "NEVER" });
+      const marked = roots.some((r) => (forceMarks.get(r) ?? 0) > now());
+      const written = guardedWrite(app, { drawingUid, next, label: "Mind map", captureUpdate: "NEVER", force: force || marked, onApplyAnyway: () => commit(mutate, roots, { force: true }) });
+      if (!written) return false;
+      for (const root of roots) forceMarks.delete(root);
       takeSnapshot();
       afterApply(roots);
       return true;
@@ -157,8 +169,13 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       return treeFromPull(raw, { prune, maxVisible: NODE_CAP });
     }
 
-    function detach(root) {
+    function detach(root, { force = false } = {}) {
       const ids = new Set(projectionIds(els(), root));
+      if (ids.size && guard()) {
+        const written = guardedWrite(app, { drawingUid, next: (list) => list.map((el) => (ids.has(el.id) ? bump(el, { isDeleted: true }) : el)), label: "Mind map", captureUpdate: "NEVER", force, onApplyAnyway: () => detach(root, { force: true }) });
+        if (!written) return;
+        takeSnapshot();
+      }
       watches.get(root)?.();
       watches.delete(root);
       trees.delete(root);
@@ -166,18 +183,23 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       lastRoot.delete(root);
       fontSig.delete(root);
       pendingRefresh.delete(root);
-      if (ids.size && guard()) {
-        app.updateScene({ elements: els().map((el) => (ids.has(el.id) ? bump(el, { isDeleted: true }) : el)), captureUpdate: "NEVER" });
-        takeSnapshot();
-      }
+      forceMarks.delete(root);
     }
 
     function onRaw(root, raw) {
       if (!alive) return;
       if (!raw) { detach(root); return; }
-      if (gestureActive()) { pendingRefresh.add(root); dirty = true; return; }
-      trees.set(root, buildTree(root, raw));
-      commit(null, [root]);
+      if (gestureActive()) { pendingRefresh.add(root); dirty = true; deferredSince ??= now(); return; }
+      const prevTree = trees.get(root);
+      const nextTree = buildTree(root, raw);
+      // No block vanished: a shrink can only come from folded (hidden) nodes, so it is a deliberate fold, not a delete.
+      const foldOnly = !!prevTree && !prevTree.truncated && !nextTree.truncated && (() => {
+        const now = allUids(nextTree);
+        for (const u of allUids(prevTree)) if (!now.has(u)) return false;
+        return true;
+      })();
+      trees.set(root, nextTree);
+      commit(null, [root], { force: foldOnly });
     }
 
     function refreshRoot(root) {
@@ -259,21 +281,23 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
 
     function onChange() {
       if (!alive || scheduled != null) return;
-      scheduled = raf(pass);
+      scheduled = raf(() => pass());
     }
 
     function onPointerUp() { dirty = true; onChange(); }
 
-    function pass() {
+    function pass(force = false) {
       scheduled = null;
       if (!alive) return;
+      force = force === true || (deferredSince != null && now() - deferredSince > MAX_WAIT_MS);
       const st = state();
       const editingId = st.editingTextElement?.id ?? null;
       if (prevEditingId && !editingId) pendingFinished.add(prevEditingId);
       prevEditingId = editingId;
       const nonce = app.scene?.getSceneNonce?.();
       if (!pendingFinished.size && !pendingRefresh.size && !dirty && nonce !== undefined && nonce === lastNonce) { if (input) placeInput(); return; }
-      if (gestureActive()) { dirty = true; if (input) placeInput(); return; }
+      if (!force && gestureActive()) { dirty = true; deferredSince ??= now(); if (input) placeInput(); return; }
+      deferredSince = null;
       dirty = false;
       lastNonce = nonce;
       const finishedIds = [...pendingFinished];
@@ -286,6 +310,14 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       } catch (error) { warn("change pass", error); }
       for (const root of refreshRoots) if (trees.has(root)) refreshRoot(root);
       if (input) placeInput();
+    }
+
+    // rAF does not run in a hidden page, so a pending pass is run now and synchronously.
+    function flush({ unloading = false } = {}) {
+      if (!alive) return;
+      if (unloading) closeInput({ write: true });
+      if (scheduled != null) { caf(scheduled); scheduled = null; }
+      try { pass(true); } catch (error) { warn("flush", error); }
     }
 
     function nativeTextEdit(textId) {
@@ -573,7 +605,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       if (!node.children.length) { toast("No children to fold"); return null; }
       const open = node.open === false;
       node.open = open;
-      commit(null, [sel.root]);
+      commit(null, [sel.root], { force: true });
       return writer.setOpen(sel.root, sel.uid, open).catch((error) => { warn("fold", error); failToast(); refreshRoot(sel.root); });
     }
 
@@ -658,7 +690,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
           return;
         }
         pendingDelete = null;
-        detach(sel.root);
+        detach(sel.root, { force: true });
         return;
       }
       const info = branchCheck(sel.uid);
@@ -674,6 +706,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       if (armed.count !== info.count || armed.string !== info.string) { toast("The branch changed; press Alt+Backspace again", { kind: "error" }); return; }
       const result = await writer.deleteBranch(sel.root, sel.uid, { count: armed.count, string: armed.string });
       if (!result || result.ok === false) toast(WRITE_FAILED, { kind: "error" });
+      else forceMarks.set(sel.root, now() + FORCE_MARK_MS);
       refreshRoot(sel.root);
     }
 
@@ -733,6 +766,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const off = app.onPointerUpEmitter?.on?.(onPointerUp);
       if (typeof off === "function") offs.push(off);
     } catch (error) { warn("subscribe", error); }
+    const view = doc.defaultView;
+    if (view?.addEventListener) listen(view, "pagehide", () => flush({ unloading: true }));
+    if (doc.addEventListener) listen(doc, "visibilitychange", () => { if (doc.visibilityState === "hidden") flush(); });
     start();
 
     return {
@@ -740,7 +776,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       selectedNode,
       startRoot,
       showOutline,
+      flush,
       dispose() {
+        flush();
         alive = false;
         if (loadedTimer != null) caf(loadedTimer);
         if (scheduled != null) caf(scheduled);

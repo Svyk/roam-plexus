@@ -46,6 +46,32 @@ export function captureSelectionSvg(app, ids, opts = {}) {
   return run;
 }
 
+// Native "Copy as PNG" of the given elements at scale x, optionally the dark export. Queues behind other captures on
+// the same tail (so clipboardBusy/withClipboard cover it) and resolves a Blob, or null on any failure. Never throws.
+export function captureSelectionPng(app, ids, opts = {}) {
+  capturing += 1;
+  const run = captureTail.then(() => capturePngOnce(app, ids, opts).catch((error) => {
+    console.warn("[plexus] png capture failed", error);
+    return null;
+  }));
+  const done = () => { capturing -= 1; };
+  run.then(done, done);
+  captureTail = run.catch(() => {});
+  return run;
+}
+
+// PNG size in pixels from the IHDR chunk (bytes 16-23), or null when the blob is not a PNG.
+export async function readPngSize(blob) {
+  try {
+    const bytes = new Uint8Array(await blob.slice(0, 24).arrayBuffer());
+    if (bytes.length < 24 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, 24);
+    return { w: view.getUint32(16), h: view.getUint32(20) };
+  } catch {
+    return null;
+  }
+}
+
 // Runs fn behind any capture in flight, so nothing else writes to the clipboard while a capture stub is installed.
 export function withClipboard(fn) {
   const run = captureTail.then(fn);
@@ -132,6 +158,89 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
     clipboard.write = origWrite;
     try {
       app.updateScene({ appState: { selectedElementIds: prevIds, selectedGroupIds: prevGroups, toast: null } });
+    } catch (error) {
+      console.warn("[plexus] could not restore selection", error);
+    }
+  }
+}
+
+const pngItemType = (item) => item?.types?.find?.((t) => t === "image/png");
+
+async function capturePngOnce(app, ids, { scale = 2, dark = false, clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500, doneWaitMs = 1000 } = {}) {
+  if (!clipboard) throw new Error("clipboard unavailable");
+  const action = app?.actionManager?.actions?.copyAsPng;
+  if (!action || typeof app.actionManager.executeAction !== "function") throw new Error("copyAsPng unavailable");
+  // Read inside the queued run: an earlier capture in the queue has restored these by now.
+  const prev = {
+    exportScale: app.state?.exportScale ?? 1,
+    exportWithDarkMode: app.state?.exportWithDarkMode ?? false,
+  };
+  const prevIds = { ...(app.state?.selectedElementIds || {}) };
+  const prevGroups = { ...(app.state?.selectedGroupIds || {}) };
+  const origWrite = clipboard.write;
+  let timer = null;
+  let timedOut = false;
+  let performed = null;
+  const am = app.actionManager;
+  const origUpdater = am.updater;
+  let wrapped = false;
+  const restoreExport = () => {
+    try { app.updateScene({ appState: { ...prev } }); } catch (error) { console.warn("[plexus] could not restore export settings", error); }
+  };
+  try {
+    const selection = {};
+    for (const id of ids) selection[id] = true;
+    app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {}, exportScale: scale, exportWithDarkMode: !!dark } });
+    await new Promise((resolve) => (typeof raf === "function" ? raf(() => resolve()) : setTimeout(resolve, 16)));
+
+    let settle;
+    const captured = new Promise((resolve) => { settle = resolve; });
+    clipboard.write = async (items) => {
+      for (const item of items || []) {
+        const type = pngItemType(item);
+        if (!type) continue;
+        // The canvas exists once write is called: put the export keys back before anything else can save them.
+        restoreExport();
+        settle(await item.getType(type));
+        return;
+      }
+    };
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
+    // The perform promise only surfaces via am.updater; its late appState would re-apply the temporary selection and export keys.
+    if (typeof origUpdater === "function") {
+      wrapped = true;
+      am.updater = function (result) {
+        if (result && typeof result.then === "function") { performed = Promise.resolve(result); performed.catch(() => {}); }
+        return origUpdater.apply(this, arguments);
+      };
+    }
+    const ret = am.executeAction(action, "contextMenu");
+    if (ret && typeof ret.catch === "function") ret.catch(() => {});
+    if (!performed && ret && typeof ret.then === "function") { performed = Promise.resolve(ret); performed.catch(() => {}); }
+    const blob = await Promise.race([captured, timeout]);
+    if (!blob) { timedOut = true; throw new Error("no PNG captured"); }
+    return blob;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (timedOut) restoreExport();
+    if (timedOut && graceMs > 0) {
+      // The export may still finish: swallow only its PNG write for a short grace period, pass everything else through.
+      clipboard.write = async (items) => {
+        for (const item of items || []) if (pngItemType(item)) return undefined;
+        return origWrite.call(clipboard, items);
+      };
+      await new Promise((resolve) => setTimeout(resolve, graceMs));
+    }
+    if (wrapped) am.updater = origUpdater;
+    if (performed) {
+      let settleTimer = null;
+      const wait = new Promise((resolve) => { settleTimer = setTimeout(resolve, doneWaitMs); });
+      await Promise.race([performed.catch(() => {}), wait]);
+      clearTimeout(settleTimer);
+    }
+    clipboard.write = origWrite;
+    try {
+      app.updateScene({ appState: { selectedElementIds: prevIds, selectedGroupIds: prevGroups, ...prev, toast: null } });
     } catch (error) {
       console.warn("[plexus] could not restore selection", error);
     }

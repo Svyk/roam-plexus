@@ -124,15 +124,16 @@ const keys = () => {
   const gk = geometryKey({ kind: "area", drawingUid: "drw000001", ids: ["rect-a"], pad: 10 });
   return {
     svg: cropKey({ regionUid, geometryKey: gk, drawingHash: "abcd1234", tier: "svg" }),
+    png2x: cropKey({ regionUid, geometryKey: gk, drawingHash: "abcd1234", tier: "png2x" }),
     png: cropKey({ regionUid, geometryKey: gk, drawingHash: "abcd1234", tier: "png" }),
   };
 };
 const rendered = (naturalWidth = 500, naturalHeight = 160) => ({ canvas: {}, naturalWidth, naturalHeight });
 
-test("hot path peeks the exact svg key then the png key (region uid, geometry, drawing hash)", () => {
+test("hot path peeks the exact svg, png2x, then png key (region uid, geometry, drawing hash)", () => {
   const { r, btn, peeks } = setup({ regionString: areaString });
   r.claim(btn);
-  assert.deepEqual(peeks.slice(0, 2), [keys().svg, keys().png]);
+  assert.deepEqual(peeks.slice(0, 3), [keys().svg, keys().png2x, keys().png]);
 });
 
 test("cold render: crops the png, puts it under the png key, paints it", async () => {

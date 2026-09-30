@@ -125,3 +125,23 @@ test("0.6.x string overrides migrate on read and round-trip on write", async () 
   await setRefOverride(api, "c", "d", { caption: "show" });
   assert.deepEqual(JSON.parse(api.store[SETTING_IDS.refOverrides]), { "a|b": "link", "c|d": { caption: "show" } });
 });
+
+test("P8 settings: defaults, normalization, panel", () => {
+  const d = readSettings(fakeApi());
+  assert.deepEqual([d.zoomCap, d.animation, d.regionLanding], [1, "system", false]);
+  const s = readSettings(fakeApi({ "zoom-cap": "150", animation: "off", "region-landing": true }));
+  assert.deepEqual([s.zoomCap, s.animation, s.regionLanding], [1.5, "off", true]);
+  assert.equal(readSettings(fakeApi({ "zoom-cap": "200" })).zoomCap, 2);
+  for (const bad of ["zzz", "", 5, null, "175"]) {
+    const n = readSettings(fakeApi({ "zoom-cap": bad, animation: bad }));
+    assert.deepEqual([n.zoomCap, n.animation], [1, "system"]);
+  }
+  const items = createSettingsPanel({ onChange: () => {} }).settings;
+  const byId = (id) => items.find((x) => x.id === id);
+  assert.deepEqual(byId("zoom-cap").action.items, ["100", "150", "200"]);
+  assert.deepEqual(byId("animation").action.items, ["system", "on", "off"]);
+  assert.equal(byId("region-landing").action.type, "switch");
+  assert.equal(SETTING_IDS.zoomCap, "zoom-cap");
+  assert.equal(SETTING_IDS.animation, "animation");
+  assert.equal(SETTING_IDS.regionLanding, "region-landing");
+});

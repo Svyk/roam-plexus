@@ -1,6 +1,6 @@
-export function showSpotlight({ rect, doc, durationMs = 1400 }) {
+export function showSpotlight({ rect, doc, durationMs = 1400, motion = true }) {
   const el = doc.createElement("div");
-  el.className = "plexus-portal plexus-spotlight";
+  el.className = `plexus-portal plexus-spotlight ${motion ? "plexus-spotlight--pulse" : "plexus-spotlight--static"}`;
   el.style.left = `${rect.left}px`;
   el.style.top = `${rect.top}px`;
   el.style.width = `${rect.width}px`;

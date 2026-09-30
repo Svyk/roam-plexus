@@ -1,13 +1,13 @@
 import { parseRegion, geometryKey } from "../model/region.js";
-import { naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
+import { exportBounds, naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
 import { clipPolyToUnit, imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
 import { fnv1a } from "../model/hash.js";
-import { cropKey } from "../host/cache.js";
+import { cropKey, png2xKey, thumbKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
 import { cropToBlob, loadImageBitmap } from "../host/image-source.js";
 import { hostDarkMarker, isHostDark } from "../host/theme.js";
 import { overrideKey, refContext, resolveCaption, resolveDisplay } from "../model/refdisplay.js";
-import { drawingTitleOf, imageAltAt, regionLabel } from "../model/label.js";
+import { KIND_WORDS, drawingTitleOf, imageAltAt, regionLabel } from "../model/label.js";
 import { createCropPopover } from "./crop-popover.js";
 
 const CLAIMED = "data-plexus-claimed";
@@ -116,6 +116,8 @@ export async function renderRegionCrop({ region, target, cold, doc, api, settleM
 
 const GLYPH = '<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M1.5 5V1.5H5M9 1.5h3.5V5M12.5 9v3.5H9M5 12.5H1.5V9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 
+const isDarkTier = (key) => typeof key === "string" && key.endsWith("|png2x-dark");
+
 const num = (v, d) => (Number.isFinite(Number(v)) && v !== "" && v != null ? Number(v) : d);
 
 const overlaps = (bbox, el) => el.x < bbox[2] && el.x + el.width > bbox[0] && el.y < bbox[3] && el.y + el.height > bbox[1];
@@ -216,8 +218,9 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     const img = doc.createElement("img");
     img.draggable = false;
     if (info.label) img.alt = info.label;
-    img.className = `plexus-crop${invertible(region, target, s) ? " plexus-crop--invertible" : ""}`;
-    if (invertible(region, target, s) && isHostDark(doc) && !hostDarkMarker(doc)) img.classList.add("plexus-crop--invert");
+    const inv = !isDarkTier(key) && invertible(region, target, s);
+    img.className = `plexus-crop${inv ? " plexus-crop--invertible" : ""}`;
+    if (inv && isHostDark(doc) && !hostDarkMarker(doc)) img.classList.add("plexus-crop--invert");
     img.onerror = () => {
       if (key) Promise.resolve(cache.delete?.(key)).catch(() => {});
       if (root.isConnected) finishChip(root, region);
@@ -245,10 +248,35 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
   const keysFor = (uid, region, target) => {
     const gk = geometryKey(region);
+    const drawing = !target.url;
     return {
       png: cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
-      svg: target.url ? null : cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+      svg: drawing ? cropKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }) : null,
+      png2x: drawing ? png2xKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash }) : null,
+      png2xDark: drawing ? png2xKey({ regionUid: uid, geometryKey: gk, drawingHash: target.hash, dark: true }) : null,
     };
+  };
+
+  // A dark 2x export is worth using when the host is dark, the setting is on and the drawing itself is light.
+  const wantsDark = (region, target, s) => !!(s.darkCrops && !isImageKind(region.kind) && target?.drawing
+    && target.drawing.appState?.theme !== "dark" && isHostDark(doc));
+
+  // Memory-only lookup in paint order: png2x-dark (when wanted) > svg > png2x > png. png2x tiers are never read with get.
+  const hotEntry = (region, target, keys, s) => {
+    if (keys.png2xDark && wantsDark(region, target, s)) {
+      const e = cache.peek(keys.png2xDark);
+      if (e) return { entry: e, key: keys.png2xDark };
+    }
+    if (keys.svg) {
+      const e = cache.peek(keys.svg);
+      if (e) return { entry: e, key: keys.svg };
+    }
+    if (keys.png2x) {
+      const e = cache.peek(keys.png2x);
+      if (e) return { entry: e, key: keys.png2x };
+    }
+    const e = cache.peek(keys.png);
+    return e ? { entry: e, key: keys.png } : null;
   };
 
   // Cache, then a cold render. Resolves { entry, entryKey } | { error } | { gone }.
@@ -256,6 +284,10 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     let entry = null;
     let entryKey = keys.svg || keys.png;
     if (keys.svg) entry = await cache.get(keys.svg);
+    if (!entry && keys.png2x) {
+      entry = cache.peek(keys.png2x);
+      if (entry) entryKey = keys.png2x;
+    }
     if (!entry) { entryKey = keys.png; entry = await cache.get(keys.png); }
     if (!entry) {
       const failKey = `${region.drawingUid}|${target.hash}`;
@@ -282,14 +314,56 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     return { entry, entryKey };
   }
 
-  async function hoverEntryOf(region, target, keys) {
-    const hot = (keys.svg && cache.peek(keys.svg)) || cache.peek(keys.png);
-    let entry = hot;
+  async function hoverEntryOf(region, target, keys, uid) {
+    const s = settings();
+    const hot = hotEntry(region, target, keys, s);
+    let entry = hot?.entry;
+    let key = hot?.key;
     if (!entry) {
       const res = await fetchEntry(region, target, keys, () => true);
       entry = res.entry;
+      key = res.entryKey;
     }
-    return entry ? { url: entry.url, w: entry.w, h: entry.h, invertible: invertible(region, target, settings()) } : null;
+    if (!entry) return null;
+    const out = { url: entry.url, w: entry.w, h: entry.h, invertible: !isDarkTier(key) && invertible(region, target, s) };
+    const peek = await peekOf(region, target, uid);
+    if (peek) out.peek = peek;
+    return out;
+  }
+
+  let peekLogged = false;
+
+  // Source peek: cache-only 160 px thumbnail of the whole drawing plus the region rect in thumbnail pixels.
+  // Image kinds and cold thumbnails give null (the crop alone).
+  async function peekOf(region, target, uid) {
+    try {
+      if (isImageKind(region.kind) || !target?.drawing || !target.sceneBox?.bbox) return null;
+      const key = thumbKey({ uid: region.drawingUid, hash: target.hash, maxWidth: 160 });
+      const thumb = cache.peek(key) ?? (await cache.get(key));
+      if (!thumb?.url || !(thumb.w > 0) || !(thumb.h > 0)) return null;
+      const { elements, appState } = target.drawing;
+      const cb = exportBounds(elements, appState);
+      if (!cb) return null;
+      const ew = Math.round(cb[2] - cb[0] + 2 * 10);
+      const eh = Math.round(cb[3] - cb[1] + 2 * 10);
+      const crop = viewPngCropRect({ elements, appState, bbox: target.sceneBox.bbox, naturalWidth: ew, naturalHeight: eh });
+      if (crop.error) return null;
+      const k = thumb.w / ew;
+      const ky = thumb.h / eh;
+      const rect = {
+        x: crop.sx * k,
+        y: crop.sy * ky,
+        w: Math.max(4, crop.sw * k),
+        h: Math.max(4, crop.sh * ky),
+      };
+      let src = null;
+      try { src = host.labelSource?.(region.drawingUid); } catch { /* ignore */ }
+      const title = drawingTitleOf(src?.string ?? "", src?.pageTitle ?? null);
+      return { url: thumb.url, w: thumb.w, h: thumb.h, rect, title, kind: KIND_WORDS[region.kind] ?? region.kind };
+    } catch (error) {
+      if (!peekLogged) { peekLogged = true; console.warn("[plexus] source peek unavailable", error); }
+      return null;
+    }
   }
 
   const contextOf = (btn, uid) => {
@@ -430,7 +504,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       if (target.error) return chip(root, target.error);
       const keys = keysFor(uid, region, target);
 
-      const hoverEntry = () => hoverEntryOf(region, target, keys);
+      const hoverEntry = () => hoverEntryOf(region, target, keys, uid);
 
       if (mode === "link") {
         root.className = "plexus-root plexus-regionref plexus-regionref--link plexus-ref-glyph";
@@ -446,9 +520,8 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         stopHover(root, info);
       }
 
-      const hotSvg = keys.svg ? cache.peek(keys.svg) : null;
-      const hot = hotSvg || cache.peek(keys.png);
-      if (hot) return paint(root, hot, hotSvg ? keys.svg : keys.png, region, info, target);
+      const hot = hotEntry(region, target, keys, s);
+      if (hot) return paint(root, hot.entry, hot.key, region, info, target);
 
       let bw = 4;
       let bh = 3;
@@ -518,7 +591,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         info.uid = u;
         const target = resolveRegionTarget(host, region);
         if (target.error) return null;
-        return hoverEntryOf(region, target, keysFor(u, region, target));
+        return hoverEntryOf(region, target, keysFor(u, region, target), u);
       };
       info.disposers.push(getPopover().hoverOn(anchor, hoverEntry));
       stopHover(anchor, info);
@@ -603,7 +676,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
             const target = resolveRegionTarget(host, region);
             if (!target.error) {
               const keys = keysFor(regionUid, region, target);
-              await Promise.all([keys.svg, keys.png].filter(Boolean).map((k) => Promise.resolve(cache.delete?.(k)).catch(() => {})));
+              await Promise.all([keys.svg, keys.png2x, keys.png2xDark, keys.png].filter(Boolean).map((k) => Promise.resolve(cache.delete?.(k)).catch(() => {})));
               failed.delete(`${region.drawingUid}|${target.hash}`);
             }
           }

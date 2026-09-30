@@ -2,6 +2,7 @@ import { parseRegion } from "../model/region.js";
 import { parseImageRefs } from "../model/image.js";
 import { overrideKey } from "../model/refdisplay.js";
 import { isImageKind } from "../model/label.js";
+import { resolveRegionTarget } from "./regionref.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const MEMO_MS = 500;
@@ -66,13 +67,25 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     const string = pullString(uid);
     if (string == null) return {};
     const region = parseRegion(string);
+    const drawingKind = !!region?.supported && !isImageKind(region.kind);
     return {
       images: parseImageRefs(string).length > 0,
       drawing: DRAWING_START.test(string),
       region: !!region?.supported,
-      drawingKind: !!region?.supported && !isImageKind(region.kind),
+      drawingKind,
+      needsRepair: drawingKind && needsRepair(region),
     };
   });
+  // Repair shows for a region that no longer resolves, or an area that lost some of its elements.
+  const needsRepair = (region) => {
+    try {
+      const target = resolveRegionTarget(host, region);
+      if (target.error) return true;
+      return region.kind === "area" && (target.sceneBox?.missing?.length ?? 0) > 0;
+    } catch {
+      return false;
+    }
+  };
   const register = (menuName, label, display, callback) => {
     const menu = api?.ui?.[menuName];
     if (!menu?.addCommand) return;
@@ -167,6 +180,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   };
   cropItems("blockRefContextMenu", (e) => { const { ref, block } = refOf(e); return refInfo(`${ref}|${block}`, ref, block); }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
+  register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
 
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
@@ -178,6 +192,15 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   cropItems("blockContextMenu", (e) => { const b = blockInfo(e?.["block-uid"], e?.["block-uid"]); return { supported: !!b.region, drawingKind: !!b.drawingKind }; }, (e) => e?.["block-uid"], (e) => e?.["block-uid"], { insert: false });
   register("blockContextMenu", "Plexus: Refresh crops", blockShow("drawing"), (e) => actions.refreshCropsForDrawing(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Region settings…", blockShow("drawing"), () => openSettings());
+  register("blockContextMenu", "Plexus: Select on drawing", blockShow("drawingKind"), (e) => actions.selectRegionOnDrawing(e?.["block-uid"]));
+  register("blockContextMenu", "Plexus: Update region from selection", blockShow("drawingKind"), (e) => actions.updateRegionFromSelection(e?.["block-uid"]));
+  register("blockContextMenu", "Plexus: Repair region", blockShow("needsRepair"), async (e) => {
+    const uid = e?.["block-uid"];
+    await actions.repairRegion(uid);
+    clearMemo();
+    regionref.refreshRegion?.(uid, { purge: false });
+  });
+  register("blockContextMenu", "Plexus: Copy region link", blockShow("region"), (e) => actions.copyRegionLink(e?.["block-uid"]));
 
   return function dispose() {
     for (const [menu, label] of added.splice(0)) {
@@ -275,4 +298,50 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
     if (pending != null) { cancel(pending); pending = null; }
     for (const n of [...(containerEl.querySelectorAll?.("[data-plexus-item]") ?? [])]) n.remove?.();
   };
+}
+
+// The canvas-menu items, built fresh on every right-click so each `enabled` reads the current selection.
+export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard } = {}) {
+  const can = (fn) => { try { return !!fn(); } catch { return false; } };
+  const call = (name, fn) => () => {
+    try {
+      const out = fn();
+      if (out && typeof out.catch === "function") out.catch((error) => console.warn("[plexus]", name, "failed", error));
+    } catch (error) {
+      console.warn("[plexus]", name, "failed", error);
+    }
+  };
+  const selectedIds = () => native.selectedElementIds(app);
+  const selectedElements = () => {
+    const ids = new Set(selectedIds());
+    const all = app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [];
+    return all.filter((el) => ids.has(el.id) && !el.isDeleted);
+  };
+  const noSelection = () => selectedIds().length === 0;
+  const freeText = (el) => el.type === "text" && !el.containerId;
+  const hasSnapshot = () => (actions.hasSnapshot ?? guard?.hasSnapshot)?.(drawingUid);
+  const pending = () => { try { return actions.pendingRegionUpdate?.() ?? null; } catch { return null; } };
+  const pend = pending();
+
+  return [
+    { id: "region", label: "Plexus: Create region", enabled: can(() => selectedIds().length > 0), run: call("region", () => actions.createAreaRegion()) },
+    { id: "frame", label: "Plexus: Frame region", enabled: can(() => actions.isFrameSelected()), run: call("frame", () => actions.createFrameRegion()) },
+    { id: "crop", label: "Plexus: Region from crop", enabled: can(() => actions.hasCroppedImageSelected()), run: call("crop", () => actions.regionFromCrop()) },
+    { id: "image", label: "Plexus: Image region", enabled: can(() => actions.hasSingleImageSelected()), run: call("image", () => actions.createImageRegion()) },
+    { id: "embed", label: "Plexus: Embed block from clipboard", enabled: true, run: call("embed", () => actions.insertEmbedFromClipboard()) },
+    { id: "edit-embed", label: "Plexus: Edit embed", enabled: can(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
+    { id: "present", label: "Plexus: Present", enabled: can(() => actions.hasFrames()), run: call("present", () => actions.presentDrawing()) },
+    { id: "mindmap", label: "Plexus: Mind map", enabled: true, run: call("mindmap", () => actions.startMindMap()) },
+    { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
+    { id: "copy-drawing", label: "Plexus: Copy ((drawing))", enabled: can(() => drawingUid && noSelection()), run: call("copy-drawing", () => actions.copyDrawingRef()) },
+    { id: "copy-embed", label: "Plexus: Copy drawing embed", enabled: can(() => drawingUid && noSelection()), run: call("copy-embed", () => actions.copyDrawingEmbed()) },
+    { id: "frames-regions", label: "Plexus: Regions for all frames", enabled: can(() => noSelection() && actions.hasFrames()), run: call("frames-regions", () => actions.regionsForAllFrames()) },
+    { id: "restore", label: "Plexus: Restore before last Plexus change", enabled: can(() => noSelection() && drawingUid && hasSnapshot()), run: call("restore", () => actions.restoreBeforeLastPlexusChange()) },
+    { id: "text-only", label: "Plexus: Select text only", enabled: can(() => {
+      const els = selectedElements();
+      return els.length >= 2 && els.some(freeText);
+    }), run: call("text-only", () => actions.selectTextOnly()) },
+    { id: "remove-link", label: "Plexus: Remove link", enabled: can(() => selectedElements().some((el) => el.link)), run: call("remove-link", () => actions.removeElementLink()) },
+    ...(pend ? [{ id: "apply-pending", label: `Plexus: Update region "${pend.label ?? pend.uid}" from selection`, enabled: can(() => selectedIds().length > 0), run: call("apply-pending", () => actions.applyPendingUpdate()) }] : []),
+  ];
 }

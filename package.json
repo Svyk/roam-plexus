@@ -1,6 +1,6 @@
 {
   "name": "roam-plexus",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Region refs, crops, and Compass hooks for Roam's native Excalidraw",
   "type": "module",
