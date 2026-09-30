@@ -313,6 +313,18 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Lifecycle | Listener counts on `window`/`document`/`body`/container return exactly to the pre-open values after dock close and toggles; unload with the dock open and unsaved dock text saved the text and left no dock, ghost, chooser, portal or class; load → unload returns to the same counts |
 | Typing | Editor closed, 4 clean interleaved rounds: +0.03 ms/key |
 
+#### Phase 11 measured facts (2026-09-30, Readwisenotes `1929...`, trusted CDP)
+
+| Item | Result | Consequence |
+|---|---|---|
+| Excalidraw copy | Cmd+C on a selected element (CDP needs `commands: ["copy"]`) puts only plain text on the system clipboard: `{"type":"excalidraw/clipboard","elements":[…],"files":{…}}` (718 bytes for one text element) | EXP-5's type check is "starts with `{\"type\":\"excalidraw/clipboard\"`" |
+| Roam paste of that JSON | Pasting into a block inserts the raw JSON (729 characters) as the block text | EXP-5 replaces it with the element text, image markdown or link |
+| Image files | Roam keeps the uploaded image URL on the element: `customData.firebaseUrl` (`https://firebasestorage.googleapis.com/...`); the in-scene file is a data URL | EXP-5 pastes `![](firebaseUrl)`; an image without one is left to Roam |
+| Embed anchor label | `makeEmbedAnchor` already writes the block's first line as the anchor's bound text at creation (`embedLabel(label)`) | EMB-6 Option C only refreshes that text when the block changes, while mounted |
+| Frame regions | "Regions for all frames" creates `cframe` regions (`serializeRegion({kind: "cframe", frameId})`) | PRES-1 notes live under the frame's `cframe` (or `frame`) region |
+| Native actions | `wrapSelectionInFrame` present; laser tool works (Phase 7 DATA-5) | AUTH-8 "Slide" uses `wrapSelectionInFrame` |
+| Printing | Not triggered live: in Roam Desktop a native dialog blocks the renderer (Phase 7, `window.confirm`), so live tests stub `print()`. Chrome 145 on CDP `:9224` is available to paginate the print document with `Page.printToPDF` | EXP-3 pagination is verified in Chrome; one real print in Roam Desktop is a user check |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.
