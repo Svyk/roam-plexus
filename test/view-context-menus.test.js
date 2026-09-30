@@ -58,6 +58,7 @@ test("every label is registered and removed on dispose", () => {
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
     "Plexus: Select on drawing", "Plexus: Update region from selection", "Plexus: Repair region", "Plexus: Copy region link",
+    "Plexus: New drawing here", "Plexus: New drawing below",
   ]);
   dispose();
   assert.equal(api.commands.blockRefContextMenu.size, 0);

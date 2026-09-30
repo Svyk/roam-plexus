@@ -88,3 +88,49 @@ test("blockSnippet with no match keeps the head, and the tail match keeps the ta
   const tail = blockSnippet(`${"y".repeat(300)}END`, "end", 50);
   assert.ok(tail.startsWith("…") && !tail.endsWith("…") && tail.endsWith("END"));
 });
+
+import { buildPageRows, normalizeCreateTitle, stripTrigger } from "../src/model/suggest.js";
+
+test("stripTrigger removes the trigger, query and closer tail", () => {
+  assert.deepEqual(stripTrigger("see [[Plex", 10, { kind: "page", start: 4, query: "Plex" }), { text: "see ", caret: 4 });
+  assert.deepEqual(stripTrigger("a [[Pl]] b", 6, { kind: "page", start: 2, query: "Pl" }), { text: "a  b", caret: 2 });
+  assert.deepEqual(stripTrigger("x ((ab)) y", 6, { kind: "block", start: 2, query: "ab" }), { text: "x  y", caret: 2 });
+});
+
+test("normalizeCreateTitle trims, collapses spaces and rejects unsafe titles", () => {
+  assert.equal(normalizeCreateTitle("  a   b "), "a b");
+  assert.equal(normalizeCreateTitle("a [[b"), "");
+  assert.equal(normalizeCreateTitle("a]]"), "");
+  assert.equal(normalizeCreateTitle("x".repeat(251)), "");
+  assert.equal(normalizeCreateTitle("x".repeat(250)).length, 250);
+  assert.equal(normalizeCreateTitle("   "), "");
+});
+
+const P = (title, uid = title) => ({ kind: "page", title, uid });
+const titles = (rows) => rows.map((r) => `${r.kind}:${r.title}`);
+
+test("buildPageRows orders exact, date, results, create", () => {
+  const rows = buildPageRows({ query: "tomorrow", results: [P("Tomorrow plans"), P("tomorrow")], dateTitle: "September 30th, 2026", canCreate: true });
+  assert.deepEqual(titles(rows), ["page:tomorrow", "date:September 30th, 2026", "page:Tomorrow plans"]);
+});
+
+test("buildPageRows adds a create row last, never when the title exists", () => {
+  assert.deepEqual(titles(buildPageRows({ query: "New  thing", results: [P("New thing two")], canCreate: true })), ["page:New thing two", "create:New thing"]);
+  assert.deepEqual(titles(buildPageRows({ query: "new thing", results: [P("New Thing")], canCreate: true })), ["page:New Thing"]);
+  assert.deepEqual(titles(buildPageRows({ query: "new thing", results: [], canCreate: true, exists: true })), []);
+  assert.deepEqual(titles(buildPageRows({ query: "a[[b", results: [], canCreate: true })), []);
+  assert.deepEqual(titles(buildPageRows({ query: "solo", results: [], canCreate: false })), []);
+  assert.deepEqual(titles(buildPageRows({ query: "solo", results: [], canCreate: true })), ["create:solo"]);
+});
+
+test("buildPageRows puts a three-letter abbreviation date row after results that prefix it", () => {
+  const rows = buildPageRows({ query: "sat", results: [P("Saturn notes")], dateTitle: "October 3rd, 2026", canCreate: true });
+  assert.deepEqual(titles(rows), ["page:Saturn notes", "date:October 3rd, 2026", "create:sat"]);
+  const other = buildPageRows({ query: "sat", results: [P("Weekend")], dateTitle: "October 3rd, 2026" });
+  assert.deepEqual(titles(other), ["date:October 3rd, 2026", "page:Weekend"]);
+});
+
+test("buildPageRows drops a result that duplicates the date row", () => {
+  const rows = buildPageRows({ query: "today", results: [P("September 29th, 2026")], dateTitle: "September 29th, 2026", canCreate: true });
+  assert.deepEqual(titles(rows), ["date:September 29th, 2026", "create:today"]);
+});

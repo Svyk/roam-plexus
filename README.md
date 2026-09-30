@@ -33,10 +33,14 @@ Regions live as children of one collapsed `{{[[plexus-regions]]}}` block, the la
 
 ## Commands
 
-- Plexus: Create region from selection
-- Plexus: Create image region
-- Plexus: Refresh crops for open drawing
-- Plexus: Clear crop cache
+The command palette holds two Plexus entries:
+
+- Plexus: Commands... opens a searchable list of every Plexus action (new drawing, regions, mind map, embed, note card, present, audits, cache, settings).
+- Plexus: Mind map (Alt+Shift+M).
+
+The list exists because each palette entry costs every keystroke you type in Roam: Roam's key handler walks all registered commands, about 0.055 ms each, so 23 entries added about 1.3 ms per key.
+
+Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E (embed) and N (note card). R, I, P, E and N work while a drawing is open; M works everywhere and can be changed in Roam Settings > Hotkeys.
 
 ## Development
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseEmbedRef, makeEmbedAnchor, embedAnchors, embedLabel, mergePlexusData } from "../src/model/embeds.js";
+import { parseEmbedRef, makeEmbedAnchor, embedAnchors, embedLabel, mergePlexusData, TODAY_REF } from "../src/model/embeds.js";
 
 const BASE = ["id", "type", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle", "strokeWidth", "strokeStyle",
   "roughness", "opacity", "groupIds", "frameId", "roundness", "seed", "version", "versionNonce", "isDeleted", "boundElements", "updated", "link", "locked", "index"];
@@ -61,4 +61,18 @@ test("makeEmbedAnchor wraps a long label inside the anchor width", () => {
   assert.equal(text.originalText, embedLabel(label));
   assert.equal(text.height, Math.ceil(lines.length * 16 * 1.25));
   assert.ok(text.height < rect.height);
+});
+
+test("parseEmbedRef: the today token is exact and never collides with a page named today", () => {
+  assert.deepEqual(parseEmbedRef(" plexus:today "), { kind: "today", ref: "plexus:today" });
+  assert.equal(TODAY_REF, "plexus:today");
+  assert.deepEqual(parseEmbedRef("[[today]]"), { kind: "page", title: "today", ref: "[[today]]" });
+  for (const bad of ["plexus:todays", "Plexus:today", "plexus: today"]) assert.equal(parseEmbedRef(bad), null);
+});
+
+test("makeEmbedAnchor keeps a separate link when given, else defaults to the ref", () => {
+  const [rect] = makeEmbedAnchor({ ref: "plexus:today", link: "[[September 29th, 2026]]", label: "Today" });
+  assert.equal(rect.link, "[[September 29th, 2026]]");
+  assert.deepEqual(rect.customData, { plexus: { embed: "plexus:today" } });
+  assert.equal(makeEmbedAnchor({ ref: "((abc123XYZ))" })[0].link, "((abc123XYZ))");
 });

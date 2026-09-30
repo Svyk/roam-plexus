@@ -178,6 +178,8 @@ export function createActions({
   camera = null,
   motionOk = () => false,
   viewHistory = () => null,
+  measure = null,
+  ensureFonts = null,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -431,6 +433,467 @@ export function createActions({
     return true;
   };
 
+  // ---- P9: Roam onto the canvas ----
+
+  const NEW_REUSE_MS = 2000;
+  const PLEXUS_BLOCK_RE = /^\s*\{\{\[\[plexus-/;
+  const DAILY_UID_RE = /^\d{2}-\d{2}-\d{4}$/;
+  const EMBED_PLACE_CAP = 30;
+  const PLACE_GAP = 40;
+  const LINK_FONT = 20;
+  const LINK_LINE = 1.25;
+  const FONT_WAIT_MS = 500;
+  const PENDING_MS = 10 * 60 * 1000;
+  const newDone = new Map();
+  const cards = new Map();
+  let pending = null;
+
+  const rnd = () => Math.floor(Math.random() * 2 ** 31);
+  const refText = (ref) => (ref && typeof ref === "object" ? ref.ref : ref);
+  const isValidDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
+  const todayTitle = () => api.util.dateToPageTitle(new Date());
+
+  function viewCentre(app) {
+    const st = app.state || {};
+    return viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+  }
+
+  // One guarded write that appends elements and selects them: one undo step.
+  function insertGuarded(app, drawingUid, elements, label) {
+    const selectedElementIds = {};
+    for (const el of elements) if (!el.containerId) selectedElementIds[el.id] = true;
+    return guard.guardedWrite(app, {
+      drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => [...current, ...elements],
+      appState: { selectedElementIds, selectedGroupIds: {} },
+    });
+  }
+
+  function cleanTitle(text) {
+    return String(text ?? "").replace(/\[\[|\]\]|#/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  async function newDrawingRun({ where, uid, open, order: wantOrder }) {
+    if (native.activeEditor(doc)) {
+      toaster.show("Close the open drawing first", { kind: "error" });
+      return null;
+    }
+    const graph = host.graphName();
+    let key;
+    let create;
+    if (where === "here" || where === "below") {
+      const target = uid ? host.blockInfo(uid) : null;
+      const onPage = !target && where === "here" && !!uid && host.pageTitleOf?.(uid) != null;
+      if (!target && !onPage) {
+        toaster.show("Click into a block first", { kind: "error" });
+        return null;
+      }
+      if (onPage) {
+        key = uid;
+        create = () => host.createDrawing({ parentUid: uid, order: wantOrder ?? "last" });
+      } else {
+        if (PLEXUS_BLOCK_RE.test(target.string) || PLEXUS_BLOCK_RE.test(target.parentString)) {
+          toaster.show("Plexus blocks cannot hold a drawing", { kind: "error" });
+          return null;
+        }
+        let parentUid;
+        let order;
+        if (DAILY_UID_RE.test(target.pageUid ?? "")) {
+          const top = host.topAncestor(uid);
+          if (!top) {
+            toaster.show("Could not find where to put the drawing", { kind: "error" });
+            return null;
+          }
+          parentUid = top.pageUid;
+          order = top.order + 1;
+        } else if (where === "here") {
+          parentUid = uid;
+          order = 0;
+        } else {
+          parentUid = target.parentUid;
+          order = target.order + 1;
+        }
+        if (!parentUid) {
+          toaster.show("Could not find where to put the drawing", { kind: "error" });
+          return null;
+        }
+        key = parentUid;
+        create = () => host.createDrawing({ parentUid, order });
+      }
+    } else if (where === "today") {
+      const now = new Date();
+      key = `today:${api.util.dateToPageUid(now)}`;
+      const title = api.util.dateToPageTitle(now);
+      create = async () => {
+        const pageUid = await host.ensurePage(title);
+        const existing = host.firstDrawingChild(pageUid);
+        if (existing) return { uid: existing, reused: true };
+        return host.createDrawing({ parentUid: pageUid, order: "last" });
+      };
+    } else if (where === "page") {
+      const template = String(settingsNow().drawingName ?? "").trim() || "Drawing {date}";
+      const dateText = safe(() => api.util.dateToPageTitle(new Date())) ?? new Date().toISOString().slice(0, 10);
+      const openPage = await host.openPageUid?.();
+      const pageText = (openPage && host.pageTitleOf?.(openPage)) || "";
+      const expand = (tpl, n) => cleanTitle(tpl.replace(/\{date\}/g, dateText).replace(/\{page\}/g, pageText).replace(/\{n\}/g, n ? String(n) : ""));
+      const hasN = /\{n\}/.test(template);
+      const base = expand(template, 0) || expand("Drawing {date}", 0);
+      key = `page:${base}`;
+      const taken = (name) => !!host.pageUidByTitle(`Drawings/${name}`);
+      create = () => {
+        let name = null;
+        if (hasN) {
+          for (let n = 1; n < 1000 && !name; n++) {
+            const candidate = expand(template, n) || expand("Drawing {date}", 0);
+            if (!taken(candidate)) name = candidate;
+          }
+        }
+        if (!name) {
+          name = base;
+          for (let k = 2; taken(name) && k < 1000; k++) name = `${base} ${k}`;
+        }
+        return host.createDrawing({ title: name });
+      };
+    } else {
+      toaster.show("Unknown place for a new drawing", { kind: "error" });
+      return null;
+    }
+    const memoKey = `${where}|${key}`;
+    const recent = newDone.get(memoKey);
+    let result;
+    if (recent && Date.now() - recent.at < NEW_REUSE_MS) {
+      result = { uid: recent.uid, reused: true };
+    } else {
+      try {
+        const lock = await withLockFn(lockName(graph, `new:${key}`), create);
+        if (!lock.acquired) {
+          toaster.show("Another drawing is being created, try again", { kind: "error" });
+          return null;
+        }
+        result = lock.value;
+      } catch (error) {
+        console.warn("[plexus] new drawing failed", error);
+        toaster.show("Could not create the drawing", { kind: "error" });
+        return null;
+      }
+      newDone.set(memoKey, { uid: result.uid, at: Date.now() });
+      if (!result.reused) {
+        try { emit({ uid: result.uid, kind: "drawing" }); } catch (error) { console.warn("[plexus] change emit failed", error); }
+      }
+    }
+    if (open && !disposed) {
+      const rendered = () => {
+        for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
+          if (el.id.endsWith(result.uid) && !el.closest?.(".plexus-offscreen") && (el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen") || el.querySelector(".excalidraw-container > div"))) return true;
+        }
+        return false;
+      };
+      await waitFor(rendered, 1500, 50, aborted);
+      const editor = disposed ? null : await openDrawingOnce(result.uid, { reuseIcon: true, placeholder: true, quiet: true });
+      if (!editor && !disposed) toaster.show("Drawing created; open it from the outline");
+    }
+    return result.uid;
+  }
+
+  async function embedFromPickRun({ ref, scenePoint, app } = {}) {
+    const editor = native.activeEditor(doc);
+    if (!editor || (app && editor.app !== app)) {
+      toaster.show("Drawing closed");
+      return null;
+    }
+    const text = refText(ref);
+    let embed;
+    let label;
+    let link = null;
+    if (text === "plexus:today") {
+      embed = "plexus:today";
+      label = "Today";
+      link = `[[${todayTitle()}]]`;
+    } else {
+      const parsed = parseEmbedRef(text);
+      if (!parsed) {
+        toaster.show("Could not embed that", { kind: "error" });
+        return null;
+      }
+      let content = null;
+      try {
+        content = await host.pullEmbedContent(parsed.ref);
+      } catch (error) {
+        console.warn("[plexus] embed pull failed", error);
+      }
+      if (!content && !disposed && parsed.kind === "page" && isValidDate(safe(() => api.util.pageTitleToDate(parsed.title)))) {
+        try {
+          await host.ensurePage(parsed.title);
+          await waitFor(() => host.pageUidByTitle(parsed.title), 2000, 50, aborted);
+          if (!disposed) content = await host.pullEmbedContent(parsed.ref);
+        } catch (error) {
+          console.warn("[plexus] daily page create failed", error);
+        }
+      }
+      if (!content || disposed) {
+        if (!disposed) toaster.show(parsed.kind === "page" ? "Could not find that page" : "Could not find that block", { kind: "error" });
+        return null;
+      }
+      embed = parsed.ref;
+      label = embedLabel(content.string || content.title || parsed.ref);
+    }
+    if (native.activeEditor(doc)?.app !== editor.app) {
+      toaster.show("Drawing closed");
+      return null;
+    }
+    const c = scenePoint ?? viewCentre(editor.app);
+    const width = 360;
+    const height = 200;
+    const elements = makeEmbedAnchor({ ref: embed, label, x: c.x - width / 2, y: c.y - height / 2, width, height, idPrefix: "plexus-embed-" });
+    if (link) elements[0].link = link;
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, "Embed")) {
+      toaster.show("Could not embed that", { kind: "error" });
+      return null;
+    }
+    toaster.show(`Embedded ${label}`);
+    return elements[0].id;
+  }
+
+  async function createPageAndEmbedRun(title, scenePoint, { app } = {}) {
+    const editor = native.activeEditor(doc);
+    if (!editor || (app && editor.app !== app)) {
+      toaster.show("Drawing closed");
+      return null;
+    }
+    const name = String(title ?? "").replace(/\s+/g, " ").trim();
+    if (!name || /\[\[|\]\]/.test(name)) {
+      toaster.show("That is not a valid page title", { kind: "error" });
+      return null;
+    }
+    try {
+      await host.ensurePage(name);
+    } catch (error) {
+      console.warn("[plexus] create page failed", error);
+      toaster.show("Could not create the page", { kind: "error" });
+      return null;
+    }
+    await waitFor(() => host.pageUidByTitle(name), 2000, 50, aborted);
+    if (disposed) return null;
+    return embedFromPickRun({ ref: `[[${name}]]`, scenePoint, app: editor.app });
+  }
+
+  const linkLabel = (text) => embedLabel(String(text ?? "").replace(/\(\([^()]*\)\)/g, ""), 60);
+
+  function textNode(text, x, y, width, link) {
+    const height = Math.ceil(LINK_FONT * LINK_LINE);
+    return {
+      id: `plexus-node-${Math.random().toString(36).slice(2, 12)}`,
+      type: "text", x, y, width, height, angle: 0,
+      strokeColor: "#1e1e1e", backgroundColor: "transparent", fillStyle: "solid",
+      strokeWidth: 1, strokeStyle: "solid", roughness: 0, opacity: 100,
+      groupIds: [], frameId: null, roundness: null,
+      seed: rnd(), version: 1, versionNonce: rnd(), isDeleted: false,
+      boundElements: null, updated: Date.now(), link, locked: false, index: null,
+      text, originalText: text, fontSize: LINK_FONT, fontFamily: 5, textAlign: "left", verticalAlign: "top",
+      containerId: null, autoResize: true, lineHeight: LINK_LINE,
+    };
+  }
+
+  const compareOrders = (a, b) => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+    return a.length - b.length;
+  };
+
+  function placeRefuse(message) {
+    console.warn("[plexus] place:", message);
+    toaster.show(message, { kind: "error" });
+    return null;
+  }
+
+  async function placeBlocksRun(items, opts = {}) {
+    try {
+      return await placeBlocksInner(items, opts);
+    } catch (error) {
+      console.warn("[plexus] place failed", error);
+      return placeRefuse(`Could not place: ${error?.message || error}`);
+    }
+  }
+
+  async function placeBlocksInner(items, { mode = "embed", scenePoint, app, onPlaced } = {}) {
+    const editor = native.activeEditor(doc);
+    if (!editor || (app && editor.app !== app)) return placeRefuse("Open a drawing first");
+    const seen = new Set();
+    const parsed = [];
+    for (const item of items || []) {
+      const p = parseEmbedRef(refText(item));
+      if (p && !seen.has(p.ref)) {
+        seen.add(p.ref);
+        parsed.push(p);
+      }
+    }
+    const paths = host.blockPaths(parsed.filter((p) => p.kind === "block").map((p) => p.uid));
+    const listed = new Set(paths.keys());
+    const blocks = parsed
+      .filter((p) => p.kind === "block" && paths.has(p.uid) && !paths.get(p.uid).ancestors.some((a) => listed.has(a)))
+      .sort((a, b) => compareOrders(paths.get(a.uid).orders, paths.get(b.uid).orders));
+    const pages = parsed.filter((p) => p.kind === "page" && (mode === "link" || host.pageUidByTitle(p.title)));
+    let list = [...blocks, ...pages];
+    if (!list.length) return placeRefuse("Nothing to place");
+    const at = Number.isFinite(scenePoint?.x) && Number.isFinite(scenePoint?.y) ? scenePoint : undefined;
+    if (scenePoint && !at) console.warn("[plexus] place: bad click point, using the view centre", scenePoint);
+    if (mode !== "link" && list.length > EMBED_PLACE_CAP) {
+      const n = list.length;
+      toaster.show(`Too many to embed live (${n}, max ${EMBED_PLACE_CAP})`, {
+        action: { label: `Place ${n} as links`, run: () => { void placeBlocksRun(items, { mode: "link", scenePoint: at, app, onPlaced }); } },
+      });
+      return null;
+    }
+    const cap = mindmap?.NODE_CAP ?? 500;
+    if (mode === "link" && list.length > cap) {
+      toaster.show(`Placing the first ${cap} of ${list.length}`);
+      list = list.slice(0, cap);
+    }
+    const labels = list.map((p) => (p.kind === "page" ? p.title : (host.labelSource?.(p.uid)?.string ?? "")));
+    let nodes;
+    if (mode === "link") {
+      const texts = labels.map((l, i) => linkLabel(l) || (list[i].kind === "page" ? list[i].title : "Block"));
+      if (ensureFonts) {
+        try { await Promise.race([ensureFonts(texts, LINK_FONT), sleep(FONT_WAIT_MS)]); } catch (error) { console.warn("[plexus] font load failed", error); }
+      }
+      nodes = texts.map((t, i) => {
+        const w = measure ? Math.ceil(measure(t, LINK_FONT)) : Math.ceil(t.length * LINK_FONT * 0.6);
+        return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), list[i].ref)] };
+      });
+    } else {
+      nodes = list.map((p, i) => ({ w: 360, h: 200, build: (x, y) => makeEmbedAnchor({ ref: p.ref, label: labels[i], x, y, width: 360, height: 200, idPrefix: "plexus-embed-" }) }));
+    }
+    if (disposed) {
+      console.warn("[plexus] place: extension disposed");
+      return null;
+    }
+    if (native.activeEditor(doc)?.app !== editor.app) return placeRefuse("Drawing closed");
+    const n = nodes.length;
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+    const cellW = Math.max(...nodes.map((x) => x.w)) + PLACE_GAP;
+    const cellH = Math.max(...nodes.map((x) => x.h)) + PLACE_GAP;
+    const c = at ?? viewCentre(editor.app);
+    const x0 = c.x - (cols * cellW - PLACE_GAP) / 2;
+    const y0 = c.y - (rows * cellH - PLACE_GAP) / 2;
+    const elements = nodes.flatMap((node, i) => node.build(x0 + (i % cols) * cellW, y0 + Math.floor(i / cols) * cellH));
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, "Place blocks")) return placeRefuse("Could not place: the drawing refused the write");
+    toaster.show(n === 1 ? `Placed 1 ${mode === "link" ? "link" : "block"}` : `Placed ${n} ${mode === "link" ? "links" : "blocks"}`);
+    try { onPlaced?.(); } catch (error) { console.warn("[plexus] place callback failed", error); }
+    return { count: n, ids: elements.filter((e) => !e.containerId).map((e) => e.id) };
+  }
+
+  async function newNoteCardRun(scenePoint) {
+    const editor = native.activeEditor(doc);
+    if (!editor) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const { app, drawingUid } = editor;
+    if (!drawingUid) {
+      toaster.show("Could not identify this drawing", { kind: "error" });
+      return null;
+    }
+    const overlay = getEmbedOverlay();
+    if (!overlay || overlay.editState?.() !== "idle" || app.state?.editingTextElement) {
+      toaster.show("Finish the current edit first", { kind: "error" });
+      return null;
+    }
+    const home = ["drawing", "page", "daily"].includes(settingsNow().cardHome) ? settingsNow().cardHome : "drawing";
+    let uid;
+    try {
+      if (home === "drawing") {
+        uid = await host.createCard(drawingUid);
+      } else {
+        let pageUid;
+        if (home === "page") pageUid = host.blockInfo(drawingUid)?.pageUid;
+        else pageUid = await host.ensurePage(todayTitle());
+        if (!pageUid) throw new Error("no page for the card");
+        uid = await host.createBlock({ parentUid: pageUid, order: "last", string: "" });
+      }
+    } catch (error) {
+      console.warn("[plexus] create note card failed", error);
+      toaster.show("Could not create the note", { kind: "error" });
+      return null;
+    }
+    cards.set(uid, { anchorId: null, app, drawingUid });
+    if (disposed || native.activeEditor(doc)?.app !== app) {
+      await discardIfUntouched(uid, { trigger: "error" });
+      return null;
+    }
+    const c = scenePoint ?? viewCentre(app);
+    const elements = makeEmbedAnchor({ ref: `((${uid}))`, label: "Note", x: c.x - 180, y: c.y - 100, width: 360, height: 200, idPrefix: "plexus-embed-" });
+    if (!insertGuarded(app, drawingUid, elements, "New note")) {
+      toaster.show("Could not add the note", { kind: "error" });
+      await discardIfUntouched(uid, { trigger: "error" });
+      return null;
+    }
+    const anchorId = elements[0].id;
+    cards.get(uid).anchorId = anchorId;
+    const ready = await waitFor(() => overlay.hasPortal?.(anchorId), 1000, 50, aborted);
+    if (!ready || disposed) return uid;
+    try {
+      await overlay.edit(anchorId, { onLeave: (info) => discardIfUntouched(uid, { trigger: info?.trigger ?? "escape" }) });
+    } catch (error) {
+      console.warn("[plexus] note edit failed", error);
+    }
+    return uid;
+  }
+
+  function pendingNow() {
+    if (pending && Date.now() - pending.at > PENDING_MS) pending = null;
+    return pending ? { count: pending.items.length } : null;
+  }
+
+  const DISCARD_TRIGGERS = new Set(["escape", "enter", "pointer", "focus-lost", "error"]);
+
+  // Deletes a note card this session created, only while it is still empty. Returns true when the block was deleted.
+  async function discardIfUntouched(cardUid, { trigger = "escape" } = {}) {
+    const card = cards.get(cardUid);
+    if (!card) return false;
+    if (!DISCARD_TRIGGERS.has(trigger) && trigger !== "removed") {
+      cards.delete(cardUid);
+      return false;
+    }
+    let block;
+    try { block = host.pullBlock(cardUid); } catch (error) { console.warn("[plexus] card pull failed", error); return false; }
+    if (!block) {
+      cards.delete(cardUid);
+      return false;
+    }
+    if (block.string.trim() !== "" || block.children.length) {
+      cards.delete(cardUid);
+      return false;
+    }
+    try {
+      await host.deleteBlock(cardUid);
+    } catch (error) {
+      console.warn("[plexus] card delete failed", error);
+      return false;
+    }
+    cards.delete(cardUid);
+    if (trigger !== "removed" && card.anchorId) {
+      const editor = native.activeEditor(doc);
+      if (editor && editor.app === card.app) {
+        try {
+          const current = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
+          const ids = new Set([card.anchorId]);
+          for (const el of current) if (el?.containerId === card.anchorId) ids.add(el.id);
+          guard.guardedWrite(editor.app, {
+            drawingUid: card.drawingUid,
+            label: "Discard note",
+            captureUpdate: "NEVER",
+            next: (cur) => cur.map((el) => (el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd(), updated: Date.now() } : el)),
+          });
+        } catch (error) {
+          console.warn("[plexus] card anchor removal failed", error);
+        }
+      }
+    }
+    return true;
+  }
+
   return {
     dispose() {
       disposed = true;
@@ -446,6 +909,9 @@ export function createActions({
       cleanupDialog = null;
       closePolls.clear();
       pendingUpdate = null;
+      pending = null;
+      cards.clear();
+      newDone.clear();
       for (const revoke of [...revokers]) revoke();
     },
 
@@ -455,6 +921,45 @@ export function createActions({
       if (activeToolIsDrawing) activeTool?.cancel?.();
       if (activePromptIsDrawing) activePrompt?.cancel?.();
     },
+
+    // New drawing where the user is. where: "here" | "below" | "page" | "today". uid: the target block (else the focused block).
+    newDrawing({ where = "here", uid, open = true, order } = {}) {
+      const target = typeof uid === "string" && uid ? uid : safe(() => api.ui?.getFocusedBlock?.()?.["block-uid"]);
+      return once("new-drawing", () => newDrawingRun({ where, uid: target, open, order }));
+    },
+
+    embedFromPick: (opts) => embedFromPickRun(opts),
+
+    createPageAndEmbed: (title, scenePoint, opts) => createPageAndEmbedRun(title, scenePoint, opts),
+
+    placeBlocks: (items, opts) => placeBlocksRun(items, opts),
+
+    // Remembers an ordered list of blocks to place once a drawing is open (the full-screen editor hides the outline).
+    armPlace(uids, { mode = "embed" } = {}) {
+      const items = [...new Set((uids || []).map((u) => parseEmbedRef(refText(u))?.ref).filter(Boolean))];
+      if (!items.length) return false;
+      pending = { items, mode, at: Date.now() };
+      toaster.show(`Open a drawing, then right-click the canvas: Place ${items.length} blocks here`);
+      return true;
+    },
+
+    pendingPlace: pendingNow,
+
+    async placePending(scenePoint) {
+      if (!pendingNow()) return placeRefuse("Nothing to place");
+      const job = pending;
+      const done = await placeBlocksRun(job.items, { mode: job.mode, scenePoint, onPlaced: () => { if (pending === job) pending = null; } });
+      if (done && pending === job) pending = null;
+      return done;
+    },
+
+    cancelPendingPlace() {
+      pending = null;
+    },
+
+    newNoteCard: (scenePoint) => once("note", () => newNoteCardRun(scenePoint)),
+
+    discardIfUntouched,
 
     createAreaRegion: () => once("area", async () => {
       const editor = native.activeEditor(doc);
@@ -2266,8 +2771,8 @@ export function createActions({
       return false;
     }
     const ref = parseEmbedRef(anchor.customData.plexus.embed);
-    if (!ref || ref.kind === "page") {
-      toaster.show("Page embeds are read-only for now");
+    if (!ref || ref.kind !== "block") {
+      toaster.show(ref?.kind === "today" ? "Today embeds are read-only" : "Page embeds are read-only for now");
       return false;
     }
     const block = host.pullBlock(ref.uid);
@@ -2484,7 +2989,10 @@ export function createActions({
     return targetUid;
   }
 
-  async function openDrawingOnce(uid, { sidebar = false, reuseIcon = false } = {}) {
+  // placeholder: an empty drawing shows "Click to start editing" and may have no fullscreen icon; click that instead.
+  // quiet: no toasts (the caller reports).
+  async function openDrawingOnce(uid, { sidebar = false, reuseIcon = false, placeholder = false, quiet = false } = {}) {
+    const note = (message) => { if (!quiet) toaster.show(message, { kind: "error" }); };
     const matches = () => {
       const ed = native.activeEditor(doc);
       return ed && ed.drawingUid === uid ? ed : null;
@@ -2492,7 +3000,8 @@ export function createActions({
     const findIcon = () => {
       for (const el of doc.querySelectorAll('[id^="block-input-"]')) {
         if (!el.id.endsWith(uid) || el.closest?.(".plexus-offscreen")) continue;
-        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen");
+        const found = el.querySelector(".excalidraw-outer-container .bp3-icon-fullscreen")
+          ?? (placeholder ? el.querySelector(".excalidraw-container > div") : null);
         if (found && found.isConnected !== false) return found;
       }
       return null;
@@ -2503,7 +3012,7 @@ export function createActions({
         await host.openBlock(uid, sidebar ? { sidebar } : {});
       } catch (error) {
         console.warn("[plexus] open block failed", error);
-        toaster.show("Could not open drawing", { kind: "error" });
+        note("Could not open drawing");
         return null;
       }
     }
@@ -2520,7 +3029,7 @@ export function createActions({
       editor = await waitFor(matches, Math.min(1500, Math.max(0, deadline - Date.now())), 50, aborted);
     }
     if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
-    if (!editor && !disposed) toaster.show("Drawing did not open", { kind: "error" });
+    if (!editor && !disposed) note("Drawing did not open");
     return editor || null;
   }
 

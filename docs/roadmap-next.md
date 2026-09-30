@@ -6,7 +6,7 @@ Forward plan after P6. Companion to [`roadmap.md`](roadmap.md) (phase ledger and
 
 Plexus extends Roam's native `{{[[excalidraw]]}}` (Excalidraw 0.18, reached through the React fiber) and never replaces the canvas. P0-P6 are done and 0.6.1 is current: region refs as real Roam blocks under `{{[[plexus-regions]]}}` (area, rect, group, frame, cframe, poly, imgrect, imgpoly), crop cache, click-to-zoom and spotlight, region-ref cards, the `[[` / `((` picker in canvas text, right-click menus, element links with hover preview, read-only and editable block embeds, frames as slides, mind maps with two-way outline sync, legacy migration, `window.RoamPlexus` v2, Roam Compass integration, and (0.6.1) captions that ref their source blocks plus canvas backlink counts.
 
-This plan places 166 candidate features from six research passes, scored by two judges: Fable (weighted, product fit) and Opus (feasibility). 65 land in nine phases (P7-P15), 8 sit in a pull-forward pool (P16), 58 wait in Later, 17 are parked and 18 rejected. Nothing from P7 onward has shipped; every phase below is future work. P7 makes regions quiet (captions only when real, labels derived, alias refs, fresh crops, copy crop as PNG) and probes Roam's Excalidraw build once. P8 makes regions visible, crops crisp and write paths safe. P9-P10 bring Roam onto the canvas without the clipboard and keep the outline visible while drawing. P11 gets work out (PDF pages, outline-driven decks, embed text on slides). P12-P13 turn outlines into cause maps, process flows and templates. P14 wires Compass; P15 reads graph data back onto the canvas. The main use case throughout is QA work: HACCP process flows, swab-site maps, CAPA photo markup and SOP training decks.
+This plan places 166 candidate features from six research passes, scored by two judges: Fable (weighted, product fit) and Opus (feasibility). 64 land in nine phases (P7-P15), 8 sit in a pull-forward pool (P16), 59 wait in Later, 17 are parked and 18 rejected. Nothing from P7 onward has shipped; every phase below is future work. P7 makes regions quiet (captions only when real, labels derived, alias refs, fresh crops, copy crop as PNG) and probes Roam's Excalidraw build once. P8 makes regions visible, crops crisp and write paths safe. P9-P10 bring Roam onto the canvas without the clipboard and keep the outline visible while drawing. P11 gets work out (PDF pages, outline-driven decks, embed text on slides). P12-P13 turn outlines into cause maps, process flows and templates. P14 wires Compass; P15 reads graph data back onto the canvas. The main use case throughout is QA work: HACCP process flows, swab-site maps, CAPA photo markup and SOP training decks.
 
 ## 2. Decision: region captions
 
@@ -99,7 +99,7 @@ Shortlist of small, high-leverage items. Each row's full entry lives in its home
 | NAV-4 | Back to the previous view after a programmatic zoom | In-memory stack | P8 |
 | AUTH-11 | New drawing here / below / on page / on today, `/Sketch here` | `RoamPlexus.create` exists; no create command today | P9 |
 | AUTH-1 | Embed picker instead of clipboard-only embeds | Suggest infra measured at 11 ms pages, 136 ms blocks | P9 |
-| EMB-3 | Live `{{query}}` node | `renderString` already renders any string (liveness spike first) | P9 |
+| EMB-3 | Live `{{query}}` node | `renderString` already renders any string (liveness spike first) | Later (spike failed 2026-09-29) |
 | UX-1 | Default hotkeys and kbd hints | `default-hotkey` is supported and unused | P9 |
 | PRES-2 | Present from the selected frame | Index math | P11 |
 | PRES-6 | Laser and temporary pen in the presenter (Opus shortlist) | Dialog-local overlay, nothing persisted | P11 |
@@ -327,9 +327,9 @@ S · value high · depends: none · Fable now 4/5 · Opus next 4/5
 
 ### P9: Roam onto the canvas
 
-**Goal.** Create drawings where you are, drop blocks and pages by search or paste instead of the clipboard, place many bullets at once, create note cards as real blocks, and add live query and today cards.
+**Goal.** Create drawings where you are, drop blocks and pages by search or paste instead of the clipboard, place many bullets at once, create note cards as real blocks, and add a live today card.
 
-**Judges.** Opus rates AUTH-5, AUTH-3, EMB-3 and EMB-4 as "later". They stay per Fable; EMB-3 now opens with a liveness spike and stops if `renderString` queries are not live.
+**Judges.** Opus rates AUTH-5, AUTH-3, EMB-3 and EMB-4 as "later". AUTH-5, AUTH-3 and EMB-4 stay per Fable. EMB-3 opened with a liveness spike and was dropped by its stop rule (section 6.1).
 
 #### AUTH-11 New drawing commands
 S · value high · depends: none · Fable now 5/5 · Opus next 5/5
@@ -379,14 +379,6 @@ M · value high · depends: none · Fable next 4/4 · Opus later 4/4
 - **Accept:** N plus click creates a block under `plexus-cards`, editable immediately; Esc on an untouched card deletes only that block.
 - **Risks:** double-click is Excalidraw text edit, so use a key or tool; orphan "New card" blocks if focus is lost; these blocks are content, not derived data.
 
-#### EMB-3 Live query or Roam component node
-S · value high · depends: none · Fable next 4/5 · Opus later 3/4
-- **Gets:** drop a live `{{query}}` (open tasks, tasks on `[[X]]`) or any Roam component string as a card that stays live. Optional KPI tile: count, % done, sum or average of an attribute.
-- **Sources:** canvas. Plexus Canvas `_queryFor` / `_drawQueryNode` (plugin.js:7737-7761), `pxcParseAgg` (1498-1514). `embeds.js` `renderString` renders any string; `parseEmbedRef` accepts only refs.
-- **Design:** first, spike whether a query rendered through `renderString` stays live (Opus); if not, stop. Then `customData.plexus.embedString` rendered with `renderString`. Command "Plexus: Query node..." with presets plus free text. Cap 5 per drawing; lazy-render off-screen. Roll-up computed by `data.q` on demand.
-- **Accept:** completing a TODO elsewhere updates the node.
-- **Risks:** heavy queries slow the mounted editor; exports and slides show only the anchor label until EMB-6 Option C (P11).
-
 #### EMB-4 Live "today" embed
 S · value medium · depends: none · Fable next 3/5 · Opus later 2/4
 - **Gets:** an embed whose target is always today's daily page.
@@ -417,7 +409,7 @@ S · value medium · depends: none · Fable next 3/4 · Opus next 3/4
 3. Multi-select 5 bullets, "Place on open drawing": 5 embeds in a grid, all selected, under one lock.
 4. Pasting `((uid))` makes an embed when the setting is on, Shift keeps text; Shift+Enter in the picker embeds.
 5. N plus click creates a block under `{{[[plexus-cards]]}}`, editable immediately; Esc on an untouched card deletes only it.
-6. The liveness spike passed; a query node updates when a TODO is completed elsewhere; the today card re-resolves at a simulated midnight.
+6. The today card re-resolves at a simulated midnight. (The query-node part was dropped with EMB-3.)
 7. Hotkeys appear in the palette and canvas menu; typing bench +0 with the editor closed and the picker closed.
 
 ### P10: Think in bullets while drawing
@@ -856,7 +848,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (58)
+### 6.1 Later (59)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -874,6 +866,7 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
 | AUTH-21 | Layer manager | Frames plus NAV-9 approximate it; emulated hide leaks into exports | Layered plant maps become frequent | park |
+| EMB-3 | Live `{{query}}` or component node | Spike failed 2026-09-29 (Readwisenotes, trusted CDP): a query rendered through `renderString` is a static snapshot. It showed 0 results, still 0 after a matching TODO was created and after 3 s, and still 0 after the TODO was marked DONE; a fresh `renderString` of the same string then showed 1 result. The P9 stop rule dropped it | A way to re-render on change (a pull watch on the query's refs, at the cost of watches the host bills for), or Roam ships live query components | |
 | EMB-2 | Page cards with chosen attributes, editable | Inline edits write the graph; `BT_attr*` display-only | After EMB-1 | |
 | EMB-5 | Task cards and checkboxes on the canvas | Better Tasks rules and glyph-swap risks; MM-8 and P5 embeds cover it | | |
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
@@ -1050,7 +1043,7 @@ Two research passes (brain, landscape) read an uncommitted working tree that lat
 
 ## 9. ID index
 
-One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9, P8 12, P9 10, P10 3, P11 8, P12 8, P13 3, P14 6, P15 6 (65 in P7-P15), P16 8 (73 placed), Later 58, Parked 17, Rejected 18: **166 items**. Review moves: REF-7 P11 → P8, EMB-6 P16 → P11 (Option C). Review additions (Name region, number pins, REF-2 Alt override, caption-cleanup undo, native-feature probe) extend existing items and add no IDs.
+One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9, P8 12, P9 9, P10 3, P11 8, P12 8, P13 3, P14 6, P15 6 (64 in P7-P15), P16 8 (72 placed), Later 59, Parked 17, Rejected 18: **166 items**. Review moves: REF-7 P11 → P8, EMB-6 P16 → P11 (Option C). Review additions (Name region, number pins, REF-2 Alt override, caption-cleanup undo, native-feature probe) extend existing items and add no IDs.
 
 | ID | Name | Home |
 |---|---|---|
@@ -1099,7 +1092,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-21 | Layer manager | Later |
 | EMB-1 | Embed display modes and polish | P16 |
 | EMB-2 | Page cards with attributes | Later |
-| EMB-3 | Live query node | P9 (QW) |
+| EMB-3 | Live query node | Later (P9 spike failed) |
 | EMB-4 | Live "today" embed | P9 |
 | EMB-5 | Task cards on the canvas | Later |
 | EMB-6 | Embed text in exports and slides (Option C) | P11 |

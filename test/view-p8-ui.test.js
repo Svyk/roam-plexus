@@ -90,9 +90,11 @@ function canvas({ selected = [], elements = [], pending = null, snapshot = false
 }
 const NINE = ["region", "frame", "crop", "image", "embed", "edit-embed", "present", "mindmap", "settings"];
 
-test("canvas items keep today's nine in order and add the new ones after", () => {
+test("canvas items keep today's nine in order (P9 adds the picker and note items after Embed)", () => {
   const { items } = canvas();
-  assert.deepEqual(items.slice(0, 9).map((i) => i.id), NINE);
+  const ids = items.map((i) => i.id);
+  assert.deepEqual(ids.filter((id) => NINE.includes(id)), NINE);
+  assert.deepEqual(ids.slice(0, 7), ["region", "frame", "crop", "image", "embed", "embed-picker", "note"]);
 });
 
 test("nothing selected: copy items always, frames and restore by condition", () => {

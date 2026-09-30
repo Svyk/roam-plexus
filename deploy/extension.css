@@ -799,3 +799,98 @@ input.plexus-portal.plexus-mm-input.plexus-caption-prompt {
     animation: none;
   }
 }
+
+/* == p9:embeds == */
+body[data-plexus-note-armed] .excalidraw canvas.excalidraw__canvas.interactive {
+  cursor: crosshair !important;
+}
+
+.plexus-portal.plexus-embed .plexus-embed-empty {
+  opacity: 0.65;
+  font-style: italic;
+}
+/* == p9:picker == */
+.plexus-picker {
+  position: fixed;
+  width: 400px;
+  box-sizing: border-box;
+}
+
+.plexus-picker .plexus-picker-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.plexus-picker .rm-autocomplete__results-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.plexus-picker .plexus-picker-header {
+  padding: 6px 6px 2px;
+  font-size: 11px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plexus-picker.plexus-cmdlist {
+  left: 50%;
+  top: 15vh;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: calc(100vw - 16px);
+}
+
+.plexus-cmdlist .rm-autocomplete__results-scroll {
+  max-height: min(60vh, 420px);
+}
+
+.plexus-cmdlist .rm-autocomplete-result {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plexus-cmdlist .plexus-cmdlist-kbd {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.plexus-cmdlist .plexus-cmdlist-empty {
+  opacity: 0.6;
+}
+
+/* == p9:ui == */
+.plexus-settings .plexus-settings-subtitle {
+  margin-top: 14px;
+}
+
+.plexus-settings .plexus-settings-shortcut {
+  padding: 2px 0;
+}
+
+.plexus-settings .plexus-settings-kbd {
+  padding: 1px 6px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.plexus-settings .plexus-settings-note {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.7;
+}

@@ -151,7 +151,7 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
 test("show backlinks checkbox defaults on and saves a boolean", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  assert.equal(all.length, 13);
+  assert.equal(all.length, 16);
   const box = all[5];
   assert.equal(box.checked, true);
   box.checked = false; box.fire("change");
@@ -180,7 +180,7 @@ test("caption and pin fields show stored values, unknown values show the default
 test("P8 fields: zoom limit, animation, region landing read defaults and save changes", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  const [zoom, anim, landing] = all.slice(-3);
+  const [zoom, anim, landing] = all.slice(-6, -3);
   assert.deepEqual([zoom.value, anim.value, landing.checked], ["100", "system", false]);
   const labels = flat(dlg).filter((n) => n.tag === "span").map((n) => n.textContent);
   for (const l of ["Zoom limit", "Animation", "Open region links in the drawing"]) assert.ok(labels.includes(l), l);
@@ -190,6 +190,6 @@ test("P8 fields: zoom limit, animation, region landing read defaults and save ch
   await tick();
   assert.deepEqual(writes, [["zoom-cap", "150"], ["animation", "off"], ["region-landing", true]]);
   const bad = setup({ "zoom-cap": "999", animation: "zz" });
-  const [z2, a2] = inputs(bad.dlg).slice(-3);
+  const [z2, a2] = inputs(bad.dlg).slice(-6, -3);
   assert.deepEqual([z2.value, a2.value], ["100", "system"]);
 });

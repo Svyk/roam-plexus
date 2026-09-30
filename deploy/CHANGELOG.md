@@ -4,6 +4,20 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.9.0]
+
+- New drawings where you are: `Plexus: New drawing here / below` (block menu), `Plexus: New drawing on this page` (page menu), and the slash command `/Sketch here`. The drawing opens at once. On a daily page it is a plain top-level child after the block's top-level ancestor. Locked against a double invoke. Setting "New drawing page name" (`{date}`, `{page}`, `{n}`).
+- Embed picker: `Plexus: Embed page or block...` (toolbar "Embed...", canvas menu, Alt+Shift+E) searches pages and blocks, with natural dates ("tomorrow", "next friday", "Sep 30"), a "Today (always today)" row, and a last row "+ Create page" that writes only on an explicit pick. Shift+Enter on a `[[` or `((` pick inside canvas text drops the embed below that text. The "Related" section appears only when Roam semantic search is on; that call is unverified live.
+- `[[` picker in canvas text gained the natural-date and "+ Create page" rows (explicit pick only).
+- Live "today" embed (`plexus:today`): re-resolves at local midnight and when the tab wakes; `element.link` keeps the creation date.
+- Paste refs: setting "Paste refs as" (text / embed / link). A pasted single `((uid))` or `[[Page]]` becomes an embed or a link node when the target exists; Shift keeps text; multi-line pastes pass through. Pasting an outline as nodes is Later.
+- Place many blocks: multi-select menu "Plexus: Place on drawing" puts them in a grid as embeds (up to 30) or links (up to 500), one undo step. With no drawing open the list waits (10 minutes) and the canvas menu offers "Place N blocks here".
+- Note cards: `Plexus: New note card` (Alt+Shift+N, toolbar "Note", canvas menu) creates a real block (setting "New note cards go": under the drawing, on the page, or on the daily page) and opens it for editing. Esc or Enter on an untouched card deletes only that block and its anchor.
+- Default hotkeys: Alt+Shift+R region, I image region, P present, M mind map, E embed, N note. Hints in the canvas menu and toolbar tooltips; a Shortcuts list in the settings dialog.
+- EMB-3 (live query node) is dropped: a query rendered through `renderString` is a static snapshot (measured 2026-09-29). It moves to Later.
+- Command palette cut from 23 entries to 2 ("Plexus: Commands..." and "Plexus: Mind map"). Roam's own key handler pays about 0.055 ms per keystroke for every registered palette command, which was the whole typing regression (+1.3 ms per key; with palette registration off Plexus measured 12.4 ms against 12.6 ms unloaded). "Plexus: Commands..." opens a searchable list of all 23 actions with their hotkeys. Alt+Shift+R/I/P/E/N now also work through a document-level guard while a drawing editor is open; Alt+Shift+M stays a Roam hotkey.
+- Not measured live: slash and multi-select callback arguments, and whether Roam leaves "/Sketch here" in the block. The code accepts either shape.
+
 ## [0.8.0]
 
 - Regions layer: a "Regions" toolbar toggle (and `Plexus: Toggle regions layer`) outlines every drawing region in the open editor with a small caption chip. Click selects the region's elements, Shift-click opens the region block in the sidebar. Image kinds are not drawn; the layer is capped at 150 regions.

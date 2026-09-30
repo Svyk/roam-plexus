@@ -1,8 +1,12 @@
-import { embedAnchors, parseEmbedRef } from "../model/embeds.js";
+import { embedAnchors, parseEmbedRef, TODAY_REF } from "../model/embeds.js";
 import { sceneToViewport } from "../model/scene.js";
 import { subscribeViewport } from "../host/native.js";
 
 export const EMBED_BLOCK_CAP = 30;
+export const WATCH_CAP = 150;
+const NOT_FOUND_RETRIES = [300, 1000, 3000];
+const HOUR_MS = 60 * 60 * 1000;
+const KEYBOARD_LEAVES = new Set(["keyboard", "escape", "enter", "focus-lost"]);
 const CHILD_DEPTH = 2;
 const LEAVE_WAIT_MS = 300;
 const SELECTION_RECHECK_MS = 100;
@@ -89,6 +93,9 @@ export function createEmbedOverlay({
   subscribe = subscribeViewport,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   waitQuiet = null,
+  now = () => new Date(),
+  setTimeout: setTimer = globalThis.setTimeout,
+  clearTimeout: clearTimer = globalThis.clearTimeout,
   toast = () => {},
   onStateChange = () => {},
   menuSelector = ROAM_MENU_SELECTOR,
@@ -102,6 +109,9 @@ export function createEmbedOverlay({
   let unsubscribe = null;
   let session = null;
   let disposePromise = null;
+  let midnightTimer = null;
+  let visListening = false;
+  let watchCapLogged = false;
 
   const requestFrame = (cb) => (typeof view?.requestAnimationFrame === "function" ? view.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = (id) => (typeof view?.cancelAnimationFrame === "function" ? view.cancelAnimationFrame(id) : clearTimeout(id));
@@ -128,10 +138,21 @@ export function createEmbedOverlay({
     return el;
   };
 
-  const paint = (portal, content) => {
+  const paint = (portal, content, today = null) => {
     unmountHosts(portal);
     portal.body.textContent = "";
-    portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
+    if (today) {
+      portal.title.textContent = `Today · ${today.title || ""}`;
+      if (!content) {
+        const empty = doc.createElement("div");
+        empty.className = "plexus-embed-empty";
+        empty.textContent = "No notes yet";
+        portal.body.append(empty);
+        return;
+      }
+    } else {
+      portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
+    }
     if (!content) return;
     let budget = EMBED_BLOCK_CAP;
     if (content.kind !== "page" && content.string) {
@@ -158,6 +179,10 @@ export function createEmbedOverlay({
     releaseWatch(portal);
     portal.uid = uid;
     let entry = watches.get(uid);
+    if (!entry && watches.size >= WATCH_CAP) {
+      if (!watchCapLogged) { watchCapLogged = true; console.warn(`[plexus] embed watch cap ${WATCH_CAP} reached; further embeds render once`); }
+      return;
+    }
     if (!entry) {
       entry = { portals: new Set(), dispose: null };
       entry.dispose = host.watchEmbed(uid, () => {
@@ -180,20 +205,92 @@ export function createEmbedOverlay({
     try { entry.dispose?.(); } catch (error) { console.warn("[plexus] unwatch failed", error); }
   }
 
+  const todayTitle = () => {
+    try {
+      const t = api?.util?.dateToPageTitle?.(now());
+      return typeof t === "string" && t ? t : null;
+    } catch (error) {
+      console.warn("[plexus] today title failed", error);
+      return null;
+    }
+  };
+
+  const pullOnce = async (ref) => {
+    try {
+      return await host.pullEmbedContent(ref);
+    } catch (error) {
+      console.warn("[plexus] embed pull failed", error);
+      return null;
+    }
+  };
+
   const load = async (portal) => {
     if (portal.editing) { portal.stale = true; return; }
     const gen = ++portal.gen;
-    let content = null;
-    try {
-      content = await host.pullEmbedContent(portal.ref);
-    } catch (error) {
-      console.warn("[plexus] embed pull failed", error);
+    const parsed = parseEmbedRef(portal.ref);
+    const isToday = parsed?.kind === "today";
+    let ref = portal.ref;
+    let today = null;
+    if (isToday) {
+      const title = todayTitle();
+      today = { title };
+      ref = title ? `[[${title}]]` : null;
+      // Re-resolving to another day releases the old page's watch first.
+      if (portal.todayTitle !== title) releaseWatch(portal);
+      portal.todayTitle = title;
+    }
+    let content = ref ? await pullOnce(ref) : null;
+    if (!content && !isToday && parsed?.kind === "page") {
+      // A page that was just created may not be pullable yet.
+      for (const ms of NOT_FOUND_RETRIES) {
+        await sleep(ms);
+        if (disposed || portal.dead || gen !== portal.gen) return;
+        content = await pullOnce(ref);
+        if (content) break;
+      }
     }
     if (disposed || portal.dead || gen !== portal.gen) return;
-    paint(portal, content);
-    const uid = content?.uid ?? parseEmbedRef(portal.ref)?.uid;
+    portal.missing = isToday && !content;
+    paint(portal, content, today);
+    const uid = content?.uid ?? parsed?.uid;
     if (uid) watchUid(portal, uid);
+    else if (isToday) releaseWatch(portal);
   };
+
+  // ---- today embeds: re-resolve at local midnight ----
+
+  const hasToday = () => {
+    for (const portal of portals.values()) if (!portal.dead && parseEmbedRef(portal.ref)?.kind === "today") return true;
+    return false;
+  };
+
+  const recheckToday = () => {
+    if (disposed) return;
+    const title = todayTitle();
+    for (const portal of portals.values()) {
+      if (portal.dead || parseEmbedRef(portal.ref)?.kind !== "today") continue;
+      if (portal.todayTitle !== title || portal.missing) void load(portal);
+    }
+  };
+
+  const onVisibility = () => { recheckToday(); armMidnight(); };
+
+  function armMidnight() {
+    const need = !disposed && hasToday();
+    if (!need && midnightTimer != null) { clearTimer(midnightTimer); midnightTimer = null; }
+    if (need && !visListening && typeof doc.addEventListener === "function") {
+      doc.addEventListener("visibilitychange", onVisibility);
+      visListening = true;
+    } else if (!need && visListening) {
+      doc.removeEventListener?.("visibilitychange", onVisibility);
+      visListening = false;
+    }
+    if (!need || midnightTimer != null) return;
+    const d = now();
+    const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const delay = Math.max(1000, Math.min(HOUR_MS, midnight - d.getTime()));
+    midnightTimer = setTimer(() => { midnightTimer = null; recheckToday(); armMidnight(); }, delay);
+  }
 
   // The overlay follows the editor's theme, not Roam's.
   const applyTheme = (portal) => {
@@ -214,7 +311,7 @@ export function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null };
+    const portal = { root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false };
     applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
@@ -237,6 +334,7 @@ export function createEmbedOverlay({
     releaseWatch(portal);
     unmountHosts(portal);
     portal.root.remove();
+    armMidnight();
   };
 
   let lastNonce;
@@ -248,7 +346,7 @@ export function createEmbedOverlay({
     const anchors = embedAnchors(app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? []);
     const ids = new Set(anchors.map((el) => el.id));
     for (const id of [...portals.keys()]) if (!ids.has(id)) remove(id);
-    if (!anchors.length) return;
+    if (!anchors.length) { armMidnight(); return; }
     const containerRect = containerEl.getBoundingClientRect();
     for (const el of anchors) {
       let portal = portals.get(el.id);
@@ -277,6 +375,7 @@ export function createEmbedOverlay({
       s.display = place.hidden ? "none" : "";
       applyTheme(portal);
     }
+    armMidnight();
   };
 
   function schedule() {
@@ -409,7 +508,7 @@ export function createEmbedOverlay({
         // The editor is still mounting: Esc cancels, and keys outside the overlay must not reach Excalidraw's hotkeys.
         if (within(t, portal.root) || t?.closest?.(`${menuSelector}, ${POPUP_HOST_SELECTOR}`)) return;
         swallow(e);
-        if (e.key === "Escape") void leave("keyboard");
+        if (e.key === "Escape") void leave("escape");
         return;
       }
       if (!within(t, portal.root)) {
@@ -419,7 +518,7 @@ export function createEmbedOverlay({
         const ta = rootTextarea(s);
         if (ta) {
           try { ta.focus?.({ preventScroll: true }); caretToEnd(ta); } catch (error) { console.warn("[plexus] refocus failed", error); }
-        } else if (Date.now() - s.clickedAt > REFOCUS_WINDOW_MS) void leave("keyboard");
+        } else if (Date.now() - s.clickedAt > REFOCUS_WINDOW_MS) void leave("focus-lost");
         else clickRoot(s);
         return;
       }
@@ -427,7 +526,7 @@ export function createEmbedOverlay({
       if (e.key === "Escape") {
         if (menuOpen) return;
         swallow(e);
-        void leave("keyboard");
+        void leave("escape");
         return;
       }
       if (!t || t.tagName !== "TEXTAREA") return;
@@ -443,7 +542,7 @@ export function createEmbedOverlay({
       // Block selection would leave the mount from any textarea in it, child blocks included.
       if (!menuOpen && ((key === "ArrowUp" && e.shiftKey && !e.altKey && !mod && start === 0) || (key === "ArrowDown" && e.shiftKey && !e.altKey && !mod && end === len))) { swallow(e); return; }
       if (menuOpen || !isRootTextarea(s, t)) return;
-      if (key === "Enter" && !e.shiftKey && !mod && !e.altKey) { swallow(e); void leave("keyboard"); return; }
+      if (key === "Enter" && !e.shiftKey && !mod && !e.altKey) { swallow(e); void leave("enter"); return; }
       const arrow = key === "ArrowUp" || key === "ArrowDown";
       if (key === "Tab"
         || (key === "Backspace" && start === 0 && end === 0)
@@ -499,7 +598,7 @@ export function createEmbedOverlay({
     }
   }
 
-  async function edit(id) {
+  async function edit(id, { onLeave = null } = {}) {
     if (disposed) return false;
     if (session) {
       if (session.phase !== "leaving") return false;
@@ -512,7 +611,7 @@ export function createEmbedOverlay({
     if (!anchor) return false;
     const s = {
       id, portal, uid: target.uid, inner: doc.createElement("div"), phase: "entering", clickedAt: 0,
-      leavePromise: null, keyOffs: [], pointerOffs: [], globalOffs: [], downInside: false, prev: null,
+      leavePromise: null, keyOffs: [], pointerOffs: [], globalOffs: [], downInside: false, prev: null, onLeave,
     };
     session = s;
     portal.session = s;
@@ -604,13 +703,18 @@ export function createEmbedOverlay({
     const active = doc.activeElement;
     if (active && within(active, inner)) { try { active.blur?.(); } catch (error) { console.warn("[plexus] blur failed", error); } }
     // 3. keys must reach Excalidraw, not body
-    const keyboard = trigger === "keyboard";
+    const keyboard = KEYBOARD_LEAVES.has(trigger);
     if (keyboard) { try { containerEl.focus?.({ preventScroll: true }); } catch (error) { console.warn("[plexus] container focus failed", error); } }
     // 4. let Roam save
     await sleep(LEAVE_WAIT_MS);
     // 5. unmount
     try { api?.ui?.components?.unmountNode?.({ el: inner }); } catch (error) { console.warn("[plexus] unmount failed", error); }
     inner.remove?.();
+    if (typeof s.onLeave === "function") {
+      try {
+        Promise.resolve(s.onLeave({ trigger })).catch((error) => console.warn("[plexus] onLeave failed", error));
+      } catch (error) { console.warn("[plexus] onLeave failed", error); }
+    }
     // 6. restore read-only mode
     for (const off of s.keyOffs.splice(0)) off();
     portal.root.className = "plexus-portal plexus-embed";
@@ -649,6 +753,7 @@ export function createEmbedOverlay({
     isEditing: () => !!session,
     editState: () => session?.phase ?? "idle",
     editingId: () => session?.id ?? null,
+    hasPortal: (id) => !!portals.get(id) && !portals.get(id).dead,
     edit,
     leave,
     dispose() {

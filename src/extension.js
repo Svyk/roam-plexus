@@ -1,5 +1,5 @@
 import { createLifecycle } from "./lifecycle.js";
-import { createSettingsPanel, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
+import { HOTKEYS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
@@ -29,6 +29,13 @@ import { createLinkSuggest, installSuggestAutoAttach } from "./view/link-suggest
 import { installCanvasMenu, installRoamMenus, plexusCanvasItems } from "./view/context-menus.js";
 import { openCaptionPrompt } from "./view/caption-prompt.js";
 import { openSettingsDialog } from "./view/settings-dialog.js";
+import { openEmbedPicker } from "./view/embed-picker.js";
+import { openCommandList } from "./view/command-list.js";
+import { installRefPaste } from "./view/paste.js";
+import { installNoteTool } from "./view/note-tool.js";
+import { createHotkeyRunner, installHotkeyGuard } from "./view/hotkeys.js";
+import { parseEmbedRef } from "./model/embeds.js";
+import { viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
 import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
 
@@ -58,7 +65,7 @@ function versionFlagTarget() {
   return globalThis.window ?? globalThis;
 }
 
-export async function onload({ extensionAPI, extension }) {
+export async function onload({ extensionAPI, extension, openCommandList: openList = openCommandList }) {
   if (!extensionAPI) throw new TypeError("Roam did not provide extensionAPI");
   if (activeLifecycle) await activeLifecycle.dispose();
 
@@ -87,6 +94,10 @@ export async function onload({ extensionAPI, extension }) {
     let audit = null;
     let toggleLayer = null;
     let backCommand = null;
+    let mountedApp = null;
+    const hotkeyHandlers = {};
+    const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
+    let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
@@ -114,6 +125,8 @@ export async function onload({ extensionAPI, extension }) {
         onCropRegion: () => actions.regionFromCrop(),
         canCrop: () => actions.hasCroppedImageSelected(),
         onEmbed: () => actions.insertEmbedFromClipboard(),
+        onEmbedPicker: () => openPicker(),
+        onNote: () => mounted?.noteTool?.arm(),
         onPresent: () => actions.presentDrawing(),
         canPresent: () => actions.hasFrames(),
         onMindMap: () => actions.startMindMap().catch((error) => console.warn("[plexus] mind map failed", error)),
@@ -136,6 +149,7 @@ export async function onload({ extensionAPI, extension }) {
       const scenes = createSceneRegistry({ native, doc, guard });
       lifecycle.add(() => scenes.dispose());
       let mounted = null;
+      mountedApp = () => mounted?.app ?? null;
       let layerOn = false;
       const toggleRegionsLayer = () => {
         layerOn = !layerOn;
@@ -156,6 +170,7 @@ export async function onload({ extensionAPI, extension }) {
         const z = Number.parseInt(doc.defaultView?.getComputedStyle?.(el)?.zIndex, 10);
         return Number.isFinite(z) ? z : 1000;
       };
+      commandZ = () => { const editor = native.activeEditor(doc); return editor ? zIndexFor(editor.el) : 0; };
       const presenter = createPresenter({ doc });
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
@@ -178,6 +193,8 @@ export async function onload({ extensionAPI, extension }) {
         presenter,
         mindmap,
         getEmbedOverlay: () => mounted?.overlay ?? null,
+        measure: measurer.measure,
+        ensureFonts: measurer.ensureFonts,
         refreshRegion: (uid, opts) => regionref?.refreshRegion(uid, opts),
         guard,
         camera,
@@ -185,6 +202,73 @@ export async function onload({ extensionAPI, extension }) {
         viewHistory: (app) => (mounted?.app === app ? mounted.history : null),
       });
       lifecycle.add(() => actions.dispose());
+
+      const timers = new Set();
+      let closed = false;
+      lifecycle.add(() => { closed = true; for (const t of timers) clearTimeout(t); timers.clear(); });
+      const later = (fn, ms) => {
+        const t = setTimeout(() => { timers.delete(t); try { fn(); } catch (error) { console.warn("[plexus] timer failed", error); } }, ms);
+        timers.add(t);
+      };
+      const sceneAt = (app, point) => (point ? viewportToScene({ x: point.x, y: point.y, appState: app.state }) : undefined);
+      const refocus = (el) => { try { el?.focus?.({ preventScroll: true }); } catch { /* focus is best effort */ } };
+      let pickerHandle = null;
+      lifecycle.add(() => { pickerHandle?.close?.(); pickerHandle = null; });
+      const openPicker = async (point) => {
+        try {
+          const editor = native.activeEditor(doc);
+          if (!editor) return void toaster.show("Open a drawing first", { kind: "error" });
+          const { app, el } = editor;
+          let semantic = false;
+          try { semantic = (await api.data?.semanticSearchEnabled?.()) === true; } catch { semantic = false; }
+          if (closed || native.activeEditor(doc)?.app !== app) return;
+          const rect = el.getBoundingClientRect?.() ?? { left: 100, top: 100, width: 0 };
+          const anchorRect = point ? { left: point.x, top: point.y, bottom: point.y } : { left: rect.left + Math.max(0, (rect.width - 400) / 2), top: rect.top + 80, bottom: rect.top + 80 };
+          const scenePoint = sceneAt(app, point);
+          const finish = (out) => Promise.resolve(out).catch((error) => console.warn("[plexus] embed pick failed", error)).then(() => refocus(el));
+          pickerHandle = openEmbedPicker({
+            doc, api, anchorRect, zIndex: zIndexFor(el), semantic,
+            onPick: ({ ref }) => finish(actions.embedFromPick({ ref, scenePoint, app })),
+            onCreate: (title) => finish(actions.createPageAndEmbed(title, scenePoint, { app })),
+            onClose: ({ picked }) => { if (!picked && (doc.activeElement == null || doc.activeElement === doc.body)) refocus(el); },
+          });
+        } catch (error) { console.warn("[plexus] embed picker failed", error); }
+      };
+      // Shift+Enter in a text edit: read the text box now, drop the embed just below it once Excalidraw has committed.
+      const onEmbedPick = ({ ref, title, create }) => {
+        const editor = native.activeEditor(doc);
+        if (!editor) return;
+        const { app, el } = editor;
+        const text = app.state?.editingTextElement;
+        if (!text) return;
+        const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
+        const box = (text.containerId && elements.find((e) => e.id === text.containerId)) || text;
+        const scenePoint = { x: (box.x ?? 0) + (box.width ?? 0) / 2, y: (box.y ?? 0) + (box.height ?? 0) + 124 };
+        const started = Date.now();
+        const run = () => {
+          if (closed) return;
+          if (app.state?.editingTextElement && Date.now() - started < 500) return later(run, 25);
+          const out = create ? actions.createPageAndEmbed(title, scenePoint, { app }) : actions.embedFromPick({ ref, scenePoint, app });
+          Promise.resolve(out).catch((error) => console.warn("[plexus] embed pick failed", error)).then(() => refocus(el));
+        };
+        later(run, 25);
+      };
+      const createPage = (title) => Promise.resolve().then(() => host.ensurePage(title)).catch((error) => {
+        console.warn("[plexus] create page failed", error);
+        toaster.show("Could not create the page", { kind: "error" });
+      });
+      const runAction = (name) => () => actions[name]();
+      hotkeyHandlers.region = runAction("createAreaRegion");
+      hotkeyHandlers.image = runAction("createImageRegion");
+      hotkeyHandlers.present = runAction("presentDrawing");
+      hotkeyHandlers.mindmap = () => (mounted
+        ? actions.startMindMap()
+        : actions.mindMapFromOutline(api.ui?.getFocusedBlock?.()?.["block-uid"]));
+      hotkeyHandlers.embed = () => openPicker();
+      hotkeyHandlers.note = () => {
+        if (!mounted?.noteTool) return void toaster.show("Open a drawing first", { kind: "error" });
+        mounted.noteTool.arm();
+      };
 
       const publicApi = createPublicApi({ host, actions, emitter, version: extension?.version || "development", scenes, openDrawing: (uid, opts) => actions.openDrawing(uid, opts) });
       installPublicApi(publicApi, { win: flagTarget });
@@ -273,9 +357,11 @@ export async function onload({ extensionAPI, extension }) {
         openSettings,
         openPrompt: openCaptionPrompt,
         isEncrypted: () => host.isEncrypted(),
+        native,
+        hasEditor: () => !!native.activeEditor(doc),
         doc,
       }));
-      const suggest = createLinkSuggest({ doc, api, zIndexFor });
+      const suggest = createLinkSuggest({ doc, api, zIndexFor, createPage, onEmbedPick });
       lifecycle.add(() => suggest.dispose());
       lifecycle.add(installSuggestAutoAttach({ doc, suggest }));
       const hover = createHoverPreview({ doc, api });
@@ -353,6 +439,30 @@ export async function onload({ extensionAPI, extension }) {
           mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000, drawingUid: mountUid }));
           mounted.disposers.push(installBackKey({ containerEl: el, app, canBack: () => history.size() > 0, onBack: () => goBack() }));
+          mounted.disposers.push(installHotkeyGuard({ containerEl: el, run: runHotkey, doc }));
+          const refExists = (ref) => {
+            const parsed = parseEmbedRef(ref);
+            if (parsed?.kind === "block") return !!api.data.pull("[:db/id]", [":block/uid", parsed.uid]);
+            if (parsed?.kind === "page") return !!api.data.pull("[:db/id]", [":node/title", parsed.title]);
+            return false;
+          };
+          mounted.disposers.push(installRefPaste({
+            doc, containerEl: el, app, getSettings, exists: refExists,
+            onRef: ({ ref, scenePoint }) => {
+              const out = getSettings().pasteRefs === "link"
+                ? actions.placeBlocks([ref], { mode: "link", scenePoint, app })
+                : actions.embedFromPick({ ref, scenePoint, app });
+              Promise.resolve(out).catch((error) => console.warn("[plexus] ref paste failed", error));
+            },
+          }));
+          const noteTool = installNoteTool({
+            doc, containerEl: el, app,
+            canArm: () => !!mountUid,
+            onPlace: (scenePoint) => Promise.resolve(actions.newNoteCard(scenePoint)).catch((error) => console.warn("[plexus] note failed", error)),
+          });
+          mounted.noteTool = noteTool;
+          mounted.disposers.push(() => noteTool.dispose());
+          mounted.disposers.push(() => pickerHandle?.close?.());
           mounted.disposers.push(() => history.clear());
           let backlinks = null;
           if (mountUid) {
@@ -385,7 +495,12 @@ export async function onload({ extensionAPI, extension }) {
           }
           mounted.disposers.push(installCanvasMenu({
             doc, app, containerEl: el,
-            getItems: () => plexusCanvasItems({ app, native, actions, openSettings, drawingUid: mountUid, guard }),
+            getItems: (point) => plexusCanvasItems({
+              app, native, actions, openSettings, drawingUid: mountUid, guard, point,
+              openPicker: (p) => openPicker(p),
+              noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
+              toScene: (p) => sceneAt(app, p),
+            }),
           }));
           if (mounted.uid && getSettings().showBacklinks) {
             backlinks = createCanvasBacklinks({
@@ -414,25 +529,11 @@ export async function onload({ extensionAPI, extension }) {
       discovery.scanExisting();
     }
 
+    const unavailable = (name) => console.warn("[plexus] unavailable outside Roam:", name);
     const run = (name) => () => {
-      if (!actions) return console.warn("[plexus] unavailable outside Roam:", name);
+      if (!actions) return unavailable(name);
       return actions[name]().catch((error) => console.warn("[plexus]", name, "failed", error));
     };
-    const commands = [
-      ["Plexus: Create region from selection", "createAreaRegion"],
-      ["Plexus: Create image region", "createImageRegion"],
-      ["Plexus: Present open drawing", "presentDrawing"],
-      ["Plexus: Refresh crops for open drawing", "refreshCropsForOpenDrawing"],
-      ["Plexus: Clear crop cache", "clearCache"],
-      ["Plexus: Legacy drawings (dry run)", "legacyDryRun"],
-      ["Plexus: Clear placeholder captions (dry run)", "captionCleanupDryRun"],
-      ["Plexus: Undo caption cleanup", "undoCaptionCleanup"],
-    ];
-    for (const [label, name] of commands) {
-      await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: run(name) });
-    }
-    await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Region settings", callback: () => openSettings() });
-    const unavailable = (name) => console.warn("[plexus] unavailable outside Roam:", name);
     const guarded = (name, fn) => () => {
       if (!fn()) return unavailable(name);
       try {
@@ -441,25 +542,71 @@ export async function onload({ extensionAPI, extension }) {
         return out;
       } catch (error) { console.warn("[plexus]", name, "failed", error); }
     };
-    const extraCommands = [
-      ["Plexus: Regions for all frames", "regionsForAllFrames", () => actions && (() => actions.regionsForAllFrames())],
-      ["Plexus: Audit regions on this page", "auditPage", () => audit && (() => audit("page"))],
-      ["Plexus: Audit regions in graph", "auditGraph", () => audit && (() => audit("graph"))],
-      ["Plexus: Restore before last Plexus change", "restore", () => actions && (() => actions.restoreBeforeLastPlexusChange())],
-      ["Plexus: Toggle regions layer", "toggleLayer", () => toggleLayer && (() => toggleLayer())],
-      ["Plexus: Back to previous view", "back", () => backCommand && (() => backCommand())],
+    const specOf = (id) => HOTKEYS.find((h) => h.id === id)?.spec;
+    const newDrawing = (where, useFocus) => (ctx) => {
+      if (!actions) return unavailable("newDrawing");
+      const args = useFocus === false ? { where } : { where, uid: ctx?.focusedUid };
+      Promise.resolve(actions.newDrawing(args)).catch((error) => console.warn("[plexus] new drawing failed", error));
+    };
+    // Every palette entry costs Roam's keydown handler ~0.055 ms per keystroke, so the palette holds two entries and this list holds the rest.
+    const isMac = /mac|iphone|ipad/i.test(String(doc?.defaultView?.navigator?.platform ?? ""));
+    const hk = (id) => hotkeyFor(id, { mac: isMac });
+    const commandList = [
+      { id: "newDrawingHere", label: "New drawing here", run: newDrawing("here") },
+      { id: "newDrawingBelow", label: "New drawing below", run: newDrawing("below") },
+      { id: "newDrawingPage", label: "New drawing on page", run: newDrawing("page") },
+      { id: "newDrawingToday", label: "New drawing on today", run: newDrawing("today", false) },
+      { id: "region", label: "Create region from selection", hotkey: hk("region"), run: () => runHotkey("region") },
+      { id: "image", label: "Create image region", hotkey: hk("image"), run: () => runHotkey("image") },
+      { id: "framesRegions", label: "Regions for all frames", run: guarded("regionsForAllFrames", () => actions && (() => actions.regionsForAllFrames())) },
+      { id: "mindmap", label: "Mind map", hotkey: hk("mindmap"), run: () => runHotkey("mindmap") },
+      {
+        id: "mindMapFromOutline",
+        label: "Mind map from outline",
+        run: (ctx) => {
+          if (!actions) return unavailable("mindMapFromOutline");
+          return actions.mindMapFromOutline(ctx?.focusedUid).catch((error) => console.warn("[plexus] mind map failed", error));
+        },
+      },
+      { id: "embed", label: "Embed page or block\u2026", hotkey: hk("embed"), run: () => runHotkey("embed") },
+      { id: "note", label: "New note card", hotkey: hk("note"), run: () => runHotkey("note") },
+      { id: "present", label: "Present open drawing", hotkey: hk("present"), run: () => runHotkey("present") },
+      { id: "back", label: "Back to previous view", run: guarded("back", () => backCommand && (() => backCommand())) },
+      { id: "toggleLayer", label: "Toggle regions layer", run: guarded("toggleLayer", () => toggleLayer && (() => toggleLayer())) },
+      { id: "refreshCrops", label: "Refresh crops for open drawing", run: run("refreshCropsForOpenDrawing") },
+      { id: "clearCache", label: "Clear crop cache", run: run("clearCache") },
+      { id: "auditPage", label: "Audit regions on this page", run: guarded("auditPage", () => audit && (() => audit("page"))) },
+      { id: "auditGraph", label: "Audit regions in graph", run: guarded("auditGraph", () => audit && (() => audit("graph"))) },
+      { id: "restore", label: "Restore before last Plexus change", run: guarded("restore", () => actions && (() => actions.restoreBeforeLastPlexusChange())) },
+      { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
+      { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
+      { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },
+      { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
-    for (const [label, name, resolve] of extraCommands) {
-      await lifecycle.command(extensionAPI.ui.commandPalette, { label, callback: guarded(name, resolve) });
-    }
+    let commandListHandle = null;
+    lifecycle.add(() => { commandListHandle?.close?.(); commandListHandle = null; });
     await lifecycle.command(extensionAPI.ui.commandPalette, {
-      label: "Plexus: Mind map from outline",
+      label: "Plexus: Commands\u2026",
       callback: () => {
-        if (!actions) return console.warn("[plexus] unavailable outside Roam: mindMapFromOutline");
-        const uid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
-        return actions.mindMapFromOutline(uid).catch((error) => console.warn("[plexus] mind map failed", error));
+        try {
+          const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+          commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
+        } catch (error) { console.warn("[plexus] command list failed", error); }
       },
     });
+    await lifecycle.command(extensionAPI.ui.commandPalette, { label: "Plexus: Mind map", callback: () => runHotkey("mindmap"), "default-hotkey": specOf("mindmap") });
+    try {
+      const slash = extensionAPI.ui?.slashCommand ?? globalThis.roamAlphaAPI?.ui?.slashCommand;
+      await lifecycle.command(slash, {
+        label: "Sketch here",
+        callback: (ctx) => {
+          const uid = ctx?.["block-uid"] ?? globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
+          if (!actions) { unavailable("newDrawing"); return ""; }
+          Promise.resolve(actions.newDrawing({ where: "here", uid })).catch((error) => console.warn("[plexus] new drawing failed", error));
+          return "";
+        },
+      });
+    } catch (error) { console.warn("[plexus] slash command unavailable", error); }
     console.info(`[plexus] Loaded v${extension?.version || "development"}`);
   } catch (error) {
     if (activeLifecycle === lifecycle) activeLifecycle = null;

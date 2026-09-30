@@ -1,4 +1,4 @@
-import { SETTING_IDS } from "../settings.js";
+import { DEFAULT_DRAWING_NAME, HOTKEYS, SETTING_IDS, drawingNameOf, formatHotkey } from "../settings.js";
 
 const STOP_EVENTS = ["keydown", "keyup", "keypress", "input", "paste", "copy", "cut", "mousedown", "pointerdown", "wheel", "click"];
 const open = new WeakMap();
@@ -29,9 +29,15 @@ const FIELDS = [
   { id: SETTING_IDS.zoomCap, label: "Zoom limit", type: "select", options: [["100", "100%"], ["150", "150%"], ["200", "200%"]] },
   { id: SETTING_IDS.animation, label: "Animation", type: "select", options: [["system", "Follow system"], ["on", "On"], ["off", "Off"]] },
   { id: SETTING_IDS.regionLanding, label: "Open region links in the drawing", type: "checkbox", fallback: false },
+  { id: SETTING_IDS.pasteRefs, label: "Paste refs as", type: "select", options: [["text", "Text"], ["embed", "Embed"], ["link", "Link"]] },
+  { id: SETTING_IDS.cardHome, label: "New note cards go", type: "select", options: [["drawing", "Under the drawing"], ["page", "On the drawing's page"], ["daily", "On today's page"]] },
+  { id: SETTING_IDS.drawingName, label: "New drawing page name", type: "text", fallback: DEFAULT_DRAWING_NAME },
 ];
 
-export function openSettingsDialog({ doc, get = () => undefined, set = () => {}, onChanged = () => {}, zIndex = 100000, dark = false } = {}) {
+// Read-only. Native keys are listed only once measured (spec section 13); at present none are.
+const NATIVE_SHORTCUTS = [["Back", "Alt+\u2190"], ["Edit embed", "F2"]];
+
+export function openSettingsDialog({ doc, get = () => undefined, set = () => {}, onChanged = () => {}, zIndex = 100000, dark = false, mac } = {}) {
   const existing = open.get(doc);
   if (existing) {
     try { existing.focus(); } catch (error) { console.warn("[plexus] settings focus failed", error); }
@@ -54,11 +60,13 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     try { v = get(f.id); } catch { v = undefined; }
     if (f.type === "number") return String(clampInt(v, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, v);
+    if (f.type === "text") return drawingNameOf(v);
     return v == null ? f.fallback : !!v;
   };
   const current = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
+    if (f.type === "text") return drawingNameOf(input.value);
     return !!input.checked;
   };
 
@@ -76,6 +84,10 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
         input.append(o);
       }
       input.value = stored(f);
+    } else if (f.type === "text") {
+      input = el("input", "plexus-settings-input");
+      input.type = "text";
+      input.value = stored(f);
     } else if (f.type === "number") {
       input = el("input", "plexus-settings-input");
       input.type = "number";
@@ -91,6 +103,16 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     d.append(row);
     inputs.push([f, input]);
   }
+
+  const isMac = mac ?? /mac|iphone|ipad/i.test(String(doc?.defaultView?.navigator?.platform ?? ""));
+  d.append(el("div", "plexus-settings-title plexus-settings-subtitle", "Shortcuts"));
+  const shortcuts = [...HOTKEYS.map((h) => [h.label, formatHotkey(h.spec, { mac: isMac })]), ...NATIVE_SHORTCUTS];
+  for (const [label, keys] of shortcuts) {
+    const row = el("div", "plexus-settings-row plexus-settings-shortcut");
+    row.append(el("span", "plexus-settings-label", label), el("kbd", "plexus-settings-kbd", keys));
+    d.append(row);
+  }
+  d.append(el("div", "plexus-settings-note", "Mind map is a Roam hotkey: change it in Roam Settings \u203a Hotkeys. The other keys work while a drawing is open."));
 
   // Writes the fields that differ from the stored value; onChanged fires once after all writes settle.
   const commit = (only) => {
@@ -111,7 +133,8 @@ export function openSettingsDialog({ doc, get = () => undefined, set = () => {},
     });
   };
 
-  for (const [f, input] of inputs) input.addEventListener("change", () => { if (f.type === "number") input.value = current(f, input); commit(input); });
+  // A text field is committed on Close and Esc only, so a half-typed name is never saved.
+  for (const [f, input] of inputs) if (f.type !== "text") input.addEventListener("change", () => { if (f.type === "number") input.value = current(f, input); commit(input); });
 
   let closed = false;
   const close = () => {

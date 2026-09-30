@@ -4,10 +4,14 @@ const REF_RE = /^\(\(([A-Za-z0-9_-]{9})\)\)$/;
 const PAGE_RE = /^\[\[([^\]]+)\]\]$/;
 const UID_RE = /^[A-Za-z0-9_-]{9}$/;
 
-// "((uid))", "[[Title]]" or a bare 9-char uid -> { kind, uid?, title?, ref } or null.
+// Token for the live "today" embed. Only this exact string; "[[today]]" stays an ordinary page ref.
+export const TODAY_REF = "plexus:today";
+
+// "((uid))", "[[Title]]", a bare 9-char uid or the today token -> { kind, uid?, title?, ref } or null.
 export function parseEmbedRef(text) {
   if (typeof text !== "string") return null;
   const t = text.trim();
+  if (t === TODAY_REF) return { kind: "today", ref: TODAY_REF };
   let m = REF_RE.exec(t);
   if (m) return { kind: "block", uid: m[1], ref: `((${m[1]}))` };
   m = PAGE_RE.exec(t);
@@ -61,7 +65,7 @@ function wrapLines(text, perLine) {
   return lines;
 }
 
-export function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
+export function makeEmbedAnchor({ ref, link = ref, label = "", x = 0, y = 0, width = 360, height = 200, idPrefix = "plexus-embed-" } = {}) {
   const rectId = rid(idPrefix);
   const textId = rid(idPrefix);
   const text = embedLabel(label) || embedLabel(ref);
@@ -77,7 +81,7 @@ export function makeEmbedAnchor({ ref, label = "", x = 0, y = 0, width = 360, he
     ...base(rectId, "rectangle", x, y, width, height),
     strokeStyle: "dashed",
     backgroundColor: "transparent",
-    link: ref,
+    link,
     boundElements: [{ id: textId, type: "text" }],
     customData: { plexus: { embed: ref } },
   };

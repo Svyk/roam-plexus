@@ -11,6 +11,8 @@ const DRAWINGS_CAP = 50;
 const EMBED_CAP = 30;
 const EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/page [:node/title]} {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
 const EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
+const CARDS_STRING = "{{[[plexus-cards]]}}";
+const PATH_CAP = 100;
 
 function parseEmbedTarget(ref) {
   const text = String(ref ?? "").trim();
@@ -226,10 +228,16 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return null;
   }
 
+  // A page whose title is a daily-note title keeps Roam's daily uid (MM-DD-YYYY), so the native daily page is never duplicated.
   async function ensurePage(title) {
     const existing = pageUidByTitle(title);
     if (existing) return existing;
-    const uid = api.util.generateUID();
+    let uid;
+    try {
+      const date = api.util?.pageTitleToDate?.(title);
+      if (date instanceof Date && !Number.isNaN(date.getTime()) && typeof api.util.dateToPageUid === "function") uid = api.util.dateToPageUid(date);
+    } catch { uid = undefined; }
+    uid = uid || api.util.generateUID();
     try {
       await api.data.page.create({ page: { title, uid } });
     } catch (error) {
@@ -240,8 +248,9 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     return pageUidByTitle(title) || uid;
   }
 
-  // create({pageUid, parentUid, title}): with a title the drawing goes under page "Drawings/<title>" (reused if present).
-  async function createDrawing({ pageUid, parentUid, title } = {}) {
+  // create({pageUid, parentUid, title, order}): with a title the drawing goes under page "Drawings/<title>" (reused if present).
+  // order is "last" (default) or a number.
+  async function createDrawing({ pageUid, parentUid, title, order = "last" } = {}) {
     let page = pageUid;
     let parent = parentUid || pageUid;
     if (title) {
@@ -251,13 +260,141 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     if (!parent) throw new Error("[plexus] createDrawing needs pageUid, parentUid, or title");
     const uid = api.util.generateUID();
     await api.data.block.create({
-      location: { "parent-uid": parent, order: "last" },
+      location: { "parent-uid": parent, order },
       block: { uid, string: DRAWING_STRING },
     });
     return { uid, pageUid: page || null };
   }
 
+  const BLOCK_INFO_PATTERN = "[:block/uid :block/string :block/order :node/title {:block/_children [:block/uid :block/string :node/title]} {:block/page [:block/uid :node/title]}]";
+  const one = (v) => (Array.isArray(v) ? v[0] : v);
+
+  // Where a block sits: { uid, string, order, parentUid, parentString, parentIsPage, pageUid, pageTitle }. Null for a missing block or a page.
+  function blockInfo(uid) {
+    if (!uid) return null;
+    let raw;
+    try { raw = api.data.pull(BLOCK_INFO_PATTERN, [":block/uid", uid]); } catch { raw = null; }
+    if (!raw || !raw[":block/uid"] || raw[":node/title"] != null) return null;
+    const parent = one(raw[":block/_children"]);
+    const page = one(raw[":block/page"]);
+    return {
+      uid: raw[":block/uid"],
+      string: raw[":block/string"] ?? "",
+      order: raw[":block/order"] ?? 0,
+      parentUid: parent?.[":block/uid"] ?? null,
+      parentString: parent?.[":block/string"] ?? "",
+      parentIsPage: parent?.[":node/title"] != null,
+      pageUid: page?.[":block/uid"] ?? null,
+      pageTitle: page?.[":node/title"] ?? null,
+    };
+  }
+
+  // The top-level block above (or equal to) uid: { uid, order, pageUid }. Null when the chain cannot be read.
+  function topAncestor(uid) {
+    let cur = uid;
+    for (let i = 0; i < PATH_CAP && cur; i++) {
+      const info = blockInfo(cur);
+      if (!info) return null;
+      if (info.parentIsPage) return { uid: info.uid, order: info.order, pageUid: info.parentUid };
+      cur = info.parentUid;
+    }
+    return null;
+  }
+
+  // For each existing block uid: { ancestors: [uid...], orders: [order...] } from the page down to the block (own order last).
+  // Missing blocks and pages are absent from the map. Parent lookups are memoized across the call.
+  function blockPaths(uids) {
+    const nodes = new Map();
+    const node = (uid) => {
+      if (nodes.has(uid)) return nodes.get(uid);
+      let value = null;
+      try {
+        const raw = api.data.pull("[:block/uid :block/order :node/title {:block/_children [:block/uid :node/title]}]", [":block/uid", uid]);
+        if (raw && raw[":block/uid"]) {
+          const parent = one(raw[":block/_children"]);
+          value = { order: raw[":block/order"] ?? 0, isPage: raw[":node/title"] != null, parentUid: parent?.[":block/uid"] ?? null, parentIsPage: parent?.[":node/title"] != null };
+        }
+      } catch { value = null; }
+      nodes.set(uid, value);
+      return value;
+    };
+    const out = new Map();
+    for (const uid of uids || []) {
+      const own = node(uid);
+      if (!own || own.isPage) continue;
+      const ancestors = [];
+      const orders = [own.order];
+      let cur = own;
+      for (let i = 0; i < PATH_CAP && cur && !cur.parentIsPage && cur.parentUid; i++) {
+        ancestors.unshift(cur.parentUid);
+        cur = node(cur.parentUid);
+        if (cur) orders.unshift(cur.order);
+      }
+      out.set(uid, { ancestors, orders });
+    }
+    return out;
+  }
+
+  function pageTitleOf(pageUid) {
+    if (!pageUid) return null;
+    try { return api.data.pull("[:node/title]", [":block/uid", pageUid])?.[":node/title"] ?? null; } catch { return null; }
+  }
+
+  // Generic block create. Returns the uid.
+  async function createBlock({ parentUid, order = "last", string = "", uid, open } = {}) {
+    if (!parentUid) throw new Error("[plexus] createBlock needs parentUid");
+    const id = uid || api.util.generateUID();
+    await api.data.block.create({
+      location: { "parent-uid": parentUid, order },
+      block: { uid: id, string, ...(open === undefined ? {} : { open }) },
+    });
+    return id;
+  }
+
+  async function deleteBlock(uid) {
+    await api.data.block.delete({ block: { uid } });
+    return true;
+  }
+
+  // The {{[[plexus-cards]]}} container of a drawing (collapsed, deterministic uid distinct from the regions container's).
+  async function ensureCardsContainer(drawingUid) {
+    const find = () => pullBlock(drawingUid)?.children.find((c) => c.string.trim() === CARDS_STRING) || null;
+    const existing = find();
+    if (existing) return existing.uid;
+    const uid = `c${hashFn(drawingUid)}`;
+    try {
+      await api.data.block.create({
+        location: { "parent-uid": drawingUid, order: "last" },
+        block: { uid, string: CARDS_STRING, open: false },
+      });
+    } catch (error) {
+      const found = find();
+      if (found) return found.uid;
+      if (!pullBlock(uid)) throw error;
+    }
+    return uid;
+  }
+
+  // A new empty block under the drawing's cards container, made under the drawing lock. Returns the uid.
+  async function createCard(drawingUid) {
+    const lock = await withLockFn(lockName(api.graph.name, drawingUid), async () => {
+      const containerUid = await ensureCardsContainer(drawingUid);
+      return createBlock({ parentUid: containerUid, order: "last", string: "" });
+    });
+    if (!lock.acquired) throw new Error("[plexus] could not acquire drawing lock");
+    return lock.value;
+  }
+
   const DRAWINGS_QUERY = `[:find ?u ?s ?o :in $ ?pu :where [?p :block/uid ?pu] [?b :block/page ?p] [?b :block/uid ?u] [?b :block/string ?s] [?b :block/order ?o] (or [(clojure.string/starts-with? ?s "{{[[excalidraw]]}}")] [(clojure.string/starts-with? ?s "{{excalidraw}}")])]`;
+
+  // First (by order) direct child of a page whose string starts with a drawing macro. Null when there is none.
+  function firstDrawingChild(pageUid) {
+    if (!pageUid) return null;
+    let raw;
+    try { raw = api.data.pull("[:block/uid {:block/children [:block/uid :block/string :block/order]}]", [":block/uid", pageUid]); } catch { raw = null; }
+    const hit = [...(raw?.[":block/children"] || [])].sort(byOrder).find((c) => DRAWING_START.test(String(c[":block/string"] ?? "")));
+    return hit?.[":block/uid"] ?? null;
+  }
 
   function drawingsOn(pageUid) {
     if (!pageUid) return [];
@@ -350,6 +487,17 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     regionBlocksForAudit,
     containersForAudit,
     createDrawing,
+    ensurePage,
+    pageUidByTitle,
+    pageTitleOf,
+    blockInfo,
+    topAncestor,
+    blockPaths,
+    createBlock,
+    deleteBlock,
+    ensureCardsContainer,
+    createCard,
+    firstDrawingChild,
     drawingsOn,
     resolveUidKind,
     openBlock,

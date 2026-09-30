@@ -1,3 +1,5 @@
+import { hotkeyFor } from "../settings.js";
+
 export function baseZIndex(doc, outerEl) {
   const view = doc.defaultView;
   for (let el = outerEl; el && el !== doc.body; el = el.parentElement) {
@@ -7,8 +9,13 @@ export function baseZIndex(doc, outerEl) {
   return 1000;
 }
 
-export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onBack, canBack }) {
+export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameRegion, canFrame, onCropRegion, canCrop, onEmbed, onEmbedPicker, onNote, onPresent, canPresent, onMindMap, onEditEmbed, canEditEmbed, onToggleRegions, regionsVisible, onBack, canBack }) {
   const view = doc.defaultView;
+  const mac = /mac|iphone|ipad/i.test(String(view?.navigator?.platform ?? ""));
+  const withKey = (name, id) => {
+    const keys = hotkeyFor(id, { mac });
+    return keys ? `${name} (${keys})` : name;
+  };
   let bar = null;
   let outer = null;
   let gated = [];
@@ -42,11 +49,12 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
     bar.style.top = `${rect.bottom - 16 - height}px`;
   };
 
-  const button = (label, handler) => {
+  const button = (label, handler, hotkey) => {
     const b = doc.createElement("button");
     b.type = "button";
     b.className = "plexus-toolbar-button";
     b.textContent = label;
+    if (hotkey) b.title = withKey(label, hotkey);
     b.addEventListener("pointerdown", (e) => e.stopPropagation());
     b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", (e) => {
@@ -79,16 +87,19 @@ export function createEditorToolbar({ doc, onAreaRegion, onImageRegion, onFrameR
       bar.style.zIndex = String(baseZIndex(doc, outerEl) + 1);
       const frameButton = button("Frame (with margin)", onFrameRegion);
       const cropButton = button("Region from crop", onCropRegion);
-      const presentButton = button("Present", onPresent);
+      const presentButton = button("Present", onPresent, "present");
       gated = [[frameButton, canFrame], [cropButton, canCrop], [presentButton, canPresent]];
-      const controls = [button("Region", onAreaRegion), button("Image region", onImageRegion), frameButton, cropButton, button("Embed block", onEmbed)];
+      const controls = [button("Region", onAreaRegion, "region"), button("Image region", onImageRegion, "image"), frameButton, cropButton];
+      controls.push(onEmbedPicker ? button("Embed\u2026", onEmbedPicker, "embed") : button("Embed block", onEmbed));
+      if (onNote) controls.push(button("Note", onNote, "note"));
       if (onEditEmbed) {
         const editButton = button("Edit embed", onEditEmbed);
+        editButton.title = "Edit embed (F2)";
         gated.push([editButton, canEditEmbed]);
         controls.push(editButton);
       }
       controls.push(presentButton);
-      if (onMindMap) controls.push(button("Mind map", onMindMap));
+      if (onMindMap) controls.push(button("Mind map", onMindMap, "mindmap"));
       pressed = [];
       if (onToggleRegions) {
         const regionsButton = button("Regions", async () => {

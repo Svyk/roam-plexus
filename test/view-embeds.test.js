@@ -599,3 +599,213 @@ test("a missing multiselect API leaves without throwing or dispatching", async (
   assert.equal(dispatched, 0);
   await t.overlay.dispose();
 });
+
+// ---- P9: today embed, onLeave, triggers ----
+
+function todaySetup({ pages = {}, ref = "plexus:today" } = {}) {
+  const body = fakeEl();
+  const frames = [];
+  const docListeners = [];
+  const doc = {
+    body,
+    defaultView: { requestAnimationFrame: (cb) => { frames.push(cb); return frames.length; }, cancelAnimationFrame() {} },
+    createElement: () => fakeEl(),
+    addEventListener: (type, fn) => docListeners.push({ type, fn }),
+    removeEventListener: (type, fn) => { const i = docListeners.findIndex((l) => l.type === type && l.fn === fn); if (i >= 0) docListeners.splice(i, 1); },
+  };
+  const clock = { date: new Date(2026, 8, 29, 23, 30) };
+  const titleOf = (d) => `T${d.getDate()}`;
+  const rendered = [];
+  const api = {
+    util: { dateToPageTitle: titleOf },
+    ui: { components: { renderString: ({ el, string }) => rendered.push(string), unmountNode() {} } },
+  };
+  const pulls = [];
+  const watches = [];
+  const host = {
+    pullEmbedContent: async (r) => { pulls.push(r); const t = /^\[\[(.*)\]\]$/.exec(r)?.[1]; return pages[t] ? { kind: "page", uid: `uid${t}`.padEnd(9, "x"), title: t, children: [{ string: pages[t] }] } : null; },
+    watchEmbed: (uid) => { const w = { uid, off: false }; watches.push(w); return () => { w.off = true; }; },
+  };
+  const timers = [];
+  const app = {
+    state: { scrollX: 0, scrollY: 0, zoom: { value: 1 }, offsetLeft: 0, offsetTop: 0 },
+    elements: [{ id: "t1", type: "rectangle", x: 0, y: 0, width: 100, height: 50, angle: 0, isDeleted: false, customData: { plexus: { embed: ref } } }],
+    getSceneElementsIncludingDeleted() { return this.elements; },
+  };
+  const containerEl = { getBoundingClientRect: () => ({ left: 0, top: 0, right: 1000, bottom: 800 }) };
+  const overlay = createEmbedOverlay({
+    doc, api, host, app, containerEl, subscribe: () => () => {}, sleep: async () => {},
+    now: () => clock.date,
+    setTimeout: (fn, ms) => { const t = { ms, cleared: false }; t.fn = () => { t.cleared = true; fn(); }; timers.push(t); return t; },
+    clearTimeout: (t) => { t.cleared = true; },
+  });
+  const flush = async () => { while (frames.length) frames.shift()(); await new Promise((r) => setTimeout(r, 0)); };
+  const live = () => timers.filter((t) => !t.cleared);
+  return { overlay, body, clock, pulls, watches, timers, live, docListeners, flush, rendered, pages, app };
+}
+
+test("today embed resolves the date title at render and paints that page", async () => {
+  const t = todaySetup({ pages: { T29: "note a" } });
+  await t.flush();
+  assert.deepEqual(t.pulls, ["[[T29]]"]);
+  assert.equal(t.body.children[0].children[0].textContent, "Today · T29");
+  assert.deepEqual(t.rendered, ["note a"]);
+  assert.equal(t.watches.length, 1);
+  await t.overlay.dispose();
+});
+
+test("a missing today page paints an empty state, not 'Block not found', and creates nothing", async () => {
+  const t = todaySetup();
+  await t.flush();
+  const root = t.body.children[0];
+  assert.equal(root.children[0].textContent, "Today · T29");
+  assert.equal(root.children[1].children[0].textContent, "No notes yet");
+  assert.equal(t.watches.length, 0);
+  await t.overlay.dispose();
+});
+
+test("a page literally named today is an ordinary page ref, not the token", async () => {
+  const t = todaySetup({ ref: "[[today]]", pages: { today: "plain page" } });
+  await t.flush();
+  assert.deepEqual(t.pulls, ["[[today]]"]);
+  assert.equal(t.body.children[0].children[0].textContent, "today");
+  assert.equal(t.live().length, 0, "no midnight timer for a page ref");
+  await t.overlay.dispose();
+});
+
+test("midnight timer: one per overlay, capped at 60 minutes, re-resolves and releases the old watch", async () => {
+  const t = todaySetup({ pages: { T29: "old", T30: "new" } });
+  await t.flush();
+  assert.equal(t.live().length, 1);
+  assert.equal(t.live()[0].ms, 30 * 60 * 1000, "next midnight is closer than an hour");
+  t.clock.date = new Date(2026, 8, 30, 0, 0, 1);
+  t.live()[0].fn();
+  await t.flush();
+  assert.deepEqual(t.pulls, ["[[T29]]", "[[T30]]"]);
+  assert.equal(t.watches.length, 2);
+  assert.equal(t.watches[0].off, true, "old watch released");
+  assert.equal(t.watches[1].off, false);
+  assert.equal(t.body.children[0].children[0].textContent, "Today · T30");
+  assert.equal(t.live().length, 1, "re-armed");
+  assert.equal(t.live()[0].ms, 60 * 60 * 1000, "far from midnight caps at one hour");
+  await t.overlay.dispose();
+});
+
+test("no reload when the day did not change; visibilitychange re-checks after sleep", async () => {
+  const t = todaySetup({ pages: { T29: "a", T30: "b" } });
+  await t.flush();
+  t.live()[0].fn();
+  await t.flush();
+  assert.equal(t.pulls.length, 1);
+  const vis = t.docListeners.find((l) => l.type === "visibilitychange");
+  assert.ok(vis);
+  t.clock.date = new Date(2026, 8, 30, 9, 0);
+  vis.fn();
+  await t.flush();
+  assert.deepEqual(t.pulls, ["[[T29]]", "[[T30]]"]);
+  await t.overlay.dispose();
+});
+
+test("dispose clears the midnight timer and the visibility listener; deleting the anchor does too", async () => {
+  const t = todaySetup();
+  await t.flush();
+  assert.equal(t.docListeners.length, 1);
+  await t.overlay.dispose();
+  assert.equal(t.live().length, 0);
+  assert.equal(t.docListeners.length, 0);
+  const u = todaySetup();
+  await u.flush();
+  u.app.elements = [];
+  u.overlay.portalCount();
+  u.timers.length = 0;
+  await u.overlay.dispose();
+});
+
+test("today timer is not armed without a today portal, and is cleared when the anchor goes", async () => {
+  const t = todaySetup({ ref: "((abcdefghi))" });
+  await t.flush();
+  assert.equal(t.live().length, 0);
+  assert.equal(t.docListeners.length, 0);
+  await t.overlay.dispose();
+  const u = todaySetup();
+  await u.flush();
+  assert.equal(u.live().length, 1);
+  u.app.elements = [];
+  u.app.scene = { getSceneNonce: () => 1 };
+  await u.overlay.dispose();
+  assert.equal(u.live().length, 0);
+});
+
+test("page refs that pull null retry at 300 ms, 1 s, 3 s before painting not-found", async () => {
+  const slept = [];
+  const body = fakeEl();
+  const frames = [];
+  const doc = { body, defaultView: { requestAnimationFrame: (cb) => { frames.push(cb); return 1; }, cancelAnimationFrame() {} }, createElement: () => fakeEl() };
+  let pulls = 0;
+  const host = { pullEmbedContent: async () => { pulls += 1; return pulls === 3 ? { kind: "page", uid: "abcdefghi", title: "Late", children: [] } : null; }, watchEmbed: () => () => {} };
+  const app = {
+    state: { scrollX: 0, scrollY: 0, zoom: { value: 1 } },
+    getSceneElementsIncludingDeleted: () => [{ id: "p", type: "rectangle", x: 0, y: 0, width: 10, height: 10, angle: 0, isDeleted: false, customData: { plexus: { embed: "[[Late]]" } } }],
+  };
+  const overlay = createEmbedOverlay({ doc, api: { ui: { components: { renderString() {}, unmountNode() {} } } }, host, app, containerEl: { getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 100 }) }, subscribe: () => () => {}, sleep: async (ms) => { slept.push(ms); } });
+  while (frames.length) frames.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(slept, [300, 1000]);
+  assert.equal(pulls, 3);
+  assert.equal(body.children[0].children[0].textContent, "Late");
+  await overlay.dispose();
+});
+
+test("watch cap: beyond 150 distinct uids a portal renders once without a watch, logged once", async () => {
+  const uidOf = (i) => String(i).padStart(9, "0");
+  const els = Array.from({ length: 152 }, (_, i) => ({ id: `e${i}`, type: "rectangle", x: 0, y: 0, width: 10, height: 10, angle: 0, isDeleted: false, customData: { plexus: { embed: `((${uidOf(i)}))` } } }));
+  const frames = [];
+  const doc = { body: fakeEl(), defaultView: { requestAnimationFrame: (cb) => { frames.push(cb); return 1; }, cancelAnimationFrame() {} }, createElement: () => fakeEl() };
+  let watched = 0;
+  const host = {
+    pullEmbedContent: async (ref) => ({ kind: "block", uid: /\(\((.*)\)\)/.exec(ref)[1], title: "", string: "", children: [] }),
+    watchEmbed: () => { watched += 1; return () => {}; },
+  };
+  const app = { state: { scrollX: 0, scrollY: 0, zoom: { value: 1 } }, getSceneElementsIncludingDeleted: () => els };
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (...a) => warns.push(a.join(" "));
+  try {
+    const overlay = createEmbedOverlay({ doc, api: { ui: { components: { renderString() {}, unmountNode() {} } } }, host, app, containerEl: { getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 100 }) }, subscribe: () => () => {} });
+    while (frames.length) frames.shift()();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(watched, 150);
+    assert.equal(warns.filter((w) => /watch cap/.test(w)).length, 1);
+    assert.equal(overlay.portalCount(), 152);
+    await overlay.dispose();
+  } finally {
+    console.warn = orig;
+  }
+});
+
+test("edit() reports hasPortal and fires onLeave once after unmount with the trigger; Esc/Enter are distinct triggers", async () => {
+  const t = editSetup();
+  await t.flush();
+  assert.equal(t.overlay.hasPortal("e1"), true);
+  assert.equal(t.overlay.hasPortal("nope"), false);
+  const left = [];
+  assert.equal(await t.overlay.edit("e1", { onLeave: ({ trigger }) => { left.push([trigger, t.log.includes("unmount")]); } }), true);
+  t.key(t.doc.activeElement, "Enter");
+  await t.overlay.leave();
+  await t.flush();
+  assert.deepEqual(left, [["enter", true]]);
+  await t.overlay.edit("e1", { onLeave: ({ trigger }) => left.push([trigger]) });
+  t.key(t.doc.activeElement, "Escape");
+  await t.overlay.leave();
+  assert.deepEqual(left[1], ["escape"]);
+  await t.overlay.dispose();
+});
+
+test("onLeave errors are caught and do not block the leave", async () => {
+  const t = editSetup();
+  await t.flush();
+  await t.overlay.edit("e1", { onLeave: () => { throw new Error("boom"); } });
+  await t.overlay.leave("api");
+  assert.equal(t.overlay.editState(), "idle");
+  await t.overlay.dispose();
+});

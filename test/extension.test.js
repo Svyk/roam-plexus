@@ -36,14 +36,10 @@ test("extension exports the Roam lifecycle contract and survives repeated unload
   await extension.onunload();
   await extension.onunload();
 
-  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 16);
-  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 16);
+  assert.equal(api.calls.filter(([name]) => name === "command:add").length, 2);
+  assert.equal(api.calls.filter(([name]) => name === "command:remove").length, 2);
   assert.ok(api.calls.some(([name, label]) => name === "panel:create" && label === "Plexus"));
-  assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Clear crop cache"));
-  assert.ok(api.calls.some(([name, label]) => name === "command:add" && label === "Plexus: Legacy drawings (dry run)"));
-  for (const label of ["Plexus: Regions for all frames", "Plexus: Audit regions on this page", "Plexus: Audit regions in graph", "Plexus: Restore before last Plexus change", "Plexus: Toggle regions layer", "Plexus: Back to previous view"]) {
-    assert.ok(api.calls.some(([name, l]) => name === "command:add" && l === label), label);
-  }
+  assert.deepEqual(api.calls.filter(([name]) => name === "command:add").map(([, label]) => label), ["Plexus: Commands\u2026", "Plexus: Mind map"]);
 });
 
 test("a second load disposes the previous runtime before registering again", async () => {
@@ -53,8 +49,8 @@ test("a second load disposes the previous runtime before registering again", asy
   await extension.onload({ extensionAPI: firstApi, extension: { version: "one" } });
   const cleanup = await extension.onload({ extensionAPI: secondApi, extension: { version: "two" } });
 
-  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 16);
-  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 16);
+  assert.equal(firstApi.calls.filter(([name]) => name === "command:remove").length, 2);
+  assert.equal(secondApi.calls.filter(([name]) => name === "command:add").length, 2);
   await cleanup();
 });
 
@@ -66,6 +62,17 @@ test("version flag is set on load and cleared on unload", async () => {
   await extension.onunload();
   assert.equal(globalThis.__ROAM_PLEXUS_VERSION, undefined);
 });
+
+// Loads the extension with the command list stubbed; returns the list's commands as captured when "Plexus: Commands\u2026" runs.
+async function loadWithCommands(api, callbacks) {
+  let captured = null;
+  const cleanup = await extension.onload({ extensionAPI: api, extension: { version: "t" }, openCommandList: (o) => { captured = o; return { close() {} }; } });
+  const openList = () => {
+    callbacks.get("Plexus: Commands\u2026")();
+    return new Map(captured.commands.map((c) => [c.label, (...a) => c.run(captured.ctx, ...a)]));
+  };
+  return { cleanup, openList, captured: () => captured };
+}
 
 async function loadWithFakeRoam({ isEncrypted }) {
   const opens = [];
@@ -86,8 +93,8 @@ async function loadWithFakeRoam({ isEncrypted }) {
   globalThis.roamAlphaAPI = { graph: { name: "g", isEncrypted }, util: { generateUID: () => "x" }, data: { pull: () => null }, ui: { components: {} } };
   globalThis.indexedDB = { open: () => { opens.push(1); const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
   globalThis.MutationObserver = class { observe() {} disconnect() {} };
-  await extension.onload({ extensionAPI: api, extension: { version: "test" } });
-  await callbacks.get("Plexus: Clear crop cache")();
+  const { openList } = await loadWithCommands(api, callbacks);
+  await openList().get("Clear crop cache")();
   await extension.onunload();
   return { opens };
 }
@@ -151,5 +158,151 @@ test("load registers the block context menu command and RoamPlexus; unload remov
     if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
     if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
     if (saved.api === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved.api;
+  }
+});
+
+test("the palette holds two commands and only Mind map carries a default hotkey; the slash command registers and unregisters", async () => {
+  const api = fakeExtensionApi();
+  const added = new Map();
+  const slash = [];
+  api.ui.commandPalette.addCommand = async (config) => { added.set(config.label, config); };
+  api.ui.slashCommand = {
+    addCommand: async ({ label }) => { slash.push(["add", label]); },
+    removeCommand: async ({ label }) => { slash.push(["remove", label]); },
+  };
+  const cleanup = await extension.onload({ extensionAPI: api, extension: { version: "t" } });
+  assert.deepEqual([...added.keys()], ["Plexus: Commands\u2026", "Plexus: Mind map"]);
+  assert.equal(added.get("Plexus: Mind map")["default-hotkey"], "alt-shift-m");
+  assert.equal([...added.values()].filter((c) => c["default-hotkey"]).length, 1);
+  assert.deepEqual(slash, [["add", "Sketch here"]]);
+  await cleanup();
+  assert.deepEqual(slash, [["add", "Sketch here"], ["remove", "Sketch here"]]);
+});
+
+test("a missing slash command API only warns; load still succeeds", async () => {
+  const api = fakeExtensionApi();
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (...a) => warnings.push(a.join(" "));
+  try {
+    const cleanup = await extension.onload({ extensionAPI: api, extension: { version: "t" } });
+    await cleanup();
+  } finally {
+    console.warn = warn;
+  }
+  assert.ok(warnings.some((w) => w.includes("[plexus] slash command unavailable")));
+});
+
+test("the four New drawing list commands reach newDrawing with here, below, page and today", async () => {
+  const g = globalThis;
+  const saved = { doc: g.document, api: g.roamAlphaAPI, mo: g.MutationObserver };
+  g.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
+  const noop = () => {};
+  g.document = {
+    body: { append: noop },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({ style: {}, append: noop, remove: noop, addEventListener: noop, removeEventListener: noop, setAttribute: noop }),
+    addEventListener: noop,
+    removeEventListener: noop,
+    defaultView: { addEventListener: noop, removeEventListener: noop, getComputedStyle: () => ({}) },
+  };
+  const creates = [];
+  const pages = [];
+  let n = 0;
+  const pull = (pattern, [, key]) => {
+    if (key === "focus0001") return { ":block/uid": "focus0001", ":block/string": "text", ":block/order": 2, ":block/_children": [{ ":block/uid": "parent001", ":block/string": "p" }], ":block/page": { ":block/uid": "pageuid01", ":node/title": "Notes" } };
+    return null;
+  };
+  g.roamAlphaAPI = {
+    graph: { name: "g" },
+    util: {
+      generateUID: () => `gen00000${++n}`,
+      dateToPageTitle: () => "September 29th, 2026",
+      dateToPageUid: () => "09-29-2026",
+      pageTitleToDate: () => null,
+    },
+    data: {
+      pull, q: () => [], addPullWatch: noop, removePullWatch: noop,
+      page: { create: async ({ page }) => { pages.push(page.title); } },
+      block: { create: async (o) => { creates.push(o.location); } },
+    },
+    ui: { getFocusedBlock: () => ({ "block-uid": "focus0001" }), blockContextMenu: { addCommand: noop, removeCommand: noop } },
+  };
+  const api = fakeExtensionApi();
+  const callbacks = new Map();
+  api.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+  try {
+    const { cleanup, openList } = await loadWithCommands(api, callbacks);
+    const list = openList();
+    const settle = () => new Promise((r) => setTimeout(r, 1700));
+    list.get("New drawing here")();
+    await settle();
+    assert.deepEqual(creates.at(-1), { "parent-uid": "focus0001", order: 0 });
+    list.get("New drawing below")();
+    await settle();
+    assert.deepEqual(creates.at(-1), { "parent-uid": "parent001", order: 3 });
+    list.get("New drawing on page")();
+    await settle();
+    assert.ok(pages.some((t) => t.startsWith("Drawings/")), "page drawing is titled under Drawings/");
+    list.get("New drawing on today")();
+    await settle();
+    assert.ok(pages.includes("September 29th, 2026"), "today ensures the daily page");
+    await cleanup();
+  } finally {
+    if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
+    if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
+    if (saved.api === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved.api;
+  }
+});
+
+test("Sketch here returns an empty string so Roam removes the typed slash text", async () => {
+  const api = fakeExtensionApi();
+  let cb;
+  api.ui.slashCommand = { addCommand: async (c) => { cb = c.callback; }, removeCommand: async () => {} };
+  const cleanup = await extension.onload({ extensionAPI: api, extension: { version: "t" } });
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.equal(cb({ "block-uid": "abcdefghi" }), "");
+  } finally {
+    console.warn = warn;
+  }
+  await cleanup();
+});
+
+test("the command list carries all 23 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+  const g = globalThis;
+  const saved = g.roamAlphaAPI;
+  let focused = "first0001";
+  g.roamAlphaAPI = { ui: { getFocusedBlock: () => ({ "block-uid": focused }) } };
+  const api = fakeExtensionApi();
+  const callbacks = new Map();
+  api.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+  try {
+    const { cleanup, openList, captured } = await loadWithCommands(api, callbacks);
+    openList();
+    focused = "second001";
+    const { commands, ctx, doc } = captured();
+    assert.deepEqual(ctx, { focusedUid: "first0001" });
+    assert.equal(doc, undefined);
+    assert.deepEqual(commands.map((c) => c.label), [
+      "New drawing here", "New drawing below", "New drawing on page", "New drawing on today",
+      "Create region from selection", "Create image region", "Regions for all frames", "Mind map", "Mind map from outline",
+      "Embed page or block\u2026", "New note card", "Present open drawing", "Back to previous view", "Toggle regions layer",
+      "Refresh crops for open drawing", "Clear crop cache", "Audit regions on this page", "Audit regions in graph",
+      "Restore before last Plexus change", "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)", "Region settings",
+    ]);
+    assert.deepEqual(Object.fromEntries(commands.filter((c) => c.hotkey).map((c) => [c.label, c.hotkey])), {
+      "Create region from selection": "Shift+Alt+R",
+      "Create image region": "Shift+Alt+I",
+      "Mind map": "Shift+Alt+M",
+      "Embed page or block\u2026": "Shift+Alt+E",
+      "New note card": "Shift+Alt+N",
+      "Present open drawing": "Shift+Alt+P",
+    });
+    await cleanup();
+  } finally {
+    if (saved === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved;
   }
 });

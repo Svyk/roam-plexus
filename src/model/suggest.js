@@ -16,13 +16,55 @@ export function findTrigger(text, caret) {
   return null;
 }
 
-export function applyPick(text, caret, trigger, pick) {
+function replaceTrigger(text, caret, trigger, token) {
   const closer = trigger.kind === "page" ? "]]" : "))";
-  const token = pick.kind === "page" ? `[[${pick.title}]]` : `((${pick.uid}))`;
   const rest = text.slice(caret);
   const lead = /^[^\n[\]()]*/.exec(rest)[0];
   const cut = rest.startsWith(closer, lead.length) ? caret + lead.length + 2 : caret;
   return { text: text.slice(0, trigger.start) + token + text.slice(cut), caret: trigger.start + token.length };
+}
+
+export function applyPick(text, caret, trigger, pick) {
+  return replaceTrigger(text, caret, trigger, pick.kind === "page" ? `[[${pick.title}]]` : `((${pick.uid}))`);
+}
+
+export function stripTrigger(text, caret, trigger) {
+  return replaceTrigger(text, caret, trigger, "");
+}
+
+const MAX_TITLE = 250;
+
+export function normalizeCreateTitle(query) {
+  const t = String(query ?? "").replace(/\s+/g, " ").trim();
+  if (!t || t.length > MAX_TITLE || t.includes("[[") || t.includes("]]")) return "";
+  return t;
+}
+
+const ABBREVS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+// Orders page rows: exact title matches, the date row, other results, then "+ Create page".
+// results: [{kind: "page", title, uid}]. dateTitle: formatted natural-date page title or "".
+// canCreate: caller allows a create row; exists: a case-sensitive pull already found the title.
+export function buildPageRows({ query, results = [], dateTitle = "", canCreate = false, exists = false }) {
+  const q = String(query ?? "").trim().toLowerCase();
+  const list = results.filter((r) => r && r.title != null);
+  const exact = list.filter((r) => r.title.toLowerCase() === q);
+  const rest = list.filter((r) => r.title.toLowerCase() !== q);
+  const dateLower = dateTitle.toLowerCase();
+  const dateRow = dateTitle ? { kind: "date", title: dateTitle } : null;
+  const dupe = (r) => dateRow && r.title.toLowerCase() === dateLower;
+  const abbrevWins = q.length === 3 && ABBREVS.some((n) => n.startsWith(q)) && rest.some((r) => r.title.toLowerCase().startsWith(q));
+  const exactRows = exact.filter((r) => !dupe(r));
+  const restRows = rest.filter((r) => !dupe(r));
+  const rows = [...exactRows];
+  if (dateRow && !abbrevWins) rows.push(dateRow);
+  rows.push(...restRows);
+  if (dateRow && abbrevWins) rows.push(dateRow);
+  const title = normalizeCreateTitle(query);
+  if (canCreate && title && !exists && !list.some((r) => r.title.toLowerCase() === title.toLowerCase()) && !(dateRow && dateLower === title.toLowerCase())) {
+    rows.push({ kind: "create", title });
+  }
+  return rows;
 }
 
 const tokensOf = (query) => String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);

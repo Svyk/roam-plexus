@@ -67,7 +67,7 @@ function makeInput(value = "", caret = value.length) {
   return el;
 }
 
-function setup({ search, pull } = {}) {
+function setup({ search, pull, util, ...opts } = {}) {
   const view = new Target();
   view.innerHeight = 800;
   view.innerWidth = 1200;
@@ -89,7 +89,8 @@ function setup({ search, pull } = {}) {
       pull: pull || (async () => ({ ":block/page": { ":node/title": "Home" } })),
     },
   };
-  const suggest = createLinkSuggest({ doc, api, setTimeout: setT, clearTimeout: clearT });
+  if (util) api.util = util;
+  const suggest = createLinkSuggest({ doc, api, setTimeout: setT, clearTimeout: clearT, ...opts });
   const roots = () => body.children.filter((c) => /plexus-suggest/.test(c.className));
   return { suggest, doc, view, body, timers, tick, calls, roots, setT, clearT };
 }
@@ -610,4 +611,175 @@ test("Enter while a new search is loading is consumed but neither picks nor clos
   await flush();
   key(el, "Enter");
   assert.deepEqual(el.setterCalls, ["[[yA]]"]);
+});
+
+const titleRows = (root) => rowsOf(root).map((r) => r.attrs.title);
+const wysiwyg = (value) => { const el = makeInput(value); el.className = "excalidraw-wysiwyg"; el.blur = () => { el.blurred = true; }; return el; };
+const page = (title) => ({ ":node/title": title, ":block/uid": `u-${title}` });
+
+test("UX-7: natural-date row sits after an exact match and before other results; picking inserts the date link", async () => {
+  const s = setup({ util: { dateToPageTitle: (d) => `D${d.getDate()}` }, now: () => new Date(2026, 8, 29), search: async () => [page("Tomorrow plans"), page("tomorrow")] });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[tomorrow");
+  s.tick();
+  await flush();
+  assert.deepEqual(titleRows(s.roots()[0]), ["tomorrow", "D30", "Tomorrow plans"]);
+  key(el, "ArrowDown");
+  key(el, "Enter");
+  assert.deepEqual(el.setterCalls, ["[[D30]]"]);
+});
+
+test("UX-7: no date row without util, and none for block queries", async () => {
+  const a = setup({ now: () => new Date(2026, 8, 29), search: async () => [page("x")] });
+  const el = makeInput("");
+  a.suggest.attach(el);
+  typeText(el, "[[tomorrow");
+  a.tick();
+  await flush();
+  assert.deepEqual(titleRows(a.roots()[0]), ["x"]);
+  const b = setup({ util: { dateToPageTitle: () => "D" }, now: () => new Date(2026, 8, 29), search: async () => [] });
+  const el2 = makeInput("");
+  b.suggest.attach(el2);
+  typeText(el2, "((tomorrow");
+  b.tick();
+  await flush();
+  assert.equal(titleRows(b.roots()[0]).includes("D"), false);
+});
+
+test("UX-7: create row is last, never default, writes only on explicit pick, inserts the link first", async () => {
+  const created = [];
+  const s = setup({ createPage: (t) => { created.push(t); return Promise.resolve(); }, search: async () => [page("New thing two")] });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[New  thing");
+  s.tick();
+  await flush();
+  assert.deepEqual(titleRows(s.roots()[0]), ["New thing two", "New thing"]);
+  assert.deepEqual(created, []);
+  key(el, "ArrowUp");
+  key(el, "Enter");
+  assert.deepEqual(el.setterCalls, ["[[New thing]]"]);
+  assert.deepEqual(created, ["New thing"]);
+});
+
+test("UX-7: create row is the default when it is the only row, and hidden when the title exists", async () => {
+  const created = [];
+  const s = setup({ createPage: (t) => created.push(t), search: async () => [] });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[solo");
+  s.tick();
+  await flush();
+  key(el, "Enter");
+  assert.deepEqual(created, ["solo"]);
+  const t = setup({ createPage: (x) => created.push(x), search: async () => [page("Other")], pull: async (_q, [, title]) => (title === "hidden" ? { ":node/title": "hidden" } : null) });
+  const el2 = makeInput("");
+  t.suggest.attach(el2);
+  typeText(el2, "[[hidden");
+  t.tick();
+  await flush();
+  assert.deepEqual(titleRows(t.roots()[0]), ["Other"]);
+  const u = setup({ createPage: (x) => created.push(x), search: async () => [page("Exact")] });
+  const el3 = makeInput("");
+  u.suggest.attach(el3);
+  typeText(el3, "[[exact");
+  u.tick();
+  await flush();
+  assert.deepEqual(titleRows(u.roots()[0]), ["Exact"]);
+});
+
+test("UX-7: a rejected createPage is caught; block triggers get no create row", async () => {
+  const s = setup({ createPage: () => Promise.reject(new Error("boom")), search: async () => [] });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[boom");
+  s.tick();
+  await flush();
+  key(el, "Enter");
+  await flush();
+  assert.deepEqual(el.setterCalls, ["[[boom]]"]);
+  const b = setup({ createPage: () => {}, search: async () => [] });
+  const el2 = makeInput("");
+  b.suggest.attach(el2);
+  typeText(el2, "((nothing");
+  b.tick();
+  await flush();
+  assert.deepEqual(titleRows(b.roots()[0]), ["No blocks found."]);
+});
+
+test("AUTH-4: Shift+Enter calls onEmbedPick, strips the trigger, blurs, and closes", async () => {
+  const picks = [];
+  const s = setup({ onEmbedPick: (p) => picks.push({ ...p, value: p.el.value }), search: async () => [page("Alpha"), page("Beta")] });
+  const el = wysiwyg("");
+  s.suggest.attach(el);
+  typeText(el, "see [[Al");
+  s.tick();
+  await flush();
+  key(el, "ArrowDown");
+  const e = key(el, "Enter", { shiftKey: true });
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(picks.length, 1);
+  assert.deepEqual([picks[0].kind, picks[0].ref, picks[0].title, picks[0].create], ["page", "[[Beta]]", "Beta", false]);
+  assert.equal(picks[0].value, "see [[Al");
+  assert.deepEqual(el.setterCalls, ["see "]);
+  assert.equal(el.blurred, true);
+  assert.equal(s.roots().length, 0);
+});
+
+test("AUTH-4: block row and create row report their refs; a throwing handler is caught", async () => {
+  const picks = [];
+  const s = setup({ createPage: () => {}, onEmbedPick: (p) => { picks.push(p); throw new Error("x"); }, search: async (a) => (a["search-blocks"] ? [{ ":block/uid": "abc123456", ":block/string": "hello" }] : []) });
+  const el = wysiwyg("");
+  s.suggest.attach(el);
+  typeText(el, "((hel");
+  s.tick();
+  await flush();
+  key(el, "Enter", { shiftKey: true });
+  assert.deepEqual([picks[0].kind, picks[0].ref, picks[0].uid], ["block", "((abc123456))", "abc123456"]);
+  assert.deepEqual(el.setterCalls, [""]);
+  const c = setup({ createPage: () => { throw new Error("must not run"); }, onEmbedPick: (p) => picks.push(p), search: async () => [] });
+  const el2 = wysiwyg("");
+  c.suggest.attach(el2);
+  typeText(el2, "[[fresh");
+  c.tick();
+  await flush();
+  key(el2, "Enter", { shiftKey: true });
+  const last = picks[picks.length - 1];
+  assert.deepEqual([last.kind, last.ref, last.create], ["page", "[[fresh]]", true]);
+});
+
+test("AUTH-4: Shift+Enter is consumed as a no-op while loading or hinting, and passes when not applicable", async () => {
+  const picks = [];
+  const s = setup({ onEmbedPick: (p) => picks.push(p), search: async () => [page("A")] });
+  const el = wysiwyg("");
+  s.suggest.attach(el);
+  typeText(el, "[[");
+  let e = key(el, "Enter", { shiftKey: true });
+  assert.equal(e.defaultPrevented, true);
+  typeText(el, "[[a");
+  e = key(el, "Enter", { shiftKey: true });
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(picks, []);
+  assert.deepEqual(el.setterCalls, []);
+  assert.equal(s.roots().length, 1);
+  // not a wysiwyg textarea: passes
+  const p = setup({ onEmbedPick: (x) => picks.push(x), search: async () => [page("A")] });
+  const plain = makeInput("");
+  p.suggest.attach(plain);
+  typeText(plain, "[[a");
+  p.tick();
+  await flush();
+  e = key(plain, "Enter", { shiftKey: true });
+  assert.equal(e.defaultPrevented, false);
+  // no onEmbedPick: passes
+  const q = setup({ search: async () => [page("A")] });
+  const el3 = wysiwyg("");
+  q.suggest.attach(el3);
+  typeText(el3, "[[a");
+  q.tick();
+  await flush();
+  e = key(el3, "Enter", { shiftKey: true });
+  assert.equal(e.defaultPrevented, false);
+  assert.deepEqual(picks, []);
 });

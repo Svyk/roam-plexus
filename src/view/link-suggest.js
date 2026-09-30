@@ -1,4 +1,5 @@
-import { applyPick, blockSnippet, findTrigger, matchSegments } from "../model/suggest.js";
+import { parseNaturalDate } from "../model/dates.js";
+import { applyPick, blockSnippet, buildPageRows, findTrigger, matchSegments, normalizeCreateTitle, stripTrigger } from "../model/suggest.js";
 
 export const SUGGEST_SELECTOR = "textarea.excalidraw-wysiwyg, input.excalidraw-hyperlinkContainer-input, input.plexus-mm-input";
 
@@ -42,7 +43,7 @@ function measureCaret(doc, el, caret) {
   }
 }
 
-export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce = { page: 60, block: 150 }, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) } = {}) {
+export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => new Date(), zIndexFor = () => 1000, debounce = { page: 60, block: 150 }, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) } = {}) {
   const view = doc.defaultView;
   const attached = new Set();
 
@@ -199,15 +200,23 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
       else {
         items.forEach((item, k) => {
           const row = doc.createElement("div");
-          row.setAttribute("title", item.kind === "page" ? item.title : item.str);
+          row.setAttribute("title", item.kind === "block" ? item.str : item.title);
           row.className = "dont-unfocus-block";
           Object.assign(row.style, { borderRadius: "2px", padding: "6px", cursor: "pointer" });
           const inner = doc.createElement("div");
           inner.className = "rm-autocomplete-result";
           const label = doc.createElement("span");
-          segs(label, item.kind === "page" ? item.title : blockSnippet(item.str, trigger.query), trigger.query);
+          if (item.kind === "create") label.textContent = `+ Create page ${item.title}`;
+          else segs(label, item.kind === "block" ? blockSnippet(item.str, trigger.query) : item.title, trigger.query);
           inner.append(label);
           row.append(inner);
+          if (item.kind === "date") {
+            const sub = doc.createElement("div");
+            sub.className = "bp3-text-overflow-ellipsis";
+            sub.style.color = "rgb(129, 145, 157)";
+            sub.textContent = "Daily note";
+            row.append(sub);
+          }
           if (item.kind === "block" && item.pageTitle) {
             const sub = doc.createElement("div");
             sub.className = "bp3-text-overflow-ellipsis";
@@ -238,6 +247,24 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
       }, 300);
     }
 
+    async function pageRows(q, found) {
+      let dateTitle = "";
+      try {
+        const date = parseNaturalDate(q, now());
+        if (date && typeof api.util?.dateToPageTitle === "function") dateTitle = api.util.dateToPageTitle(date) || "";
+      } catch (error) { warn("date row", error); }
+      const canCreate = typeof createPage === "function";
+      const title = normalizeCreateTitle(q);
+      let exists = false;
+      if (canCreate && title && !found.some((r) => r.title?.toLowerCase() === title.toLowerCase())) {
+        try {
+          const pulled = await api.data.pull("[:node/title]", [":node/title", title]);
+          exists = !!pulled?.[":node/title"];
+        } catch { /* a missing check only leaves the create row visible */ }
+      }
+      return buildPageRows({ query: q, results: found, dateTitle, canCreate, exists });
+    }
+
     async function search(trig, mine) {
       const q = trig.query.trim();
       try {
@@ -245,6 +272,7 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
         if (trig.kind === "page") {
           const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
           found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
+          found = await pageRows(q, found);
         } else {
           const res = await api.data.async.search({ "search-str": q, "search-pages": false, "search-blocks": true, "hide-code-blocks": true, limit: 12 });
           found = await Promise.all((res || []).map(async (r) => {
@@ -309,7 +337,7 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
       const caret = el.selectionStart ?? text.length;
       const trig = findTrigger(text, caret);
       if (!trig) { close(); return; }
-      const out = applyPick(text, caret, trig, item.kind === "page" ? { kind: "page", title: item.title } : { kind: "block", uid: item.uid });
+      const out = applyPick(text, caret, trig, item.kind === "block" ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title });
       setValue(el, out.text);
       el.setSelectionRange?.(out.caret, out.caret);
       let ev;
@@ -319,6 +347,38 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
       close();
       el.dispatchEvent(ev);
       if (el.value === out.text) el.setSelectionRange?.(out.caret, out.caret);
+      if (item.kind === "create") {
+        try {
+          Promise.resolve(createPage(item.title)).catch((error) => warn("create page", error));
+        } catch (error) { warn("create page", error); }
+      }
+    }
+
+    const isWysiwyg = () => String(el.tagName).toUpperCase() === "TEXTAREA" && (el.classList?.contains?.("excalidraw-wysiwyg") || /(^|\s)excalidraw-wysiwyg(\s|$)/.test(el.className || ""));
+
+    function embedPick(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const item = status === "results" ? items[active] : null;
+      if (!item) return;
+      const text = el.value ?? "";
+      const caret = el.selectionStart ?? text.length;
+      const trig = findTrigger(text, caret);
+      if (!trig) { close(); return; }
+      const isBlock = item.kind === "block";
+      try {
+        onEmbedPick({ kind: isBlock ? "block" : "page", ref: isBlock ? `((${item.uid}))` : `[[${item.title}]]`, title: isBlock ? item.str : item.title, uid: item.uid, create: item.kind === "create", el });
+      } catch (error) { warn("embed pick", error); }
+      const out = stripTrigger(text, caret, trig);
+      setValue(el, out.text);
+      el.setSelectionRange?.(out.caret, out.caret);
+      let ev;
+      try {
+        ev = new (view.InputEvent || view.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
+      } catch { ev = new view.Event("input", { bubbles: true }); }
+      el.dispatchEvent(ev);
+      close();
+      el.blur?.();
     }
 
     const onInput = safe("input", (e) => {
@@ -332,6 +392,7 @@ export function createLinkSuggest({ doc, api, zIndexFor = () => 1000, debounce =
     const onKeydown = safe("keydown", (e) => {
       if (!root || e.isComposing || e.keyCode === 229) return;
       const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+      if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && typeof onEmbedPick === "function" && isWysiwyg()) { embedPick(e); return; }
       const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
       let move = 0;
       let commit = false;
