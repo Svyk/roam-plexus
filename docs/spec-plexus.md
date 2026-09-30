@@ -244,6 +244,20 @@ Roam's `app-excalidraw.js` (7.7 MB) embeds `PKG_VERSION:"0.18.0"`. With the draw
 | Same with Plexus 0.7.0 loaded | No Plexus writes: the only state change at mount comes from Excalidraw's own `syncActionResult`. The one-time re-save above is the same. |
 | `RoamPlexus.open(uid)` on a drawing uid | Navigates to the block by design (regions open full screen); not an editor open |
 
+#### Phase 8 live measurements (2026-09-29, Readwisenotes, trusted CDP)
+
+| Item | Result |
+|---|---|
+| Regions layer pan cost (120 pan frames, `updateScene` scroll + 1 rAF) | per-element positioning: +2.1 ms p50 / +5.8 ms p95 at 50 regions (failed the 2 ms gate); one transformed stage with an SVG of non-scaling-stroke rects and counter-scaled chips: +0.8 ms p50 / +1.5 ms p95 at 50 regions |
+| A33(a) tween cost | not needed: `scrollToContent({animate})` is native in 0.18.0; a far jump produced 51 distinct scroll positions, 2 with `prefers-reduced-motion: reduce` (emulated in the same CDP session) |
+| A33(b) Alt+Left | no selection: Back restores exact scroll/zoom and Roam Desktop does not navigate; with a selected element: left to Excalidraw (no Back, no move) |
+| A33(c) 2x copy | frame region: warm `png2x` copy 640x522 = 2x the cold 320x261, frame label kept; cold copy 1x with toast "Copied at 1x; open the drawing for a sharper copy". cframe and `png2x-dark` not measured |
+| A33(d) `typeof navigation` | `object` (Navigation API present) |
+| A33(e) full-screen vs right sidebar | not measured |
+| Region landing | `hashchange` fires before Roam finishes routing; opening the region then loses to Roam's own navigation. Landing waits until `mainWindow.getOpenPageOrBlockUid()` is the region uid (then 2 frames); opened in 468 ms |
+| Write guard | API remove of 40 of 50 refused; Apply anyway leaves 10; Restore brings 50 back (one undo entry); Cmd+Z returns to 10. `captureUpdate: "IMMEDIATELY"` records history in Roam's 0.18.0 (`storeAction`/`commitToHistory` do not) |
+| Hot 2x capture | `:edit/time` unchanged; stored `state-json` does not gain `exportScale: 2` |
+
 
 ## Verification (when implementation starts)
 

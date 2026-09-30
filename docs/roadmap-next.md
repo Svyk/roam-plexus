@@ -206,7 +206,7 @@ S · value high · depends: none · Fable now 5/4 · Opus now 5/5
 11. Encrypted graph (owner-approved at that moment, read-only: open and close an existing drawing without editing; no region creation, no cleanup): after a reload, existing region refs and thumbnails paint through the cold path, `:edit/time` is unchanged, and IndexedDB holds no rendered content. If approval is not given, the release notes say encrypted behavior is inferred from Readwisenotes.
 12. Compass: both repos green and published; the published `extension.js` of each matches its local build.
 
-### P8: Regions you can see and manage
+### P8: Regions you can see and manage — done 2026-09-29, v0.8.0 (`e933104`)
 
 **Goal.** A regions layer on the open drawing, geometry edits instead of recreation, batch regions per frame, an audit list, copyable region links, animated zoom with Back, crisp 2x crops while the editor is open, Compass opening regions properly, and cheap write guards (shrink guard with a pre-write snapshot, queue flush).
 
