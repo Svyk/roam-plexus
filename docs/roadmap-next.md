@@ -708,7 +708,9 @@ S · value medium · depends: CMP-6 · Fable later 2/4 · Opus later 2/3
 5. A drawing centre lists frames in slide order, then regions, with thumbnails.
 6. Both repos green and published; published `extension.js` of each matches its local build.
 
-### P15: Graph data on the canvas
+### P15: Graph data on the canvas — done 2026-09-30, v0.15.0 (`6d80929`)
+
+Shipped 0.15.0. Link label is `relates to::`. Cut: GRAPH-12, due-date chips, presets, arrow restyle, delete-sync. Typing -0.042 ms/key.
 
 **Goal.** Read Roam data back onto the drawing: region metadata chips, a persistent focus veil, todo mode, cards from a query, typed relations as harcs, and a site-map heat overlay once its data source exists in Roam.
 

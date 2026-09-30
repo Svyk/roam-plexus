@@ -414,6 +414,19 @@ Not measured (contract A26): the slash callback argument and whether Roam remove
 | Typing | +0.142 ms/key. Five rounds, 42 keys, 5 s settle, editor closed. Loaded 13.043, 12.886, 12.686, 12.717, 12.671 (mean 12.801). Unloaded 12.845, 12.745, 12.579, 12.598, 12.524 (mean 12.658) |
 | Palette | Plexus stays two entries. Compass registers its three on Cmd/Ctrl+P and removes them when the palette closes |
 
+#### Phase 15 live acceptance (2026-09-30, Readwisenotes, trusted CDP)
+
+| Item | Result |
+|---|---|
+| Region | Count 7, attr Name:: Ada, hover notes one through five |
+| Focus / Todo | Depth cycle and open TODOs lit. Escape clears. No scene write |
+| Query | 50 cards. Re-run adds only missing uids. No block writes |
+| Link | `relates to::` plus the dest ref. Re-run keeps the same uid. Undo deletes both. No BT_attr |
+| Filter | One of two outlines dimmed. Escape clears. No scene write |
+| Typing | -0.042 ms/key. Loaded 12.405, 12.019, 12.071, 12.195, 12.062 (mean 12.150). Unloaded 12.217, 12.088, 12.233, 12.195, 12.229 (mean 12.192) |
+| Palette | Cmd/Ctrl+P shows the two Plexus entries. They drop when the palette closes |
+| Cut | GRAPH-12, due-date chips, relation presets, arrow restyle, delete-on-arrow-delete |
+
 ## Verification (when implementation starts)
 
 - P0: spike results recorded per row of section 4 with CDP evidence on the Readwisenotes spike page; a `session-learnings` file in `~/openkb-roam-plugin/raw/session-learnings/`.
