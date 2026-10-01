@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.30.0]
+- Drawing gallery lists at most forty drawings, newest first. A tile uses the crop cache only. A miss stays blank. Choosing a row opens that drawing.
+- Frame list shows the open drawing's frames. Choosing one scrolls to it. The outline dock stays the Roam children.
+- Hide covers a frame on screen. It does not write opacity. The saved scene and the export stay as they were. Closing the editor drops the covers.
+- The palette stays two entries. The command list is 80.
+
 ## [0.29.0]
 - A block with several images uses S to pick the next one, in string order. One image ignores S.
 - A rotated drawing image keeps its angle. The region is stored in that image's box.

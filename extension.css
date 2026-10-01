@@ -1839,3 +1839,51 @@ textarea.plexus-portal.plexus-outline-prompt {
   background: #fff;
   box-shadow: 0 2px 8px rgba(16, 22, 26, 0.3);
 }
+
+.plexus-picker.plexus-gallery,
+.plexus-picker.plexus-framelist {
+  left: 50%;
+  top: 15vh;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: calc(100vw - 16px);
+}
+
+.plexus-gallery-row,
+.plexus-framelist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plexus-gallery-tile,
+.plexus-gallery-blank {
+  width: 160px;
+  height: 90px;
+  flex: 0 0 auto;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.plexus-gallery-tile {
+  display: block;
+  object-fit: contain;
+}
+
+.plexus-frame-cover {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.plexus-framelist-hide {
+  margin-left: auto;
+}

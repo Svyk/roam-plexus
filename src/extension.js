@@ -49,6 +49,8 @@ import { openCaptionPrompt } from "./view/caption-prompt.js";
 import { openSettingsDialog } from "./view/settings-dialog.js";
 import { openEmbedPicker } from "./view/embed-picker.js";
 import { openCommandList } from "./view/command-list.js";
+import { openDrawingGallery } from "./view/drawing-gallery.js";
+import { openFrameList } from "./view/frame-list.js";
 import { installRefPaste } from "./view/paste.js";
 import { installNoteTool } from "./view/note-tool.js";
 import { createHotkeyRunner, installHotkeyGuard } from "./view/hotkeys.js";
@@ -247,6 +249,10 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
+    let openGallery = () => console.warn("[plexus] unavailable outside Roam: drawingGallery");
+    let openFrames = () => console.warn("[plexus] unavailable outside Roam: frameList");
+    let galleryHandle = null;
+    let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
@@ -1135,6 +1141,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const unmountEditor = ({ unloading = false } = {}) => {
         try { endFocus(); } catch (error) { console.warn("[plexus] focus veil failed", error); }
         try { endTodo(); } catch (error) { console.warn("[plexus] todo veil failed", error); }
+        try { frameListHandle?.close?.(); } catch (error) { console.warn("[plexus] frame list close failed", error); }
+        frameListHandle = null;
         const current = mounted;
         mounted = null;
         closeDialogs();
@@ -1536,6 +1544,36 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       });
       lifecycle.add(() => discovery.dispose());
       discovery.scanExisting();
+      openGallery = () => {
+        if (!actions) return console.warn("[plexus] unavailable outside Roam: drawingGallery");
+        try {
+          galleryHandle = openDrawingGallery({
+            doc,
+            api: { q: (query) => api.data.q(query) },
+            hashOf: (uid) => {
+              try { return host.drawing(uid)?.hash || ""; }
+              catch (error) { console.warn("[plexus] gallery hash failed", error); return ""; }
+            },
+            lookup: (key) => cache.get(key),
+            openDrawing: (uid) => actions.openDrawing(uid),
+            toast: (message) => toaster.show(message),
+            zIndex: commandZ(),
+          });
+        } catch (error) { console.warn("[plexus] drawing gallery failed", error); }
+      };
+      openFrames = () => {
+        const app = mountedApp?.();
+        if (!app) { toaster.show("Open a drawing first"); return; }
+        try {
+          frameListHandle = openFrameList({
+            doc,
+            app,
+            container: mounted?.el || doc.body,
+            toast: (message) => toaster.show(message),
+            zIndex: commandZ(),
+          });
+        } catch (error) { console.warn("[plexus] frame list failed", error); }
+      };
     }
 
     const unavailable = (name) => console.warn("[plexus] unavailable outside Roam:", name);
@@ -1685,10 +1723,18 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "stickyNote", label: "Sticky note", run: () => (actions ? Promise.resolve(actions.stickyNote()).catch((error) => console.warn("[plexus] sticky note failed", error)) : unavailable("stickyNote")) },
       { id: "numberStamp", label: "Number stamp", run: () => (actions ? Promise.resolve(actions.numberStamp()).catch((error) => console.warn("[plexus] number stamp failed", error)) : unavailable("numberStamp")) },
       { id: "stackSelection", label: "Stack", run: () => (actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection")) },
+      { id: "drawingGallery", label: "Drawing gallery", run: () => openGallery() },
+      { id: "frameList", label: "Frame list", run: () => openFrames() },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;
     lifecycle.add(() => { commandListHandle?.close?.(); commandListHandle = null; });
+    lifecycle.add(() => {
+      try { galleryHandle?.close?.(); } catch (error) { console.warn("[plexus] gallery close failed", error); }
+      try { frameListHandle?.close?.(); } catch (error) { console.warn("[plexus] frame list close failed", error); }
+      galleryHandle = null;
+      frameListHandle = null;
+    });
     attachLazyPalette({
       doc,
       palette: extensionAPI.ui.commandPalette,

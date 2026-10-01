@@ -155,3 +155,25 @@ export function nearestFrame(frames, point) {
   }
   return best?.f ?? null;
 }
+
+export const FRAME_CAP = 40;
+
+// Scene frames for the jump list. Does not write the elements.
+export function frameRows(elements, limit = FRAME_CAP) {
+  const frames = [];
+  for (const el of Array.isArray(elements) ? elements : []) {
+    if (!el || el.type !== "frame" || el.isDeleted) continue;
+    frames.push(el);
+  }
+  return frames.slice(0, Math.max(0, limit)).map((el, i) => {
+    const name = String(el.name ?? "").trim();
+    return {
+      id: el.id,
+      label: name || `Frame ${i + 1}`,
+      x: Number(el.x) || 0,
+      y: Number(el.y) || 0,
+      width: Number(el.width) || 0,
+      height: Number(el.height) || 0,
+    };
+  });
+}

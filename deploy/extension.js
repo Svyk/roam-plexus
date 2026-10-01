@@ -1,4 +1,4 @@
-/* Plexus v0.29.0 | MIT | generated; edit src/ */
+/* Plexus v0.30.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -5800,14 +5800,14 @@ function createCanvasBacklinks({
   let disposed = false;
   let capLogged = false;
   let popover = null;
-  const warn7 = (message, error) => console.warn("[plexus]", message, error);
+  const warn9 = (message, error) => console.warn("[plexus]", message, error);
   const excludedUids = () => /* @__PURE__ */ new Set([drawingUid, ...regions.map((r) => r.uid)]);
   function loadRefs(lookup) {
     let raw;
     try {
       raw = api.data.pull(REFS_PATTERN2, lookup);
     } catch (error) {
-      warn7("backlinks pull failed", error);
+      warn9("backlinks pull failed", error);
       return [];
     }
     const excluded = excludedUids();
@@ -5825,7 +5825,7 @@ function createCanvasBacklinks({
     try {
       regions = host.regionsOf(drawingUid) ?? [];
     } catch (error) {
-      warn7("backlinks regions failed", error);
+      warn9("backlinks regions failed", error);
       regions = [];
     }
     regionsAt = now();
@@ -5871,7 +5871,7 @@ function createCanvasBacklinks({
         const out = regionSceneBBox({ ...region, pad: 0 }, elements, appState);
         if (out?.bbox) add(regionNodeUid(region, live3, byId) ?? uid, uid, out.bbox);
       } catch (error) {
-        warn7("backlinks region bbox failed", error);
+        warn9("backlinks region bbox failed", error);
       }
     }
     for (const el of live3) {
@@ -5880,7 +5880,7 @@ function createCanvasBacklinks({
       try {
         add(uid, uid, elementBounds(el));
       } catch (error) {
-        warn7("backlinks node bbox failed", error);
+        warn9("backlinks node bbox failed", error);
       }
     }
     return [...byAnchor.values()].map((t) => ({ uids: [...t.uids], bbox: t.bbox }));
@@ -5897,7 +5897,7 @@ function createCanvasBacklinks({
       try {
         bbox = elementBounds(el);
       } catch (error) {
-        warn7("backlinks page bbox failed", error);
+        warn9("backlinks page bbox failed", error);
         continue;
       }
       if (!bbox) continue;
@@ -5953,14 +5953,14 @@ function createCanvasBacklinks({
           render();
           layout2();
         } catch (error) {
-          warn7("backlinks watch failed", error);
+          warn9("backlinks watch failed", error);
         }
       };
       try {
         api.data.addPullWatch(WATCH_PATTERN, spec.eid, cb);
         watches.set(spec.key, { eid: spec.eid, cb });
       } catch (error) {
-        warn7("backlinks watch failed", error);
+        warn9("backlinks watch failed", error);
       }
     }
   }
@@ -5969,7 +5969,7 @@ function createCanvasBacklinks({
     try {
       api.data.removePullWatch(WATCH_PATTERN, entry.eid, entry.cb);
     } catch (error) {
-      warn7("backlinks unwatch failed", error);
+      warn9("backlinks unwatch failed", error);
     }
   }
   function groups() {
@@ -6119,7 +6119,7 @@ function createCanvasBacklinks({
       try {
         update();
       } catch (error) {
-        warn7("backlinks update failed", error);
+        warn9("backlinks update failed", error);
       }
     });
   }
@@ -6183,7 +6183,7 @@ function createCanvasBacklinks({
               ref: { uid: ref.uid, string: ref.string, page: ref.page }
             });
           } catch (error) {
-            warn7("backlinks add failed", error);
+            warn9("backlinks add failed", error);
           }
         };
         addButton.addEventListener("click", onAdd);
@@ -6195,7 +6195,7 @@ function createCanvasBacklinks({
       try {
         api.ui.components.renderString({ el: body, string: ref.string });
       } catch (error) {
-        warn7("backlinks render failed", error);
+        warn9("backlinks render failed", error);
         body.textContent = ref.string;
       }
       const onClick = (e) => {
@@ -6209,7 +6209,7 @@ function createCanvasBacklinks({
         try {
           openTarget({ type: "block", uid: ref.uid }, { sidebar: !!e?.shiftKey });
         } catch (error) {
-          warn7("backlinks open failed", error);
+          warn9("backlinks open failed", error);
         }
       };
       row.addEventListener("click", onClick);
@@ -6241,7 +6241,7 @@ function createCanvasBacklinks({
       try {
         api.ui.components.unmountNode({ el: host_ });
       } catch (error) {
-        warn7("backlinks unmount failed", error);
+        warn9("backlinks unmount failed", error);
       }
     }
     for (const [row, fn] of p.rowHandlers) row.removeEventListener("click", fn);
@@ -6263,7 +6263,7 @@ function createCanvasBacklinks({
       refsByTitle.clear();
       update();
     } catch (error) {
-      warn7("backlinks refresh failed", error);
+      warn9("backlinks refresh failed", error);
     }
   }
   function dispose() {
@@ -6276,7 +6276,7 @@ function createCanvasBacklinks({
     try {
       unsubscribe2?.();
     } catch (error) {
-      warn7("backlinks unsubscribe failed", error);
+      warn9("backlinks unsubscribe failed", error);
     }
     unsubscribe2 = null;
     closePopover();
@@ -6319,7 +6319,7 @@ function createCanvasBacklinks({
   try {
     unsubscribe2 = native.subscribeViewport(app, schedule);
   } catch (error) {
-    warn7("backlinks subscribe failed", error);
+    warn9("backlinks subscribe failed", error);
   }
   refresh();
   return { refresh, dispose, cite };
@@ -9491,6 +9491,25 @@ function nearestFrame(frames, point) {
   }
   return best?.f ?? null;
 }
+var FRAME_CAP = 40;
+function frameRows(elements, limit = FRAME_CAP) {
+  const frames = [];
+  for (const el of Array.isArray(elements) ? elements : []) {
+    if (!el || el.type !== "frame" || el.isDeleted) continue;
+    frames.push(el);
+  }
+  return frames.slice(0, Math.max(0, limit)).map((el, i) => {
+    const name = String(el.name ?? "").trim();
+    return {
+      id: el.id,
+      label: name || `Frame ${i + 1}`,
+      x: Number(el.x) || 0,
+      y: Number(el.y) || 0,
+      width: Number(el.width) || 0,
+      height: Number(el.height) || 0
+    };
+  });
+}
 
 // src/model/arrowlabel.js
 function arrowLabelRect({ x, y, points }, w, h) {
@@ -12053,12 +12072,12 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
   const sessions = /* @__PURE__ */ new Map();
   const laneFlights = /* @__PURE__ */ new Map();
   let disposed = false;
-  const warn7 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
+  const warn9 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
   const toast = (message, opts) => {
     try {
       toaster2.show(message, opts);
     } catch (error) {
-      warn7("toast", error);
+      warn9("toast", error);
     }
   };
   const failToast = () => toast(WRITE_FAILED, { kind: "error" });
@@ -12076,7 +12095,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     try {
       return getTagColors() || /* @__PURE__ */ new Map();
     } catch (error) {
-      warn7("tag colours", error);
+      warn9("tag colours", error);
       return /* @__PURE__ */ new Map();
     }
   };
@@ -12095,7 +12114,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         try {
           await createLaneRegions(drawingUid, batch);
         } catch (error) {
-          warn7("lane regions", error);
+          warn9("lane regions", error);
         }
         batch = [...state.queued.values()];
         state.queued.clear();
@@ -12223,7 +12242,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           fontSig.set(root, sig);
           Promise.resolve(measurer.ensureFonts(texts)).then((cleared) => {
             if (cleared && alive) commit(null, [root]);
-          }).catch((error) => warn7("fonts", error));
+          }).catch((error) => warn9("fonts", error));
         }
       }
       if (input) {
@@ -12293,7 +12312,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         raw = writer.pullTree(root);
       } catch (error) {
-        warn7("pull", error);
+        warn9("pull", error);
         return;
       }
       onRaw(root, raw);
@@ -12367,7 +12386,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         recordDrop(activeTool, pds, event);
       } catch (error) {
-        warn7("drop", error);
+        warn9("drop", error);
       }
       endDrag();
       onChange();
@@ -12467,7 +12486,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         }
         refreshRoot(root);
       }).catch((error) => {
-        warn7("move", error);
+        warn9("move", error);
         failToast();
         refreshRoot(root);
       });
@@ -12481,7 +12500,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         try {
           off();
         } catch (error) {
-          warn7("cleanup", error);
+          warn9("cleanup", error);
         }
       }
       if (dragFrame != null) {
@@ -12523,7 +12542,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           try {
             updateRing();
           } catch (error) {
-            warn7("ring", error);
+            warn9("ring", error);
             endDrag();
           }
         });
@@ -12592,7 +12611,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         chrome.refresh();
       } catch (error) {
-        warn7("chrome", error);
+        warn9("chrome", error);
       }
       force = force === true || deferredSince != null && now() - deferredSince > MAX_WAIT_MS;
       const st = state();
@@ -12622,7 +12641,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         handleDrop();
         nativeChanges();
       } catch (error) {
-        warn7("change pass", error);
+        warn9("change pass", error);
       }
       for (const root of refreshRoots) if (trees.has(root)) refreshRoot(root);
       if (input) placeInput();
@@ -12640,7 +12659,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         pass(true);
       } catch (error) {
-        warn7("flush", error);
+        warn9("flush", error);
       }
     }
     function nativeTextEdit(textId2) {
@@ -12735,7 +12754,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           refreshRoot(root);
         }
       }).catch((error) => {
-        warn7("write", error);
+        warn9("write", error);
         failToast();
         refreshRoot(root);
       });
@@ -12761,7 +12780,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       select(root, uid);
       openInput({ root, uid, base: PLACEHOLDER_CHILD, placeholder: PLACEHOLDER_CHILD });
       Promise.resolve(job).catch((error) => {
-        warn7("create", error);
+        warn9("create", error);
         closeInput({ write: false });
         failToast();
         refreshRoot(root);
@@ -12856,7 +12875,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         if (selectedId(root, uid)) select(root, anchor.uid);
       }
       writer.discardPlaceholder(root, uid, placeholder).then(() => refreshRoot(root)).catch((error) => {
-        warn7("discard", error);
+        warn9("discard", error);
         refreshRoot(root);
       });
     }
@@ -12915,7 +12934,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           try {
             reorderSelected(sel, e.key === "ArrowUp" ? -1 : 1);
           } catch (error) {
-            warn7("hotkey", error);
+            warn9("hotkey", error);
           }
         }
         return;
@@ -12954,11 +12973,11 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         const out = action();
         if (out && typeof out.catch === "function") out.catch((error) => {
-          warn7("hotkey", error);
+          warn9("hotkey", error);
           failToast();
         });
       } catch (error) {
-        warn7("hotkey", error);
+        warn9("hotkey", error);
       }
     }
     function editSelected(sel) {
@@ -13084,7 +13103,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       node.open = open6;
       commit(null, [sel.root], { force: true });
       return writer.setOpen(sel.root, sel.uid, open6).catch((error) => {
-        warn7("fold", error);
+        warn9("fold", error);
         failToast();
         refreshRoot(sel.root);
       });
@@ -13182,7 +13201,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       commit(null, [sel.root], { force: true });
       toast(`Added ${parsed.count}`);
       Promise.all(jobs).catch((error) => {
-        warn7("paste outline", error);
+        warn9("paste outline", error);
         failToast();
         refreshRoot(sel.root);
       });
@@ -13198,7 +13217,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         text = await openOutlinePrompt({ doc, zIndex: (zIndex ?? 1e3) + 2 });
       } catch (error) {
-        warn7("outline prompt", error);
+        warn9("outline prompt", error);
         return false;
       }
       if (text == null) return false;
@@ -13234,7 +13253,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           const raw = api.data.pull("[:block/uid]", [":node/title", target.title]);
           uid = raw?.[":block/uid"] || null;
         } catch (error) {
-          warn7("page link", error);
+          warn9("page link", error);
           uid = null;
         }
       }
@@ -13412,7 +13431,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       select(root, root);
       openInput({ root, uid: root, base: PLACEHOLDER_ROOT, placeholder: PLACEHOLDER_ROOT });
       Promise.resolve(job).catch((error) => {
-        warn7("start", error);
+        warn9("start", error);
         closeInput({ write: false });
         detach(root);
         failToast();
@@ -13452,7 +13471,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         try {
           st = writer.status(root);
         } catch (error) {
-          warn7("queue status", error);
+          warn9("queue status", error);
         }
         if (!st) continue;
         if (st.failed) failed = true;
@@ -13506,7 +13525,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       try {
         chrome.dispose();
       } catch (error) {
-        warn7("chrome", error);
+        warn9("chrome", error);
       }
     });
     listen(containerEl, "keydown", onKeyDown, true);
@@ -13516,20 +13535,20 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         const off = app[name]?.on?.(() => onChange());
         if (typeof off === "function") offs.push(off);
       } catch (error) {
-        warn7("subscribe", error);
+        warn9("subscribe", error);
       }
     }
     try {
       const off = app.onPointerUpEmitter?.on?.(onPointerUp);
       if (typeof off === "function") offs.push(off);
     } catch (error) {
-      warn7("subscribe", error);
+      warn9("subscribe", error);
     }
     try {
       const off = app.onPointerDownEmitter?.on?.(onPointerDown);
       if (typeof off === "function") offs.push(off);
     } catch (error) {
-      warn7("subscribe", error);
+      warn9("subscribe", error);
     }
     const view2 = doc.defaultView;
     if (view2?.addEventListener) listen(view2, "pagehide", () => flush({ unloading: true }));
@@ -13565,14 +13584,14 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
           try {
             off();
           } catch (error) {
-            warn7("cleanup", error);
+            warn9("cleanup", error);
           }
         }
         for (const off of watches.values()) {
           try {
             off();
           } catch (error) {
-            warn7("cleanup", error);
+            warn9("cleanup", error);
           }
         }
         watches.clear();
@@ -17062,7 +17081,7 @@ function createRegionsLayer({
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
   const debugOn = () => typeof debug === "function" ? !!debug() : !!debug;
-  const warn7 = (message, error) => console.warn("[plexus]", message, error);
+  const warn9 = (message, error) => console.warn("[plexus]", message, error);
   let root = null;
   let stage = null;
   let svg = null;
@@ -17091,7 +17110,7 @@ function createRegionsLayer({
     try {
       regions = host.regionsOf(drawingUid) ?? [];
     } catch (error) {
-      warn7("regions layer regions failed", error);
+      warn9("regions layer regions failed", error);
       regions = [];
     }
     regionsAt = now();
@@ -17148,7 +17167,7 @@ function createRegionsLayer({
         if (e?.shiftKey) onOpenSidebar(uid);
         else onSelect(uid);
       } catch (error) {
-        warn7("regions layer chip failed", error);
+        warn9("regions layer chip failed", error);
       }
     };
     const onMouseDown = (e) => e?.preventDefault?.();
@@ -17207,7 +17226,7 @@ function createRegionsLayer({
       try {
         out = regionSceneBBox(entry.region, live3, appState, sceneIndex);
       } catch (error) {
-        warn7("regions layer bbox failed", error);
+        warn9("regions layer bbox failed", error);
         continue;
       }
       if (!out?.bbox) continue;
@@ -17281,7 +17300,7 @@ function createRegionsLayer({
       doc.addEventListener("keydown", fn);
       onFilterKey = fn;
     } catch (error) {
-      warn7("regions layer filter key failed", error);
+      warn9("regions layer filter key failed", error);
     }
   }
   function silenceFilter() {
@@ -17291,7 +17310,7 @@ function createRegionsLayer({
     try {
       doc.removeEventListener("keydown", fn);
     } catch (error) {
-      warn7("regions layer filter key failed", error);
+      warn9("regions layer filter key failed", error);
     }
   }
   function setTagFilter(tag) {
@@ -17430,7 +17449,7 @@ function createRegionsLayer({
       try {
         update();
       } catch (error) {
-        warn7("regions layer update failed", error);
+        warn9("regions layer update failed", error);
       }
     });
   }
@@ -17441,7 +17460,7 @@ function createRegionsLayer({
       sceneSig = null;
       update();
     } catch (error) {
-      warn7("regions layer refresh failed", error);
+      warn9("regions layer refresh failed", error);
     }
   }
   function show() {
@@ -17472,7 +17491,7 @@ function createRegionsLayer({
     try {
       unsubscribe2 = native.subscribeViewport(app, schedule);
     } catch (error) {
-      warn7("regions layer subscribe failed", error);
+      warn9("regions layer subscribe failed", error);
     }
     refresh();
   }
@@ -17484,7 +17503,7 @@ function createRegionsLayer({
     try {
       unsubscribe2?.();
     } catch (error) {
-      warn7("regions layer unsubscribe failed", error);
+      warn9("regions layer unsubscribe failed", error);
     }
     unsubscribe2 = null;
     for (const item of items.values()) item.detach();
@@ -17887,14 +17906,14 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     if (text != null) node.textContent = String(text);
     return node;
   };
-  const warn7 = (what) => (error) => console.warn(`[plexus] audit dialog ${what} failed`, error);
+  const warn9 = (what) => (error) => console.warn(`[plexus] audit dialog ${what} failed`, error);
   const run = (what, fn) => {
     try {
       const out = fn();
-      if (out && typeof out.catch === "function") out.catch(warn7(what));
+      if (out && typeof out.catch === "function") out.catch(warn9(what));
       return out;
     } catch (error) {
-      warn7(what)(error);
+      warn9(what)(error);
       return void 0;
     }
   };
@@ -27949,6 +27968,412 @@ function openCommandList({
   return handle;
 }
 
+// src/model/drawings.js
+var GALLERY_CAP2 = 40;
+var THUMB_MAX = 160;
+var DRAWING_GALLERY_QUERY = `[:find ?uid ?t ?page :where [?b :block/uid ?uid] [?b :block/string ?s] [(clojure.string/starts-with? ?s "{{[[excalidraw]]}}")] [?b :edit/time ?t] [?b :block/page ?p] [?p :node/title ?page]]`;
+function readDrawingRows(api) {
+  const rows = api.q(DRAWING_GALLERY_QUERY) || [];
+  return rows.map((row) => ({
+    uid: String(row?.[0] ?? ""),
+    editTime: Number(row?.[1]) || 0,
+    pageTitle: row?.[2] == null ? "" : String(row[2])
+  }));
+}
+function galleryRows(rows, limit = GALLERY_CAP2) {
+  const sorted = [...rows || []].sort((a, b) => {
+    const dt = (Number(b?.editTime) || 0) - (Number(a?.editTime) || 0);
+    if (dt !== 0) return dt;
+    return String(a?.uid ?? "").localeCompare(String(b?.uid ?? ""));
+  });
+  const capped = sorted.slice(0, Math.max(0, limit));
+  const titles = capped.map((row) => String(row?.pageTitle ?? "").trim());
+  const counts = /* @__PURE__ */ new Map();
+  for (const title of titles) counts.set(title, (counts.get(title) || 0) + 1);
+  const seen = /* @__PURE__ */ new Map();
+  return capped.map((row, i) => {
+    const title = titles[i];
+    const base2 = title || "Drawing";
+    const n = (seen.get(title) || 0) + 1;
+    seen.set(title, n);
+    const label = counts.get(title) > 1 && n > 1 ? `${base2} ${n}` : base2;
+    return { uid: String(row?.uid ?? ""), editTime: Number(row?.editTime) || 0, pageTitle: title, label };
+  });
+}
+function withHashes(rows, hashOf) {
+  return (rows || []).map((row) => {
+    let hash = "";
+    try {
+      hash = (typeof hashOf === "function" ? hashOf(row.uid) : "") || "";
+    } catch {
+      hash = "";
+    }
+    return { ...row, hash: String(hash) };
+  });
+}
+async function attachThumbs(rows, { lookup, maxWidth = THUMB_MAX } = {}) {
+  const out = [];
+  for (const row of rows || []) {
+    if (!row?.hash) {
+      out.push({ ...row, thumb: null });
+      continue;
+    }
+    const key = thumbKey({ uid: row.uid, hash: row.hash, maxWidth });
+    let hit = null;
+    try {
+      hit = await lookup?.(key);
+    } catch {
+      hit = null;
+    }
+    out.push({ ...row, thumb: hit?.url ?? null });
+  }
+  return out;
+}
+
+// src/view/drawing-gallery.js
+var MIN_Z3 = 100003;
+var openPanels = /* @__PURE__ */ new WeakMap();
+var warn6 = (what, error) => console.warn(`[plexus] drawing gallery ${what} failed`, error);
+function clearNode(node) {
+  if (!node) return;
+  if (typeof node.replaceChildren === "function") {
+    node.replaceChildren();
+    return;
+  }
+  for (const child of [...node.children || []]) child.remove?.();
+}
+function openDrawingGallery({ doc, api, hashOf, lookup, openDrawing, toast, zIndex = 0 } = {}) {
+  if (!doc) return { close() {
+  }, ready: Promise.resolve() };
+  const existing = openPanels.get(doc);
+  if (existing) return existing.handle;
+  let dead = false;
+  const root = doc.createElement("div");
+  root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-gallery";
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z3));
+  const main = doc.createElement("div");
+  main.className = "rm-autocomplete__results-main";
+  const scroll = doc.createElement("div");
+  scroll.className = "rm-autocomplete__results-scroll";
+  const footer = doc.createElement("div");
+  footer.className = "rm-autocomplete-footer";
+  const footerTitle = doc.createElement("div");
+  footerTitle.className = "rm-autocomplete-footer__title";
+  footerTitle.textContent = "Drawings";
+  footer.append(footerTitle);
+  main.append(scroll, footer);
+  root.append(main);
+  const stop = (e) => e.stopPropagation?.();
+  root.addEventListener("pointerdown", stop);
+  root.addEventListener("mousedown", (e) => {
+    e.preventDefault?.();
+    stop(e);
+  });
+  root.addEventListener("click", stop);
+  function close2() {
+    if (dead) return;
+    dead = true;
+    doc.removeEventListener?.("pointerdown", onDocPointer, true);
+    doc.removeEventListener?.("keydown", onKey, true);
+    try {
+      root.remove();
+    } catch {
+    }
+    if (openPanels.get(doc)?.handle === handle) openPanels.delete(doc);
+  }
+  function onDocPointer(e) {
+    if (!(e?.target && root.contains?.(e.target))) close2();
+  }
+  function onKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  }
+  function paint(rows) {
+    clearNode(scroll);
+    if (!rows.length) {
+      const empty = doc.createElement("div");
+      empty.className = "plexus-gallery-empty";
+      empty.textContent = "There are no drawings";
+      scroll.append(empty);
+      return;
+    }
+    for (const row of rows) {
+      const line = doc.createElement("button");
+      line.type = "button";
+      line.className = "dont-unfocus-block plexus-gallery-row";
+      line.setAttribute("data-testid", `plexus-gallery-${row.uid}`);
+      if (row.thumb) {
+        const img = doc.createElement("img");
+        img.className = "plexus-gallery-tile";
+        img.alt = "";
+        img.src = row.thumb;
+        line.append(img);
+      } else {
+        const blank3 = doc.createElement("div");
+        blank3.className = "plexus-gallery-blank";
+        line.append(blank3);
+      }
+      const label = doc.createElement("span");
+      label.className = "plexus-gallery-label";
+      label.textContent = row.label;
+      line.append(label);
+      line.addEventListener("click", (e) => {
+        stop(e);
+        const uid = row.uid;
+        close2();
+        try {
+          const out = openDrawing?.(uid);
+          if (out && typeof out.catch === "function") out.catch((error) => warn6("open", error));
+        } catch (error) {
+          warn6("open", error);
+        }
+      });
+      scroll.append(line);
+    }
+  }
+  const ready = (async () => {
+    let raw = [];
+    try {
+      raw = readDrawingRows(api);
+    } catch (error) {
+      warn6("query", error);
+      try {
+        toast?.("Could not list drawings");
+      } catch {
+      }
+    }
+    const labeled = galleryRows(raw);
+    const hashed = withHashes(labeled, hashOf);
+    let rows = hashed.map((row) => ({ ...row, thumb: null }));
+    try {
+      rows = await attachThumbs(hashed, { lookup });
+    } catch (error) {
+      warn6("thumbs", error);
+    }
+    if (!dead) {
+      try {
+        paint(rows);
+      } catch (error) {
+        warn6("paint", error);
+      }
+    }
+  })();
+  const handle = { close: close2, ready };
+  openPanels.set(doc, { handle });
+  try {
+    doc.body.append(root);
+    doc.addEventListener?.("pointerdown", onDocPointer, true);
+    doc.addEventListener?.("keydown", onKey, true);
+  } catch (error) {
+    warn6("open", error);
+    close2();
+  }
+  return handle;
+}
+
+// src/view/frame-list.js
+var MIN_Z4 = 100003;
+var openPanels2 = /* @__PURE__ */ new WeakMap();
+var warn7 = (what, error) => console.warn(`[plexus] frame list ${what} failed`, error);
+function clearNode2(node) {
+  if (!node) return;
+  if (typeof node.replaceChildren === "function") {
+    node.replaceChildren();
+    return;
+  }
+  for (const child of [...node.children || []]) child.remove?.();
+}
+function openFrameList({ doc, app, container, toast, zIndex = 0 } = {}) {
+  if (!doc || !app) return { close() {
+  } };
+  const existing = openPanels2.get(doc);
+  if (existing) return existing.handle;
+  let dead = false;
+  const hidden = /* @__PURE__ */ new Set();
+  const covers = /* @__PURE__ */ new Map();
+  let unsubscribe2 = () => {
+  };
+  const parent = container || doc.body;
+  const root = doc.createElement("div");
+  root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-framelist";
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z4));
+  const main = doc.createElement("div");
+  main.className = "rm-autocomplete__results-main";
+  const scroll = doc.createElement("div");
+  scroll.className = "rm-autocomplete__results-scroll";
+  const footer = doc.createElement("div");
+  footer.className = "rm-autocomplete-footer";
+  const footerTitle = doc.createElement("div");
+  footerTitle.className = "rm-autocomplete-footer__title";
+  footerTitle.textContent = "Frames";
+  footer.append(footerTitle);
+  main.append(scroll, footer);
+  root.append(main);
+  const stop = (e) => e.stopPropagation?.();
+  root.addEventListener("pointerdown", stop);
+  root.addEventListener("mousedown", (e) => {
+    e.preventDefault?.();
+    stop(e);
+  });
+  root.addEventListener("click", stop);
+  function sceneElements() {
+    try {
+      return app.scene?.getNonDeletedElements?.() || [];
+    } catch (error) {
+      warn7("read", error);
+      return [];
+    }
+  }
+  function dropCover(id) {
+    const cover = covers.get(id);
+    if (!cover) return;
+    try {
+      cover.remove();
+    } catch {
+    }
+    covers.delete(id);
+  }
+  function placeCovers() {
+    if (dead) return;
+    const byId = /* @__PURE__ */ new Map();
+    for (const el of sceneElements()) if (el?.id) byId.set(el.id, el);
+    for (const id of [...covers.keys()]) {
+      if (!hidden.has(id) || !byId.has(id)) dropCover(id);
+    }
+    const bg = app.state?.viewBackgroundColor;
+    const background = bg ? String(bg) : "Canvas";
+    for (const id of hidden) {
+      const el = byId.get(id);
+      if (!el) continue;
+      const x = Number(el.x) || 0;
+      const y = Number(el.y) || 0;
+      const w = Number(el.width) || 0;
+      const h = Number(el.height) || 0;
+      const rect = viewportRectOf(app, [x, y, x + w, y + h]);
+      let cover = covers.get(id);
+      if (!cover) {
+        cover = doc.createElement("div");
+        cover.className = "plexus-frame-cover";
+        cover.style.position = "absolute";
+        cover.style.pointerEvents = "none";
+        parent.append(cover);
+        covers.set(id, cover);
+      }
+      cover.style.left = `${rect.left}px`;
+      cover.style.top = `${rect.top}px`;
+      cover.style.width = `${rect.width}px`;
+      cover.style.height = `${rect.height}px`;
+      cover.style.background = background;
+    }
+  }
+  function close2() {
+    if (dead) return;
+    dead = true;
+    try {
+      unsubscribe2();
+    } catch (error) {
+      warn7("unsubscribe", error);
+    }
+    unsubscribe2 = () => {
+    };
+    for (const id of [...covers.keys()]) dropCover(id);
+    hidden.clear();
+    doc.removeEventListener?.("pointerdown", onDocPointer, true);
+    doc.removeEventListener?.("keydown", onKey, true);
+    try {
+      root.remove();
+    } catch {
+    }
+    if (openPanels2.get(doc)?.handle === handle) openPanels2.delete(doc);
+  }
+  function onDocPointer(e) {
+    if (!(e?.target && root.contains?.(e.target))) close2();
+  }
+  function onKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault?.();
+      close2();
+    }
+  }
+  function render() {
+    if (dead) return;
+    clearNode2(scroll);
+    const rows = frameRows(sceneElements());
+    if (!rows.length) {
+      const empty = doc.createElement("div");
+      empty.className = "plexus-framelist-empty";
+      empty.textContent = "No frames";
+      scroll.append(empty);
+      return;
+    }
+    for (const frame of rows) {
+      const row = doc.createElement("div");
+      row.className = "dont-unfocus-block plexus-framelist-row";
+      const jump = doc.createElement("button");
+      jump.type = "button";
+      jump.className = "plexus-framelist-jump";
+      jump.textContent = frame.label;
+      jump.setAttribute("data-testid", `plexus-frame-${frame.id}`);
+      jump.addEventListener("click", (e) => {
+        stop(e);
+        const el = sceneElements().find((item) => item.id === frame.id);
+        if (!el || typeof app.scrollToContent !== "function") {
+          try {
+            toast?.("Could not scroll to that frame");
+          } catch {
+          }
+          return;
+        }
+        try {
+          app.scrollToContent(el);
+        } catch (error) {
+          warn7("scroll", error);
+          try {
+            toast?.("Could not scroll to that frame");
+          } catch {
+          }
+        }
+      });
+      const hide = doc.createElement("button");
+      hide.type = "button";
+      hide.className = "plexus-framelist-hide";
+      hide.textContent = hidden.has(frame.id) ? "Show" : "Hide";
+      hide.setAttribute("data-testid", `plexus-hide-${frame.id}`);
+      hide.addEventListener("click", (e) => {
+        stop(e);
+        if (hidden.has(frame.id)) hidden.delete(frame.id);
+        else hidden.add(frame.id);
+        placeCovers();
+        render();
+      });
+      row.append(jump, hide);
+      scroll.append(row);
+    }
+  }
+  const handle = { close: close2 };
+  try {
+    unsubscribe2 = subscribeViewport(app, () => placeCovers()) || (() => {
+    });
+  } catch (error) {
+    warn7("subscribe", error);
+    unsubscribe2 = () => {
+    };
+  }
+  openPanels2.set(doc, { handle });
+  try {
+    doc.body.append(root);
+    doc.addEventListener?.("pointerdown", onDocPointer, true);
+    doc.addEventListener?.("keydown", onKey, true);
+    render();
+  } catch (error) {
+    warn7("open", error);
+    close2();
+  }
+  return handle;
+}
+
 // src/view/paste.js
 var PLAIN_WINDOW_MS = 100;
 function within3(node, root) {
@@ -28412,12 +28837,12 @@ function createDock({
   let overlayLogged = false;
   const pending = /* @__PURE__ */ new Set();
   const offs = [];
-  const warn7 = (what, error) => console.warn(`[plexus] dock ${what}`, error);
+  const warn9 = (what, error) => console.warn(`[plexus] dock ${what}`, error);
   const safe2 = (what, fn) => (...args) => {
     try {
       return fn(...args);
     } catch (error) {
-      warn7(`${what} failed`, error);
+      warn9(`${what} failed`, error);
       return void 0;
     }
   };
@@ -28497,7 +28922,7 @@ function createDock({
   try {
     parentInfo = parentOf(drawingUid) ?? null;
   } catch (error) {
-    warn7("parentOf failed", error);
+    warn9("parentOf failed", error);
   }
   const hasParent = !!parentInfo && parentInfo.isPage === false && !!parentInfo.uid;
   parentBtn.hidden = !hasParent;
@@ -28556,7 +28981,7 @@ function createDock({
       const Ev = view2?.Event ?? globalThis.Event;
       view2?.dispatchEvent?.(new Ev("resize"));
     } catch (error) {
-      warn7("resize dispatch failed", error);
+      warn9("resize dispatch failed", error);
     }
     if (!await frames(2)) return;
     if (widthOf() !== w0) return;
@@ -28568,7 +28993,7 @@ function createDock({
       const rect = icon?.getBoundingClientRect?.();
       if (rect && Number.isFinite(rect.bottom)) el.style.top = `${Math.ceil(rect.bottom)}px`;
     } catch (error) {
-      warn7("overlay offset failed", error);
+      warn9("overlay offset failed", error);
     }
     if (!overlayLogged) {
       overlayLogged = true;
@@ -28599,7 +29024,7 @@ function createDock({
         return prefixes.some((p) => id.startsWith(p));
       });
     } catch (error) {
-      warn7("selection read failed", error);
+      warn9("selection read failed", error);
       return false;
     }
   }
@@ -28611,7 +29036,7 @@ function createDock({
       const Ctor = view2?.KeyboardEvent ?? globalThis.KeyboardEvent;
       target?.dispatchEvent?.(new Ctor("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
     } catch (error) {
-      warn7("synthetic Escape failed", error);
+      warn9("synthetic Escape failed", error);
     } finally {
       synthetic = false;
     }
@@ -28627,7 +29052,7 @@ function createDock({
           try {
             containerEl?.focus?.({ preventScroll: true });
           } catch (error) {
-            warn7("container focus failed", error);
+            warn9("container focus failed", error);
           }
         }
       }
@@ -28663,7 +29088,7 @@ function createDock({
       try {
         ta.blur?.();
       } catch (error) {
-        warn7("blur failed", error);
+        warn9("blur failed", error);
       }
     }
     editing = false;
@@ -28671,10 +29096,10 @@ function createDock({
       try {
         containerEl?.focus?.({ preventScroll: true });
       } catch (error) {
-        warn7("container focus failed", error);
+        warn9("container focus failed", error);
       }
     }
-    void clearSelection({ refocus }).catch((error) => warn7("selection clear failed", error));
+    void clearSelection({ refocus }).catch((error) => warn9("selection clear failed", error));
   }
   const findInput = (uid) => [...body.querySelectorAll?.(".rm-block__input") ?? []].find((n) => String(n.id ?? "").endsWith(uid)) ?? null;
   const focusedBlockTa = (uid) => {
@@ -28708,7 +29133,7 @@ function createDock({
       try {
         clickInput(findInput(uid) ?? input);
       } catch (error) {
-        warn7("focus click failed", error);
+        warn9("focus click failed", error);
         return false;
       }
       for (let waited = 0; waited <= FOCUS_WAIT_MS2; waited += POLL_MS) {
@@ -28727,7 +29152,7 @@ function createDock({
     try {
       api?.ui?.components?.unmountNode?.({ el: h });
     } catch (error) {
-      warn7("unmount failed", error);
+      warn9("unmount failed", error);
     }
     h.remove?.();
   }
@@ -28754,7 +29179,7 @@ function createDock({
         try {
           api.ui.components.renderBlock({ uid, el: h, "open?": true });
         } catch (error) {
-          warn7("block render failed", error);
+          warn9("block render failed", error);
           h.textContent = "Could not render this block";
         }
       }
@@ -28769,7 +29194,7 @@ function createDock({
           held.ta.selectionEnd = held.end;
         }
       } catch (error) {
-        warn7("focus restore failed", error);
+        warn9("focus restore failed", error);
       }
     }
   }
@@ -28805,7 +29230,7 @@ function createDock({
     syncList(uids);
     if (gone) follow = neighbourInput(prev, uids, gone);
     if (gone && !follow) editing = false;
-    if (follow) void focusBlock(follow).catch((error) => warn7("focus follow failed", error));
+    if (follow) void focusBlock(follow).catch((error) => warn9("focus follow failed", error));
   }
   const visible = (uids) => rootKind === "parent" ? uids.filter((u) => u !== drawingUid) : uids;
   function startWatch(uid) {
@@ -28814,7 +29239,7 @@ function createDock({
     try {
       initial = visible(uidsOf2(api.data.pull(CHILDREN_PATTERN, ident)));
     } catch (error) {
-      warn7("children pull failed", error);
+      warn9("children pull failed", error);
     }
     syncList(initial);
     if (typeof api?.data?.addPullWatch !== "function") return;
@@ -28822,13 +29247,13 @@ function createDock({
       try {
         onChildren(visible(uidsOf2(after)));
       } catch (error) {
-        warn7("children watch failed", error);
+        warn9("children watch failed", error);
       }
     };
     try {
       api.data.addPullWatch(CHILDREN_PATTERN, ident, handler);
     } catch (error) {
-      warn7("children watch failed", error);
+      warn9("children watch failed", error);
       return;
     }
     unwatch = () => {
@@ -28836,7 +29261,7 @@ function createDock({
       try {
         api.data.removePullWatch(CHILDREN_PATTERN, ident, handler);
       } catch (error) {
-        warn7("removePullWatch failed", error);
+        warn9("removePullWatch failed", error);
       }
     };
   }
@@ -28875,7 +29300,7 @@ function createDock({
     try {
       unwatch?.();
     } catch (error) {
-      warn7("unwatch failed", error);
+      warn9("unwatch failed", error);
     }
     unwatch = null;
     for (const h of hosts.values()) unmountHost(h);
@@ -28901,7 +29326,7 @@ function createDock({
           setTimer(() => {
             if (!open6 || dockHasTextarea()) return;
             editing = false;
-            void clearSelection({ refocus: true }).catch((error) => warn7("selection clear failed", error));
+            void clearSelection({ refocus: true }).catch((error) => warn9("selection clear failed", error));
           }, MENU_ESC_SETTLE_MS);
           return;
         }
@@ -28968,7 +29393,7 @@ function createDock({
           const page = api.data.pull("[:node/title]", `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`);
           if (page?.[":node/title"]) return { type: "page", title: page[":node/title"] };
         } catch (error) {
-          warn7("ref pull failed", error);
+          warn9("ref pull failed", error);
         }
         return { type: "block", uid };
       }
@@ -28998,7 +29423,7 @@ function createDock({
       if (highlight()) {
         if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "c") return;
         swallow3(e);
-        if (e.key === "Escape") void clearSelection().catch((error) => warn7("selection clear failed", error));
+        if (e.key === "Escape") void clearSelection().catch((error) => warn9("selection clear failed", error));
         return;
       }
       if (editing && (!t || t === doc.body) && lastKeyAt && now() - lastKeyAt <= REFOCUS_WINDOW_MS2) {
@@ -29013,7 +29438,7 @@ function createDock({
         try {
           t.blur?.();
         } catch (error) {
-          warn7("stray blur failed", error);
+          warn9("stray blur failed", error);
         }
         refocusLast();
         if (!strayLogged) {
@@ -29028,7 +29453,7 @@ function createDock({
       if (focusedTa()) leaveEditing({ refocus: false });
     }), true);
     on(containerEl, "pointerup", safe2("canvas pointerup", () => {
-      if (highlight()) void clearSelection().catch((error) => warn7("selection clear failed", error));
+      if (highlight()) void clearSelection().catch((error) => warn9("selection clear failed", error));
     }), true);
   }
   function refocusLast() {
@@ -29038,7 +29463,7 @@ function createDock({
       ta.focus?.({ preventScroll: true });
       if (lastCaret && lastCaret.ta === ta && typeof ta.setSelectionRange === "function") ta.setSelectionRange(lastCaret.start, lastCaret.end);
     } catch (error) {
-      warn7("refocus failed", error);
+      warn9("refocus failed", error);
     }
   }
   function installHeader() {
@@ -29057,14 +29482,14 @@ function createDock({
       e.dataTransfer.setData(PLEXUS_REF_MIME, dragRef);
     }));
     on(parentBtn, "click", () => {
-      void setRoot(rootKind === "parent" ? "drawing" : "parent").catch((error) => warn7("setRoot failed", error));
+      void setRoot(rootKind === "parent" ? "drawing" : "parent").catch((error) => warn9("setRoot failed", error));
     });
     on(closeBtn, "click", () => {
       void shutdown(true);
     });
     on(addBtn, "click", () => {
       Promise.resolve().then(() => addBlock(rootUid)).then((uid) => uid && open6 ? focusBlock(uid) : null).catch((error) => {
-        warn7("add block failed", error);
+        warn9("add block failed", error);
         toast("Could not add a block");
       });
     });
@@ -29074,7 +29499,7 @@ function createDock({
       try {
         onWidth(requestedWidth);
       } catch (error) {
-        warn7("onWidth failed", error);
+        warn9("onWidth failed", error);
       }
     });
     on(handle, "pointerdown", safe2("resize start", (e) => {
@@ -29118,7 +29543,7 @@ function createDock({
       if (ta) ta.blur?.();
       if (highlight()) dispatchEscape("window");
     } catch (error) {
-      warn7("close blur failed", error);
+      warn9("close blur failed", error);
     }
     editing = false;
     cancelPending();
@@ -29126,13 +29551,13 @@ function createDock({
       try {
         off();
       } catch (error) {
-        warn7("listener removal failed", error);
+        warn9("listener removal failed", error);
       }
     }
     try {
       unwatch?.();
     } catch (error) {
-      warn7("unwatch failed", error);
+      warn9("unwatch failed", error);
     }
     unwatch = null;
     try {
@@ -29142,19 +29567,19 @@ function createDock({
       styleEl.remove?.();
       containerEl?.focus?.({ preventScroll: true });
     } catch (error) {
-      warn7("close restore failed", error);
+      warn9("close restore failed", error);
     }
     closePromise = (async () => {
       if (wasEditing) await new Promise((resolve) => setTimer(resolve, LEAVE_WAIT_MS2));
       for (const h of hosts.values()) unmountHost(h);
       hosts.clear();
       el.remove?.();
-    })().catch((error) => warn7("close failed", error));
+    })().catch((error) => warn9("close failed", error));
     if (notify) {
       try {
         onClose();
       } catch (error) {
-        warn7("onClose failed", error);
+        warn9("onClose failed", error);
       }
     }
     return closePromise;
@@ -29172,9 +29597,9 @@ function createDock({
   try {
     startWatch(rootUid);
   } catch (error) {
-    warn7("start failed", error);
+    warn9("start failed", error);
   }
-  void verifyNarrow(width0).catch((error) => warn7("narrowing check failed", error));
+  void verifyNarrow(width0).catch((error) => warn9("narrowing check failed", error));
   return {
     el,
     isOpen: () => open6,
@@ -29389,7 +29814,7 @@ var FAMILY = {
   8: "Comic Shanns",
   9: "Liberation Sans"
 };
-var warn6 = (what, ...rest) => console.warn(`[plexus] ${what}`, ...rest);
+var warn8 = (what, ...rest) => console.warn(`[plexus] ${what}`, ...rest);
 var fontFor = (element) => `${element.fontSize ?? 20}px ${FAMILY[element.fontFamily] ?? "Excalifont"}, Xiaolai, sans-serif, Segoe UI Emoji`;
 function createFontMeasurer({ doc = globalThis.document } = {}) {
   const memo3 = /* @__PURE__ */ new Map();
@@ -29600,7 +30025,7 @@ function installTextLinks({
       const found = t.type === "block" ? api.data.pull("[:block/uid]", [":block/uid", t.uid]) : api.data.pull("[:block/uid]", [":node/title", t.title]);
       return !!found;
     } catch (error) {
-      warn6("token lookup failed", error);
+      warn8("token lookup failed", error);
       return false;
     }
   }
@@ -29614,7 +30039,7 @@ function installTextLinks({
     try {
       navigate2?.({ target, sidebar: !!sidebar });
     } catch (error) {
-      warn6("token navigation failed", error);
+      warn8("token navigation failed", error);
     }
   }
   function blockLabel(uid) {
@@ -29741,7 +30166,7 @@ function installTextLinks({
       e.stopImmediatePropagation();
       down = { x: e.clientX, y: e.clientY, t: now(), tokens: decision.tokens, pointerId: e.pointerId };
     } catch (error) {
-      warn6("text link claim failed", error);
+      warn8("text link claim failed", error);
     }
   };
   const onUp = (e) => {
@@ -29756,7 +30181,7 @@ function installTextLinks({
       if (start.tokens.length === 1) go(start.tokens[0], e.shiftKey);
       else openChooser(start.tokens, { x: e.clientX, y: e.clientY });
     } catch (error) {
-      warn6("text link navigation failed", error);
+      warn8("text link navigation failed", error);
     }
   };
   const onCancel = () => {
@@ -29781,7 +30206,7 @@ function installTextLinks({
         over = !!(hit && hitToken({ element: hit.text, point: hit.point, measure: measurer }));
       }
     } catch (error) {
-      warn6("text link hover failed", error);
+      warn8("text link hover failed", error);
     }
     setHover(over);
   }
@@ -30167,6 +30592,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     const runHotkey = createHotkeyRunner({ handlers: hotkeyHandlers, getApp: () => mountedApp?.() ?? null });
     let commandZ = () => 0;
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
+    let openGallery = () => console.warn("[plexus] unavailable outside Roam: drawingGallery");
+    let openFrames = () => console.warn("[plexus] unavailable outside Roam: frameList");
+    let galleryHandle = null;
+    let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
@@ -31225,6 +31654,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         } catch (error) {
           console.warn("[plexus] todo veil failed", error);
         }
+        try {
+          frameListHandle?.close?.();
+        } catch (error) {
+          console.warn("[plexus] frame list close failed", error);
+        }
+        frameListHandle = null;
         const current7 = mounted;
         mounted = null;
         closeDialogs();
@@ -31729,6 +32164,47 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       });
       lifecycle.add(() => discovery.dispose());
       discovery.scanExisting();
+      openGallery = () => {
+        if (!actions) return console.warn("[plexus] unavailable outside Roam: drawingGallery");
+        try {
+          galleryHandle = openDrawingGallery({
+            doc,
+            api: { q: (query) => api.data.q(query) },
+            hashOf: (uid) => {
+              try {
+                return host.drawing(uid)?.hash || "";
+              } catch (error) {
+                console.warn("[plexus] gallery hash failed", error);
+                return "";
+              }
+            },
+            lookup: (key) => cache.get(key),
+            openDrawing: (uid) => actions.openDrawing(uid),
+            toast: (message) => toaster2.show(message),
+            zIndex: commandZ()
+          });
+        } catch (error) {
+          console.warn("[plexus] drawing gallery failed", error);
+        }
+      };
+      openFrames = () => {
+        const app = mountedApp?.();
+        if (!app) {
+          toaster2.show("Open a drawing first");
+          return;
+        }
+        try {
+          frameListHandle = openFrameList({
+            doc,
+            app,
+            container: mounted?.el || doc.body,
+            toast: (message) => toaster2.show(message),
+            zIndex: commandZ()
+          });
+        } catch (error) {
+          console.warn("[plexus] frame list failed", error);
+        }
+      };
     }
     const unavailable = (name) => console.warn("[plexus] unavailable outside Roam:", name);
     const run = (name) => () => {
@@ -31878,12 +32354,28 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "stickyNote", label: "Sticky note", run: () => actions ? Promise.resolve(actions.stickyNote()).catch((error) => console.warn("[plexus] sticky note failed", error)) : unavailable("stickyNote") },
       { id: "numberStamp", label: "Number stamp", run: () => actions ? Promise.resolve(actions.numberStamp()).catch((error) => console.warn("[plexus] number stamp failed", error)) : unavailable("numberStamp") },
       { id: "stackSelection", label: "Stack", run: () => actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection") },
+      { id: "drawingGallery", label: "Drawing gallery", run: () => openGallery() },
+      { id: "frameList", label: "Frame list", run: () => openFrames() },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
     let commandListHandle = null;
     lifecycle.add(() => {
       commandListHandle?.close?.();
       commandListHandle = null;
+    });
+    lifecycle.add(() => {
+      try {
+        galleryHandle?.close?.();
+      } catch (error) {
+        console.warn("[plexus] gallery close failed", error);
+      }
+      try {
+        frameListHandle?.close?.();
+      } catch (error) {
+        console.warn("[plexus] frame list close failed", error);
+      }
+      galleryHandle = null;
+      frameListHandle = null;
     });
     attachLazyPalette({
       doc,
