@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (50)
+### 6.1 Later (48)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -872,9 +872,7 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
 | NAV-6 | Canvas outline / regions panel | Duplicates the outline; NAV-7 is the Roam-native answer | Only as a host for a slide sorter | park |
 | NAV-8 | Minimap | Work during pan; most scenes are small | After DATA-5 | |
-| NAV-10 | Keyboard navigation on selected cards | Space pans, Alt+arrows nudge, Roam hotkeys: large collision surface | | |
 | NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
-| NAV-13 | Open in graph view / mentions | Trivial but not a driver | Window types confirmed at runtime | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
 | GRAPH-3 | Ref lines between embeds | Rated the biggest perf risk in the source plugin; duplicates Compass | A hovered-only minimal version | park |
 | GRAPH-6 | Turn text into a page or block (and back) | AUTH-3 covers most of the need | After AUTH-3 | |
@@ -919,6 +917,8 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REF-10 | 0.17.0 | `7dac0b7` | A chooser when the selection has more than one kind. Escape cancels. Drill-down cut |
 | REG-4 | 0.18.0 | `e6e9ff4` | Page-link badge, Add to canvas with no arrow, Where is this cited? on the command list |
 | UX-10 | 0.18.0 | `e6e9ff4` | Remove embed deletes only the anchor and toasts that the block is unchanged. Hint and pulse cut |
+| NAV-10 | 0.19.0 | `96cfe31` | Alt+arrows, Shift+Tab, copy link, sidebar, and a cache-only crop on one anchor. Plain arrows still nudge |
+| NAV-13 | 0.19.0 | `96cfe31` | Open in graph view and Show mentions open the block's page. No graph colouring |
 
 ### 6.2 Parked (17)
 
@@ -1117,10 +1117,10 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | NAV-7 | Docked Roam outline | P10 |
 | NAV-8 | Minimap | Later |
 | NAV-9 | Focus mode veil | P15 |
-| NAV-10 | Keyboard navigation on cards | Later |
+| NAV-10 | Keyboard navigation on cards | 0.19.0 |
 | NAV-11 | Drawings finder and gallery | Later |
 | NAV-12 | Floating pins | Parked |
-| NAV-13 | Open in graph / mentions view | Later |
+| NAV-13 | Open in graph / mentions view | 0.19.0 |
 | GRAPH-1 | Arrows as typed relations | P15 |
 | GRAPH-2 | Expand neighbours | Later |
 | GRAPH-3 | Ref lines between embeds | Later |

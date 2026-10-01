@@ -39,6 +39,7 @@ Standing constraints:
 | B1 | Someday batch 1: theme follows Roam (UX-5), lock and unlock (UX-12), copy diagnostics (DATA-4), crop generation (PERF-2) | Live gate (Readwisenotes) | done 2026-09-30, 0.16.0 (`a5ee31d`); live: theme follows, minimize keeps edit time and stored theme; lock then unlock; diagnostics copied; generation stays 1; typing +0.131 ms/key; cut: fit on open, grid color, default font, presenter |
 | B2 | Someday batch 2: region gallery (REF-14), card size, alignment, bare, and padding (REF-5), region kind chooser (REF-10) | Live gate (Readwisenotes) | done 2026-09-30, 0.17.0 (`7dac0b7`); live: gallery wrapped 10 cards on 4 rows and the container text stayed; large bare centered card, 8px padding, image 108px; chooser Frame and Loose shapes, Escape added no region; typing +0.097 ms/key |
 | B3 | Someday batch 3: page badges and cite (REG-4), remove embed (UX-10) | Live gate (Readwisenotes) | done 2026-10-01, 0.18.0 (`e6e9ff4`); live: badge 2, one embed and no arrow, cite opens the popover and writes nothing, remove-embed toast exact; typing -0.054 ms/key |
+| B4 | Someday batch 4: card keys (NAV-10), graph and mentions (NAV-13) | Live gate (Readwisenotes) | done 2026-10-01, 0.19.0 (`96cfe31`); live: Alt+Right selected the next anchor and nothing moved, copy and sidebar block, cold Space left the key, plain arrow nudged 20px and was restored; graph and mentions opened the page; typing -0.096 ms/key |
 
 Resolved defaults (spec §12):
 - Text-element links do not get automatic region blocks; Roam's tail already makes them refs.
