@@ -29,7 +29,7 @@ const cond = (fn) => (e) => {
 
 const overrideMode = (o) => (typeof o === "string" ? o : o?.mode ?? null);
 
-export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, setRegionGallery = async () => {}, applyGalleries = () => {}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
+export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, setRegionGallery = async () => {}, applyGalleries = () => {}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {} } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -298,6 +298,23 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
   register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
+  const drawingOrRegion = (e) => {
+    const info = blockInfo(e?.["block-uid"], e?.["block-uid"]);
+    return !!(info.drawing || info.region);
+  };
+  const failPage = () => { try { toast("Could not open that page"); } catch { return; } };
+  const pageWindow = (type) => (e) => {
+    let pageUid;
+    try { pageUid = host.blockInfo(e?.["block-uid"]).pageUid; }
+    catch { failPage(); return; }
+    if (!pageUid) { failPage(); return; }
+    try {
+      const out = api.ui.rightSidebar.addWindow({ window: { type, "block-uid": pageUid } });
+      if (out && typeof out.catch === "function") out.catch(() => failPage());
+    } catch { failPage(); }
+  };
+  register("blockContextMenu", "Plexus: Open in graph view", drawingOrRegion, pageWindow("graph"));
+  register("blockContextMenu", "Plexus: Show mentions", drawingOrRegion, pageWindow("mentions"));
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));

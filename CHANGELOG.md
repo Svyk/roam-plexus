@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.19.0]
+
+- One selected embed, frame, or region anchor, and not while editing. Alt+arrows select the nearest anchor in a 90-degree cone. Shift+Tab selects its frame parent. Cmd/Ctrl+L copies `((uid))` when that anchor has a block. Alt+Enter opens the block in the sidebar. Space shows a cached crop in the crop popover and does not load app-excalidraw.js. Five settings, on by default. A key with nothing to do is left alone. Plain arrows still nudge.
+- On a drawing or region block: Plexus: Open in graph view, and Plexus: Show mentions. Each opens that block's page. A failure only toasts. Drawing pages are not coloured in the graph. The palette stays two entries. The command list stays 53.
+
 ## [0.18.0]
 
 - A page link gets a badge with that page's reference count. Add to canvas inserts one embed beside the badge and no arrow. The citing block stays.

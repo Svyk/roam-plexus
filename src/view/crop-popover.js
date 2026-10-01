@@ -184,6 +184,7 @@ export function createCropPopover({ doc, delayMs = 300 }) {
 
   return {
     hoverOn,
+    show,
     hide,
     dispose() {
       for (const d of [...hovers]) d();

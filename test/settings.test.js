@@ -225,3 +225,29 @@ test("setRegionGallery persists JSON through settings.set", async () => {
   await setRegionGallery(api, "aaaaaaaaa", false);
   assert.deepEqual(JSON.parse(api.store[SETTING_IDS.regionGalleries]), ["bbbbbbbbb"]);
 });
+
+test("card key settings default on, stored false is off, and the panel has the five switches", () => {
+  const ids = ["card-alt-arrows", "card-parent", "card-copy", "card-sidebar", "card-quick-look"];
+  const fields = ["cardAltArrows", "cardParent", "cardCopy", "cardSidebar", "cardQuickLook"];
+  const fresh = readSettings(fakeApi());
+  for (const field of fields) assert.equal(fresh[field], true, field);
+  const off = {};
+  const str = {};
+  for (const id of ids) { off[id] = false; str[id] = "false"; }
+  const stored = readSettings(fakeApi(off));
+  const text = readSettings(fakeApi(str));
+  for (const field of fields) {
+    assert.equal(stored[field], false, field);
+    assert.equal(text[field], false, `${field} string`);
+  }
+  const names = ["Card Alt+arrows", "Card Shift+Tab", "Card copy link", "Card open in sidebar", "Card quick look"];
+  const panel = createSettingsPanel().settings;
+  ids.forEach((id, i) => {
+    const item = panel.find((x) => x.id === id);
+    assert.equal(item.action.type, "switch");
+    assert.equal(typeof item.action.onChange, "function");
+    assert.equal(item.name, names[i]);
+    assert.match(item.description, /Does nothing while editing text, and does nothing when the selection is not one card anchor/);
+    assert.equal(SETTING_IDS[fields[i]], id);
+  });
+});

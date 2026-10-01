@@ -21,7 +21,7 @@ function fakeApi(strings, { menus = ["blockRefContextMenu", "blockContextMenu"] 
     data: { pull: (_p, [, uid]) => { pulls++; return uid in strings ? { ":block/string": strings[uid] } : null; } },
   };
 }
-function setup({ strings = {}, mode = "thumbnail", overrides = {}, regionGalleries, openPrompt, ...rest } = {}) {
+function setup({ strings = {}, mode = "thumbnail", overrides = {}, regionGalleries, openPrompt, host = {}, toast, ...rest } = {}) {
   const api = fakeApi(strings, rest);
   const calls = [];
   const rec = (name) => (...a) => { calls.push([name, ...a]); };
@@ -33,7 +33,7 @@ function setup({ strings = {}, mode = "thumbnail", overrides = {}, regionGalleri
   const regionref = { modeOf: () => mode, refreshBlock: rec("refreshBlock"), refreshRegion: rec("refreshRegion"), refreshAll: rec("refreshAll") };
   let t = 0;
   const dispose = installRoamMenus({
-    api, host: {}, actions, regionref,
+    api, host, actions, regionref,
     getSettings: () => ({ refOverrides: overrides, regionGalleries }),
     setRefOverride: async (...a) => { calls.push(["setRefOverride", ...a]); },
     setRegionGallery: async (...a) => { calls.push(["setRegionGallery", ...a]); },
@@ -41,6 +41,7 @@ function setup({ strings = {}, mode = "thumbnail", overrides = {}, regionGalleri
     openPrompt,
     openSettings: rec("openSettings"),
     now: () => t,
+    toast,
   });
   return { api, calls, dispose, advance: (ms) => { t += ms; } };
 }
@@ -62,7 +63,7 @@ test("every label is registered and removed on dispose", () => {
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
     "Plexus: Show as gallery", "Plexus: Show as list",
-    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
+    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Open in graph view", "Plexus: Show mentions", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
     "Plexus: Present from here", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
@@ -89,6 +90,64 @@ test("Show in Compass uses ref-uid on a block ref and block-uid on a drawing", (
   assert.equal(show(api, "blockContextMenu", "Plexus: Show in Compass", { "block-uid": "txt000001" }), false);
   api.commands.blockContextMenu.get("Plexus: Show in Compass").callback({ "block-uid": "dra000001" });
   assert.deepEqual(seen, ["ref000001", "dra000001"]);
+});
+
+test("graph view and mentions show for a drawing or region and open that page", async () => {
+  const { api } = setup({ strings: { dra000001: "{{[[excalidraw]]}}", reg000001: REGION, txt000001: "hello" } });
+  for (const label of ["Plexus: Open in graph view", "Plexus: Show mentions"]) {
+    assert.equal(show(api, "blockContextMenu", label, { "block-uid": "dra000001" }), true, label);
+    assert.equal(show(api, "blockContextMenu", label, { "block-uid": "reg000001" }), true, label);
+    assert.equal(show(api, "blockContextMenu", label, { "block-uid": "txt000001" }), false, label);
+  }
+  assert.equal(api.commands.blockRefContextMenu.has("Plexus: Open in graph view"), false);
+  assert.equal(api.commands.blockRefContextMenu.has("Plexus: Show mentions"), false);
+
+  const windows = [];
+  const opened = setup({ host: { blockInfo: () => ({ pageUid: "page00001" }) } });
+  opened.api.ui.rightSidebar = { addWindow: (w) => { windows.push(w); } };
+  const e = { "block-uid": "dra000001" };
+  opened.api.commands.blockContextMenu.get("Plexus: Open in graph view").callback(e);
+  assert.deepEqual(windows, [{ window: { type: "graph", "block-uid": "page00001" } }]);
+  opened.api.commands.blockContextMenu.get("Plexus: Show mentions").callback(e);
+  assert.deepEqual(windows[1], { window: { type: "mentions", "block-uid": "page00001" } });
+
+  const toasted = [];
+  let added = 0;
+  const missing = setup({ host: { blockInfo: () => ({ pageUid: null }) }, toast: () => { toasted.push("missing"); } });
+  missing.api.ui.rightSidebar = { addWindow: () => { added += 1; } };
+  missing.api.commands.blockContextMenu.get("Plexus: Open in graph view").callback(e);
+  assert.equal(added, 0);
+  assert.deepEqual(toasted, ["missing"]);
+
+  const boom = setup({
+    host: { blockInfo: () => ({ pageUid: "page00001" }) },
+    toast: () => { toasted.push("throw"); },
+  });
+  boom.api.ui.rightSidebar = { addWindow: () => { throw new Error("no"); } };
+  assert.doesNotThrow(() => boom.api.commands.blockContextMenu.get("Plexus: Show mentions").callback(e));
+  assert.deepEqual(toasted, ["missing", "throw"]);
+
+  const bad = setup({
+    host: { blockInfo: () => { throw new Error("x"); } },
+    toast: () => { toasted.push("info"); },
+  });
+  bad.api.ui.rightSidebar = { addWindow: () => { added += 1; } };
+  assert.doesNotThrow(() => bad.api.commands.blockContextMenu.get("Plexus: Open in graph view").callback(e));
+  assert.equal(added, 0);
+  assert.deepEqual(toasted, ["missing", "throw", "info"]);
+
+  let reject;
+  const pending = new Promise((_, rej) => { reject = rej; });
+  const later = setup({
+    host: { blockInfo: () => ({ pageUid: "page00001" }) },
+    toast: () => { toasted.push("reject"); },
+  });
+  later.api.ui.rightSidebar = { addWindow: () => pending };
+  assert.doesNotThrow(() => later.api.commands.blockContextMenu.get("Plexus: Open in graph view").callback(e));
+  assert.deepEqual(toasted, ["missing", "throw", "info"]);
+  reject(new Error("no"));
+  await pending.catch(() => {});
+  assert.deepEqual(toasted, ["missing", "throw", "info", "reject"]);
 });
 
 test("missing menus are skipped and dispose survives a throwing removeCommand", () => {

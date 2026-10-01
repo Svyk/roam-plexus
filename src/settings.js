@@ -30,6 +30,11 @@ export const SETTING_IDS = Object.freeze({
   mmTagColors: "mm-tag-colors",
   themeFollow: "theme-follow",
   fitOnOpen: "fit-on-open",
+  cardAltArrows: "card-alt-arrows",
+  cardParent: "card-parent",
+  cardCopy: "card-copy",
+  cardSidebar: "card-sidebar",
+  cardQuickLook: "card-quick-look",
 });
 
 const DEFAULTS = Object.freeze({
@@ -62,6 +67,11 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.mmTagColors]: "",
   [SETTING_IDS.themeFollow]: true,
   [SETTING_IDS.fitOnOpen]: false,
+  [SETTING_IDS.cardAltArrows]: true,
+  [SETTING_IDS.cardParent]: true,
+  [SETTING_IDS.cardCopy]: true,
+  [SETTING_IDS.cardSidebar]: true,
+  [SETTING_IDS.cardQuickLook]: true,
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -146,6 +156,11 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
       { id: SETTING_IDS.themeFollow, name: "Canvas theme follows Roam", description: "A full-screen drawing opens dark when Roam is dark, and light when Roam is light.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
+      { id: SETTING_IDS.cardAltArrows, name: "Card Alt+arrows", description: "Selects the nearest card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardParent, name: "Card Shift+Tab", description: "Selects the parent card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardCopy, name: "Card copy link", description: "Copies the card's block link. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardSidebar, name: "Card open in sidebar", description: "Opens the card block in the sidebar. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
     ],
   };
 }
@@ -219,6 +234,11 @@ export function readSettings(extensionAPI) {
     mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors)),
     themeFollow: get(SETTING_IDS.themeFollow) !== false && get(SETTING_IDS.themeFollow) !== "false",
     fitOnOpen: get(SETTING_IDS.fitOnOpen) === true || get(SETTING_IDS.fitOnOpen) === "true",
+    cardAltArrows: get(SETTING_IDS.cardAltArrows) !== false && get(SETTING_IDS.cardAltArrows) !== "false",
+    cardParent: get(SETTING_IDS.cardParent) !== false && get(SETTING_IDS.cardParent) !== "false",
+    cardCopy: get(SETTING_IDS.cardCopy) !== false && get(SETTING_IDS.cardCopy) !== "false",
+    cardSidebar: get(SETTING_IDS.cardSidebar) !== false && get(SETTING_IDS.cardSidebar) !== "false",
+    cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false",
   };
 }
 

@@ -2,7 +2,7 @@ import { createLifecycle, sweepExtensionDom } from "./lifecycle.js";
 import { HOTKEYS, SETTING_IDS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, setRegionGallery, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
-import { createCropCache } from "./host/cache.js";
+import { createCropCache, cropKey, png2xKey } from "./host/cache.js";
 import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
 import { baseZIndex, createEditorToolbar, installBackKey } from "./view/toolbar.js";
@@ -10,7 +10,7 @@ import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
 import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
 import { installCanvasPaste } from "./view/canvas-paste.js";
-import { createRegionRefRenderer } from "./view/regionref.js";
+import { createRegionRefRenderer, resolveRegionTarget } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
 import { applyRegionGalleries } from "./view/gallery.js";
 import { focusKeptIds, todoKeptIds, showFocusVeil, showTodoVeil, showSpotlight } from "./view/spotlight.js";
@@ -46,6 +46,10 @@ import { openCommandList } from "./view/command-list.js";
 import { installRefPaste } from "./view/paste.js";
 import { installNoteTool } from "./view/note-tool.js";
 import { createHotkeyRunner, installHotkeyGuard } from "./view/hotkeys.js";
+import { installCardKeys } from "./view/cardkeys.js";
+import { createCropPopover } from "./view/crop-popover.js";
+import { collectAnchors } from "./model/cardnav.js";
+import { geometryKey, parseRegion } from "./model/region.js";
 import { createDock } from "./view/dock.js";
 import { installRoamDrop } from "./view/drop.js";
 import { installTextLinks } from "./view/text-links.js";
@@ -672,6 +676,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         native,
         hasEditor: () => !!native.activeEditor(doc),
         doc,
+        toast: (message) => toaster.show(message),
       }));
       const suggest = createLinkSuggest({ doc, api, zIndexFor, createPage, onEmbedPick });
       lifecycle.add(() => suggest.dispose());
@@ -1136,6 +1141,98 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000, drawingUid: mountUid }));
           mounted.disposers.push(installBackKey({ containerEl: el, app, canBack: () => history.size() > 0, onBack: () => goBack() }));
           mounted.disposers.push(installHotkeyGuard({ containerEl: el, run: runHotkey, doc }));
+          const cardPop = createCropPopover({ doc, delayMs: 0 });
+          let lookDot = null;
+          const dropLook = () => {
+            try { lookDot?.remove(); } catch { /* ignore */ }
+            lookDot = null;
+          };
+          mounted.disposers.push(() => { dropLook(); cardPop.dispose(); });
+          const peekCardCrop = (anchor) => {
+            if (!anchor?.regionUid) return null;
+            try {
+              const block = host.pullBlock(anchor.regionUid);
+              const region = block ? parseRegion(block.string) : null;
+              if (!region?.supported) return null;
+              const target = resolveRegionTarget(host, region);
+              if (!target || target.error || !target.hash) return null;
+              const gk = geometryKey(region);
+              const keys = [
+                png2xKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash }),
+                cropKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+                cropKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" }),
+              ];
+              for (const key of keys) {
+                const entry = cache.peek(key);
+                if (entry?.url) return entry;
+              }
+            } catch (error) { console.warn("[plexus] card crop peek failed", error); }
+            return null;
+          };
+          const selectCard = (id) => {
+            try {
+              app.updateScene({ appState: { selectedElementIds: { [id]: true }, selectedGroupIds: {} }, captureUpdate: "NEVER" });
+              const found = sceneElements(app).find((item) => item && item.id === id && !item.isDeleted);
+              if (!found) return;
+              const b = elementBounds(found);
+              const st = app.state || {};
+              const zoom = st.zoom?.value || 1;
+              const vr = native.viewportRectOf(app, b);
+              const left = st.offsetLeft || 0;
+              const top = st.offsetTop || 0;
+              const off = vr.left < left || vr.top < top || vr.left + vr.width > left + (st.width || 0) || vr.top + vr.height > top + (st.height || 0);
+              if (!off) return;
+              const cx = (b[0] + b[2]) / 2;
+              const cy = (b[1] + b[3]) / 2;
+              app.updateScene({ appState: { scrollX: (st.width || 0) / (2 * zoom) - cx, scrollY: (st.height || 0) / (2 * zoom) - cy }, captureUpdate: "NEVER" });
+            } catch (error) { console.warn("[plexus] card select failed", error); }
+          };
+          mounted.disposers.push(installCardKeys({
+            containerEl: el,
+            doc,
+            getApp: () => app,
+            getAnchors: () => {
+              try { return collectAnchors(sceneElements(app), mountUid ? host.regionsOf(mountUid) : []); }
+              catch (error) { console.warn("[plexus] card anchors failed", error); return []; }
+            },
+            getElements: () => sceneElements(app),
+            getSettings,
+            onSelect: selectCard,
+            onCopy: (text) => {
+              const clip = globalThis.navigator?.clipboard;
+              const write = () => {
+                if (!clip?.writeText) throw new Error("[plexus] clipboard unavailable");
+                return clip.writeText(text);
+              };
+              Promise.resolve(native.withClipboard(write)).then(
+                () => toaster.show("Link copied"),
+                (error) => { console.warn("[plexus] card copy failed", error); toaster.show("Clipboard access was blocked", { kind: "error" }); },
+              );
+            },
+            onOpen: (uid) => {
+              Promise.resolve(host.openBlock(uid, { sidebar: true })).catch((error) => {
+                console.warn("[plexus] card sidebar failed", error);
+                toaster.show("Could not open the sidebar");
+              });
+            },
+            onQuickLook: (anchor) => {
+              const entry = peekCardCrop(anchor);
+              if (!entry?.url) return false;
+              dropLook();
+              const vr = native.viewportRectOf(app, [anchor.x, anchor.y, anchor.x + anchor.width, anchor.y + anchor.height]);
+              const dot = doc.createElement("div");
+              dot.style.position = "fixed";
+              dot.style.pointerEvents = "none";
+              dot.style.left = `${vr.left}px`;
+              dot.style.top = `${vr.top}px`;
+              dot.style.width = `${Math.max(1, vr.width)}px`;
+              dot.style.height = `${Math.max(1, vr.height)}px`;
+              doc.body.append(dot);
+              lookDot = dot;
+              cardPop.show(dot, () => entry);
+              return true;
+            },
+          }));
           const refExists = (ref) => {
             const parsed = parseEmbedRef(ref);
             if (parsed?.kind === "block") return !!api.data.pull("[:db/id]", [":block/uid", parsed.uid]);

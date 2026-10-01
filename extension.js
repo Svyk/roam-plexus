@@ -1,4 +1,4 @@
-/* Plexus v0.18.0 | MIT | generated; edit src/ */
+/* Plexus v0.19.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -230,7 +230,12 @@ var SETTING_IDS = Object.freeze({
   laserDecay: "laser-decay",
   mmTagColors: "mm-tag-colors",
   themeFollow: "theme-follow",
-  fitOnOpen: "fit-on-open"
+  fitOnOpen: "fit-on-open",
+  cardAltArrows: "card-alt-arrows",
+  cardParent: "card-parent",
+  cardCopy: "card-copy",
+  cardSidebar: "card-sidebar",
+  cardQuickLook: "card-quick-look"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -261,7 +266,12 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.laserDecay]: "1000",
   [SETTING_IDS.mmTagColors]: "",
   [SETTING_IDS.themeFollow]: true,
-  [SETTING_IDS.fitOnOpen]: false
+  [SETTING_IDS.fitOnOpen]: false,
+  [SETTING_IDS.cardAltArrows]: true,
+  [SETTING_IDS.cardParent]: true,
+  [SETTING_IDS.cardCopy]: true,
+  [SETTING_IDS.cardSidebar]: true,
+  [SETTING_IDS.cardQuickLook]: true
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -341,7 +351,12 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.drawingName, name: "New drawing page name", description: "Title of a page made by New drawing on a page, after Drawings/. Tokens: {date}, {page}, {n}.", action: { type: "input", placeholder: DEFAULT_DRAWING_NAME } },
       { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
       { id: SETTING_IDS.themeFollow, name: "Canvas theme follows Roam", description: "A full-screen drawing opens dark when Roam is dark, and light when Roam is light.", action: wrap({ type: "switch" }) },
-      { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } }
+      { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
+      { id: SETTING_IDS.cardAltArrows, name: "Card Alt+arrows", description: "Selects the nearest card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardParent, name: "Card Shift+Tab", description: "Selects the parent card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardCopy, name: "Card copy link", description: "Copies the card's block link. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardSidebar, name: "Card open in sidebar", description: "Opens the card block in the sidebar. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) }
     ]
   };
 }
@@ -406,7 +421,12 @@ function readSettings(extensionAPI) {
     laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1e3, 300, 3e3),
     mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors)),
     themeFollow: get(SETTING_IDS.themeFollow) !== false && get(SETTING_IDS.themeFollow) !== "false",
-    fitOnOpen: get(SETTING_IDS.fitOnOpen) === true || get(SETTING_IDS.fitOnOpen) === "true"
+    fitOnOpen: get(SETTING_IDS.fitOnOpen) === true || get(SETTING_IDS.fitOnOpen) === "true",
+    cardAltArrows: get(SETTING_IDS.cardAltArrows) !== false && get(SETTING_IDS.cardAltArrows) !== "false",
+    cardParent: get(SETTING_IDS.cardParent) !== false && get(SETTING_IDS.cardParent) !== "false",
+    cardCopy: get(SETTING_IDS.cardCopy) !== false && get(SETTING_IDS.cardCopy) !== "false",
+    cardSidebar: get(SETTING_IDS.cardSidebar) !== false && get(SETTING_IDS.cardSidebar) !== "false",
+    cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false"
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -5534,6 +5554,7 @@ function createCropPopover({ doc, delayMs = 300 }) {
   }
   return {
     hoverOn,
+    show,
     hide,
     dispose() {
       for (const d of [...hovers]) d();
@@ -6001,7 +6022,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       addSpan(root, info, "plexus-root plexus-caption-derived", info.label);
     }
   };
-  const claim = (btn) => {
+  const claim2 = (btn) => {
     try {
       if (btn.closest?.(".plexus-offscreen")) return;
       if (btn.isConnected === false) return;
@@ -6208,14 +6229,14 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
         }
         if (!match(info)) continue;
         unclaim(root, info);
-        claim(info.btn);
+        claim2(info.btn);
       } catch (error) {
         console.warn("[plexus] refresh failed", error);
       }
     }
   };
   return {
-    claim,
+    claim: claim2,
     claimAlias,
     refreshAll() {
       reclaim(() => true);
@@ -21587,7 +21608,8 @@ var cond = (fn) => (e) => {
 var overrideMode = (o) => typeof o === "string" ? o : o?.mode ?? null;
 function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, setRegionGallery: setRegionGallery2 = async () => {
 }, applyGalleries = () => {
-}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
+}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {
+} } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -21830,13 +21852,13 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     clearMemo();
     regionref.refreshRegion?.(uid, { purge: false });
   };
-  const cropItems = (menuName, show, uidOf, blockOf, { insert }) => {
+  const cropItems = (menuName, show, uidOf, blockOf2, { insert }) => {
     const drawingShow2 = (e) => !!show(e).drawingKind;
-    register(menuName, "Plexus: Name region", (e) => show(e).supported, (e) => nameRegion(uidOf(e), blockOf(e)));
+    register(menuName, "Plexus: Name region", (e) => show(e).supported, (e) => nameRegion(uidOf(e), blockOf2(e)));
     register(menuName, "Plexus: Copy crop as PNG", (e) => show(e).supported, (e) => actions.copyCropPng(uidOf(e)));
     register(menuName, "Plexus: Copy crop as SVG", drawingShow2, (e) => actions.copyCropSvg(uidOf(e)));
     register(menuName, "Plexus: Download crop", (e) => show(e).supported, (e) => actions.downloadCrop(uidOf(e)));
-    if (insert) register(menuName, "Plexus: Insert crop as image block", (e) => show(e).supported && !encrypted(), (e) => actions.insertCropImage(uidOf(e), blockOf(e)));
+    if (insert) register(menuName, "Plexus: Insert crop as image block", (e) => show(e).supported && !encrypted(), (e) => actions.insertCropImage(uidOf(e), blockOf2(e)));
     register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf(e)));
   };
   cropItems("blockRefContextMenu", (e) => {
@@ -21870,6 +21892,38 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
   register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
+  const drawingOrRegion = (e) => {
+    const info = blockInfo(e?.["block-uid"], e?.["block-uid"]);
+    return !!(info.drawing || info.region);
+  };
+  const failPage = () => {
+    try {
+      toast("Could not open that page");
+    } catch {
+      return;
+    }
+  };
+  const pageWindow = (type) => (e) => {
+    let pageUid2;
+    try {
+      pageUid2 = host.blockInfo(e?.["block-uid"]).pageUid;
+    } catch {
+      failPage();
+      return;
+    }
+    if (!pageUid2) {
+      failPage();
+      return;
+    }
+    try {
+      const out = api.ui.rightSidebar.addWindow({ window: { type, "block-uid": pageUid2 } });
+      if (out && typeof out.catch === "function") out.catch(() => failPage());
+    } catch {
+      failPage();
+    }
+  };
+  register("blockContextMenu", "Plexus: Open in graph view", drawingOrRegion, pageWindow("graph"));
+  register("blockContextMenu", "Plexus: Show mentions", drawingOrRegion, pageWindow("mentions"));
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));
@@ -22388,7 +22442,12 @@ var FIELDS = [
   { id: SETTING_IDS.printSize, label: "Print page size", type: "select", options: [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]] },
   { id: SETTING_IDS.printMargin, label: "Print margin (mm)", type: "number", fallback: 10, min: 0, max: 30 },
   { id: SETTING_IDS.laserColor, label: "Laser pointer color", type: "color" },
-  { id: SETTING_IDS.laserDecay, label: "Laser fade (ms)", type: "number", fallback: 1e3, min: 300, max: 3e3 }
+  { id: SETTING_IDS.laserDecay, label: "Laser fade (ms)", type: "number", fallback: 1e3, min: 300, max: 3e3 },
+  { id: SETTING_IDS.cardAltArrows, label: "Card Alt+arrows", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardParent, label: "Card Shift+Tab", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardCopy, label: "Card copy link", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardSidebar, label: "Card open in sidebar", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true }
 ];
 var NATIVE_SHORTCUTS = [["Back", "Alt+←"], ["Edit embed", "F2"]];
 function openSettingsDialog({ doc, get = () => void 0, set = () => {
@@ -22747,7 +22806,7 @@ function openEmbedPicker({
     }
   }
   const pageOf = (r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid });
-  const blockOf = async (r) => {
+  const blockOf2 = async (r) => {
     const uid = r[":block/uid"] ?? r.uid;
     let pageTitle = "";
     try {
@@ -22797,7 +22856,7 @@ function openEmbedPicker({
         direct(raw.replace(/\s+/g, ""))
       ]);
       const foundPages = (pageRes || []).map(pageOf);
-      const foundBlocks = await Promise.all((blockRes || []).map(blockOf));
+      const foundBlocks = await Promise.all((blockRes || []).map(blockOf2));
       let dateTitle = "";
       if (wantPages && !blocksOnly) {
         try {
@@ -23363,6 +23422,158 @@ function installHotkeyGuard({ containerEl, run, doc } = {}) {
       run(id);
     } catch (error) {
       console.warn("[plexus] hotkey guard failed", error);
+    }
+  };
+  target.addEventListener("keydown", onKey, true);
+  return () => target.removeEventListener("keydown", onKey, true);
+}
+
+// src/model/cardnav.js
+function namedIds(region) {
+  if (!region || region.supported !== true) return [];
+  if (region.kind === "area") return Array.isArray(region.ids) ? region.ids : [];
+  if (region.kind === "rect" || region.kind === "poly") return region.el == null ? [] : [region.el];
+  if (region.kind === "frame" || region.kind === "cframe") return region.frameId == null ? [] : [region.frameId];
+  return [];
+}
+function lowestRegionUid(regions) {
+  const byId = /* @__PURE__ */ new Map();
+  if (!Array.isArray(regions)) return byId;
+  for (const row of regions) {
+    const uid = row?.uid;
+    if (typeof uid !== "string") continue;
+    for (const id of namedIds(row.region)) {
+      const prev = byId.get(id);
+      if (prev === void 0 || uid < prev) byId.set(id, uid);
+    }
+  }
+  return byId;
+}
+function boxOf2(el) {
+  const b = elementBounds(el);
+  const x = b[0];
+  const y = b[1];
+  const width = b[2] - b[0];
+  const height = b[3] - b[1];
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) return null;
+  return { x, y, width, height };
+}
+function blockOf(el, regionUid) {
+  if (regionUid != null) return regionUid;
+  const ref = parseEmbedRef(el?.customData?.plexus?.embed);
+  return ref?.kind === "block" ? ref.uid : null;
+}
+function collectAnchors(elements, regions) {
+  const named = lowestRegionUid(regions);
+  const embeds = new Set(embedAnchors(elements));
+  const byId = /* @__PURE__ */ new Map();
+  for (const el of liveElements(elements)) {
+    if (el.id == null || byId.has(el.id)) continue;
+    const regionUid = named.has(el.id) ? named.get(el.id) : null;
+    const anchor = embeds.has(el) || el.type === "frame" || el.type === "magicframe" || regionUid != null;
+    if (!anchor) continue;
+    const box = boxOf2(el);
+    if (!box) continue;
+    byId.set(el.id, { id: el.id, ...box, blockUid: blockOf(el, regionUid), regionUid });
+  }
+  return [...byId.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+function nextAnchorId(anchors, id, dir) {
+  if (!Array.isArray(anchors)) return null;
+  const from = anchors.find((a) => a && a.id === id);
+  if (!from) return null;
+  return nearestInDirection(from, anchors, dir);
+}
+function parentAnchorId(anchors, elements, id) {
+  const live3 = liveElements(elements);
+  const el = live3.find((e) => e.id === id);
+  if (!el || el.frameId == null) return null;
+  const frame = live3.find((e) => e.id === el.frameId);
+  if (!frame) return null;
+  const ids = new Set(Array.isArray(anchors) ? anchors.map((a) => a && a.id) : []);
+  return ids.has(frame.id) ? frame.id : null;
+}
+
+// src/view/cardkeys.js
+var ARROW_DIR = {
+  ArrowRight: "right",
+  ArrowLeft: "left",
+  ArrowUp: "up",
+  ArrowDown: "down"
+};
+var isTextTarget2 = (el) => {
+  if (!el) return false;
+  const tag = String(el.tagName ?? "").toLowerCase();
+  return tag === "input" || tag === "textarea" || el.isContentEditable === true;
+};
+var settingOn = (settings, field) => settings?.[field] !== false;
+function oneAnchor(sel, anchors) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const a of anchors) if (a?.id) byId.set(a.id, a);
+  const ids = [];
+  if (Array.isArray(sel)) {
+    for (const id of sel) if (id) ids.push(id);
+  } else if (sel && typeof sel === "object") {
+    for (const id of Object.keys(sel)) if (id && sel[id]) ids.push(id);
+  }
+  if (ids.length !== 1) return null;
+  return byId.get(ids[0]) ?? null;
+}
+var claim = (e) => {
+  e.preventDefault?.();
+  e.stopImmediatePropagation?.();
+};
+function installCardKeys({ containerEl, doc, getApp, getAnchors, getElements, getSettings, onSelect, onCopy, onOpen, onQuickLook } = {}) {
+  const target = doc?.addEventListener ? doc : containerEl;
+  if (!containerEl?.addEventListener || !target?.addEventListener) return () => {
+  };
+  const onKey = (e) => {
+    try {
+      if (!e || e.isComposing) return;
+      const t = e.target;
+      const inside2 = t === containerEl || t === doc?.body || t === doc?.documentElement || containerEl.contains?.(t) && !isTextTarget2(t) && t?.dataset?.type !== "wysiwyg";
+      if (!inside2) return;
+      const app = typeof getApp === "function" ? getApp() : null;
+      if (!app || app.state?.editingTextElement) return;
+      const raw = typeof getAnchors === "function" ? getAnchors() : [];
+      const anchors = Array.isArray(raw) ? raw : [];
+      const anchor = oneAnchor(app.state?.selectedElementIds, anchors);
+      if (!anchor) return;
+      const settings = typeof getSettings === "function" ? getSettings() : void 0;
+      const dir = ARROW_DIR[e.key] || ARROW_DIR[e.code];
+      if (dir && e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey && settingOn(settings, "cardAltArrows")) {
+        const next = nextAnchorId(anchors, anchor.id, dir);
+        if (!next) return;
+        claim(e);
+        onSelect?.(next);
+        return;
+      }
+      if ((e.key === "Tab" || e.code === "Tab") && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && settingOn(settings, "cardParent")) {
+        const elements = typeof getElements === "function" ? getElements() : [];
+        const parent = parentAnchorId(anchors, elements, anchor.id);
+        if (!parent) return;
+        claim(e);
+        onSelect?.(parent);
+        return;
+      }
+      if ((e.key === "l" || e.key === "L") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && settingOn(settings, "cardCopy")) {
+        if (!anchor.blockUid) return;
+        claim(e);
+        onCopy?.(`((${anchor.blockUid}))`);
+        return;
+      }
+      if ((e.key === "Enter" || e.code === "Enter") && e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey && settingOn(settings, "cardSidebar")) {
+        if (!anchor.blockUid) return;
+        claim(e);
+        onOpen?.(anchor.blockUid);
+        return;
+      }
+      if (e.code === "Space" && !e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey && settingOn(settings, "cardQuickLook")) {
+        if (onQuickLook?.(anchor) !== true) return;
+        claim(e);
+      }
+    } catch (error) {
+      console.warn("[plexus] card keys failed", error);
     }
   };
   target.addEventListener("keydown", onKey, true);
@@ -26058,7 +26269,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         isEncrypted: () => host.isEncrypted(),
         native: native_exports,
         hasEditor: () => !!activeEditor(doc),
-        doc
+        doc,
+        toast: (message) => toaster2.show(message)
       }));
       const suggest = createLinkSuggest({ doc, api, zIndexFor, createPage, onEmbedPick });
       lifecycle.add(() => suggest.dispose());
@@ -26479,6 +26691,115 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1e3, drawingUid: mountUid }));
           mounted.disposers.push(installBackKey({ containerEl: el, app, canBack: () => history.size() > 0, onBack: () => goBack() }));
           mounted.disposers.push(installHotkeyGuard({ containerEl: el, run: runHotkey, doc }));
+          const cardPop = createCropPopover({ doc, delayMs: 0 });
+          let lookDot = null;
+          const dropLook = () => {
+            try {
+              lookDot?.remove();
+            } catch {
+            }
+            lookDot = null;
+          };
+          mounted.disposers.push(() => {
+            dropLook();
+            cardPop.dispose();
+          });
+          const peekCardCrop = (anchor) => {
+            if (!anchor?.regionUid) return null;
+            try {
+              const block = host.pullBlock(anchor.regionUid);
+              const region = block ? parseRegion(block.string) : null;
+              if (!region?.supported) return null;
+              const target = resolveRegionTarget(host, region);
+              if (!target || target.error || !target.hash) return null;
+              const gk = geometryKey(region);
+              const keys = [
+                png2xKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash }),
+                cropKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash, tier: "svg" }),
+                cropKey({ regionUid: anchor.regionUid, geometryKey: gk, drawingHash: target.hash, tier: "png" })
+              ];
+              for (const key of keys) {
+                const entry = cache.peek(key);
+                if (entry?.url) return entry;
+              }
+            } catch (error) {
+              console.warn("[plexus] card crop peek failed", error);
+            }
+            return null;
+          };
+          const selectCard = (id) => {
+            try {
+              app.updateScene({ appState: { selectedElementIds: { [id]: true }, selectedGroupIds: {} }, captureUpdate: "NEVER" });
+              const found = sceneElements(app).find((item) => item && item.id === id && !item.isDeleted);
+              if (!found) return;
+              const b = elementBounds(found);
+              const st = app.state || {};
+              const zoom = st.zoom?.value || 1;
+              const vr = viewportRectOf(app, b);
+              const left = st.offsetLeft || 0;
+              const top = st.offsetTop || 0;
+              const off = vr.left < left || vr.top < top || vr.left + vr.width > left + (st.width || 0) || vr.top + vr.height > top + (st.height || 0);
+              if (!off) return;
+              const cx = (b[0] + b[2]) / 2;
+              const cy = (b[1] + b[3]) / 2;
+              app.updateScene({ appState: { scrollX: (st.width || 0) / (2 * zoom) - cx, scrollY: (st.height || 0) / (2 * zoom) - cy }, captureUpdate: "NEVER" });
+            } catch (error) {
+              console.warn("[plexus] card select failed", error);
+            }
+          };
+          mounted.disposers.push(installCardKeys({
+            containerEl: el,
+            doc,
+            getApp: () => app,
+            getAnchors: () => {
+              try {
+                return collectAnchors(sceneElements(app), mountUid ? host.regionsOf(mountUid) : []);
+              } catch (error) {
+                console.warn("[plexus] card anchors failed", error);
+                return [];
+              }
+            },
+            getElements: () => sceneElements(app),
+            getSettings,
+            onSelect: selectCard,
+            onCopy: (text) => {
+              const clip = globalThis.navigator?.clipboard;
+              const write = () => {
+                if (!clip?.writeText) throw new Error("[plexus] clipboard unavailable");
+                return clip.writeText(text);
+              };
+              Promise.resolve(withClipboard(write)).then(
+                () => toaster2.show("Link copied"),
+                (error) => {
+                  console.warn("[plexus] card copy failed", error);
+                  toaster2.show("Clipboard access was blocked", { kind: "error" });
+                }
+              );
+            },
+            onOpen: (uid) => {
+              Promise.resolve(host.openBlock(uid, { sidebar: true })).catch((error) => {
+                console.warn("[plexus] card sidebar failed", error);
+                toaster2.show("Could not open the sidebar");
+              });
+            },
+            onQuickLook: (anchor) => {
+              const entry = peekCardCrop(anchor);
+              if (!entry?.url) return false;
+              dropLook();
+              const vr = viewportRectOf(app, [anchor.x, anchor.y, anchor.x + anchor.width, anchor.y + anchor.height]);
+              const dot = doc.createElement("div");
+              dot.style.position = "fixed";
+              dot.style.pointerEvents = "none";
+              dot.style.left = `${vr.left}px`;
+              dot.style.top = `${vr.top}px`;
+              dot.style.width = `${Math.max(1, vr.width)}px`;
+              dot.style.height = `${Math.max(1, vr.height)}px`;
+              doc.body.append(dot);
+              lookDot = dot;
+              cardPop.show(dot, () => entry);
+              return true;
+            }
+          }));
           const refExists = (ref) => {
             const parsed = parseEmbedRef(ref);
             if (parsed?.kind === "block") return !!api.data.pull("[:db/id]", [":block/uid", parsed.uid]);

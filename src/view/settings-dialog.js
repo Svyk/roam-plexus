@@ -37,6 +37,11 @@ const FIELDS = [
   { id: SETTING_IDS.printMargin, label: "Print margin (mm)", type: "number", fallback: 10, min: 0, max: 30 },
   { id: SETTING_IDS.laserColor, label: "Laser pointer color", type: "color" },
   { id: SETTING_IDS.laserDecay, label: "Laser fade (ms)", type: "number", fallback: 1000, min: 300, max: 3000 },
+  { id: SETTING_IDS.cardAltArrows, label: "Card Alt+arrows", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardParent, label: "Card Shift+Tab", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardCopy, label: "Card copy link", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardSidebar, label: "Card open in sidebar", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true },
 ];
 
 // Read-only. Native keys are listed only once measured (spec section 13); at present none are.
