@@ -8,6 +8,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 - `dropSubgraph` appends a neighborhood snapshot to the open drawing. Plain text is the default. Links mode writes a page ref. A closed drawing is refused and is not opened. apiVersion stays 6.
 - The palette stays two entries. The command list stays 53.
+- Typing, editor closed, five rounds: -0.076 ms/key. Loaded mean 11.671. Unloaded mean 11.747.
 
 ## [0.21.0]
 

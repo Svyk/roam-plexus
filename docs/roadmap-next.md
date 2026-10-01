@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (43)
+### 6.1 Later (38)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -878,11 +878,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | GRAPH-6 | Turn text into a page or block (and back) | AUTH-3 covers most of the need | After AUTH-3 | |
 | GRAPH-10 | Managed "Linked from this drawing" list | Contradicts spec §5.2; CMP-2 is the read-only alternative | Backlinks for non-text links become a felt gap | park |
 | GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
-| CMP-4 | Add related drawing from a Compass zone | Graph write with duplicate-title and placement questions; "New drawing" exists | After CMP-6 | |
-| CMP-5 | Snapshot a Compass neighbourhood into a drawing | Needs a mounted editor; every text ref adds backlinks | After API-1 | |
-| CMP-8 | Compass type chips and quick filter | Lenses were removed on purpose in Compass 0.2.0 | Chips only, if asked | park |
-| CMP-13 | Compass cross-links among neighbours | Edge clutter | If asked | park |
-| CMP-17 | Empty (ghost) pages and URL nodes | Noise on link-heavy pages; the "Empty page" hover hint is the useful part | | park |
 | PRES-5 | Live-canvas slideshow with camera transitions (also EMB-6 Option A) | appState writes persist through Roam's save; the dialog presenter is robust | EMB-6 Option C (P11) proves too thin; after DATA-5 | |
 | PRES-7 | Stepwise reveal (builds) | One SVG export per build; needs the hot path | After REF-7 | |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
@@ -919,6 +914,11 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | CMP-19 | 0.21.0 | `50eb182` | Empty search lists pins, today, and eight recent pages. Cached until close. No shortcut rows |
 | CMP-14 | 0.21.0 | `50eb182` | Hover dims other nodes. Opacity only. Thumbnail only while Ctrl or Cmd is held. Plexus preview setting defaults off |
 | CMP-11 | 0.21.0 | `50eb182` | Sort by connections (default), name, last edited, or created. Name:: is the label. Tooltip keeps the title. No write |
+| CMP-17 | 0.22.0 | `8ea9e6e` | Empty page is dashed. Hover says Empty page. Start writing opens it. Four hosts, four URLs. Compass `851eea4` |
+| CMP-4 | 0.22.0 | `8ea9e6e` | Zone plus picks a page or a drawing name. An existing drawing is reused. Otherwise Plexus creates it. Parent, Child, Friend, Challenger. The editor stays closed. Compass `851eea4` |
+| CMP-5 | 0.22.0 | `8ea9e6e` | Send to drawing appends the neighborhood to the open drawing. Plain by default. Links mode writes a page ref. A closed drawing is refused. apiVersion 6. Compass `851eea4` |
+| CMP-8 | 0.22.0 | `8ea9e6e` | Pages, blocks, drawings, regions, and a keyword. All on. Fade only. Compass `851eea4` |
+| CMP-13 | 0.22.0 | `8ea9e6e` | Cross links stay off until toggled. Faint edges, cap 40. Compass `851eea4` |
 
 ### 6.2 Parked (17)
 
@@ -1137,20 +1137,20 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | CMP-1 | Compass opens via RoamPlexus.open | P8 (QW) |
 | CMP-2 | RoamPlexus.linksOf | P14 |
 | CMP-3 | Related drawings | P14 |
-| CMP-4 | Add related drawing from a zone | Later |
-| CMP-5 | Snapshot neighbourhood into a drawing | Later |
+| CMP-4 | Add related drawing from a zone | 0.22.0 |
+| CMP-5 | Snapshot neighbourhood into a drawing | 0.22.0 |
 | CMP-6 | RoamCompass API, "Show in Compass" | P14 |
 | CMP-7 | Drawing centre: frames and regions | P14 |
-| CMP-8 | Type chips and quick filter | Later |
+| CMP-8 | Type chips and quick filter | 0.22.0 |
 | CMP-9 | Follow vs pinned | P14 |
 | CMP-10 | Centre as live embed / sidecar pane | Parked |
 | CMP-11 | Compass display settings | 0.21.0 |
 | CMP-12 | Two-level view | Rejected |
-| CMP-13 | Cross-links among neighbours | Later |
+| CMP-13 | Cross-links among neighbours | 0.22.0 |
 | CMP-14 | Hover highlight, gated previews | 0.21.0 |
 | CMP-15 | Larger hover thumbnail | P14 |
 | CMP-16 | Node styling by attribute | Parked |
-| CMP-17 | Ghost pages and URL nodes | Later |
+| CMP-17 | Ghost pages and URL nodes | 0.22.0 |
 | CMP-18 | Relation editing from menus | Parked |
 | CMP-19 | Home entries in empty search | 0.21.0 |
 | PRES-1 | Speaker notes from blocks | P11 |
