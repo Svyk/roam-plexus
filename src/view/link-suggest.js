@@ -9,6 +9,42 @@ const COPY_PROPS = ["direction", "boxSizing", "width", "height", "overflowX", "o
 
 const warn = (what, error) => console.warn(`[plexus] link suggest ${what} failed`, error);
 const same = (a, b) => !!a && !!b && a.kind === b.kind && a.start === b.start && a.query === b.query;
+const PAGE_RECENT_Q = "[:find ?title ?time :where [?p :node/title ?title] [?p :edit/time ?time]]";
+const HASH_RECENT_Q = "[:find ?title ?time :where [?p :node/title ?title] [?p :edit/time ?time] [?b :block/refs ?p]]";
+const REF_COUNT_Q = "[:find (count ?b) :in $ ?title :where [?p :node/title ?title] [?b :block/refs ?p]]";
+const RELATED_MS = 150;
+const RECENT_MS = 10_000;
+
+function rankRecent(raw) {
+  const ranked = [];
+  const list = Array.isArray(raw) ? raw : [];
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i];
+    if (!Array.isArray(row) || typeof row[0] !== "string" || !row[0]) continue;
+    const time = typeof row[1] === "number" && Number.isFinite(row[1]) ? row[1] : 0;
+    ranked.push({ title: row[0], time, i });
+  }
+  ranked.sort((a, b) => b.time - a.time || a.i - b.i);
+  const seen = new Set();
+  const out = [];
+  for (const row of ranked) {
+    if (seen.has(row.title)) continue;
+    seen.add(row.title);
+    out.push({ kind: "page", title: row.title });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+function positiveCount(raw) {
+  let found = 0;
+  const walk = (v) => {
+    if (typeof v === "number") { if (Number.isInteger(v) && v > found) found = v; }
+    else if (Array.isArray(v)) for (const x of v) walk(x);
+  };
+  walk(raw);
+  return found;
+}
 
 function setValue(el, v) {
   for (let p = Object.getPrototypeOf(el); p; p = Object.getPrototypeOf(p)) {
@@ -46,6 +82,29 @@ function measureCaret(doc, el, caret) {
 export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => new Date(), zIndexFor = () => 1000, debounce = { page: 60, block: 150 }, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) } = {}) {
   const view = doc.defaultView;
   const attached = new Set();
+  let pageCache = null;
+  let hashCache = null;
+
+  function refCount(title) {
+    if (typeof api.data?.q !== "function" || typeof title !== "string" || !title) return 0;
+    try { return positiveCount(api.data.q(REF_COUNT_Q, title)); }
+    catch { return 0; }
+  }
+
+  function recentItems(kind) {
+    const hash = kind === "hash";
+    const t = now().getTime();
+    const hit = hash ? hashCache : pageCache;
+    if (hit && t - hit.at < RECENT_MS) return hit.rows.slice();
+    if (typeof api.data?.q !== "function") return [];
+    let rows;
+    try { rows = rankRecent(api.data.q(hash ? HASH_RECENT_Q : PAGE_RECENT_Q)); }
+    catch (error) { warn("recent", error); return []; }
+    const entry = { at: t, rows };
+    if (hash) hashCache = entry;
+    else pageCache = entry;
+    return rows.slice();
+  }
 
   function attach(el) {
     let trigger = null;
@@ -60,6 +119,11 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
     let footerTitle = null;
     let lastMouse = null;
     let rows = [];
+    let related = [];
+    let relatedTimer = null;
+    let stash = "";
+    let stashArmed = false;
+    let semanticOn = null;
     let dead = false;
 
     const safe = (what, fn) => (e) => { try { return fn(e); } catch (error) { warn(what, error); } };
@@ -68,6 +132,7 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
     const clearTimers = () => {
       if (timer != null) { clearT(timer); timer = null; }
       if (liveTimer != null) { clearT(liveTimer); liveTimer = null; }
+      if (relatedTimer != null) { clearT(relatedTimer); relatedTimer = null; }
     };
 
     const onWinScroll = safe("scroll", (e) => { if (root && !(e?.target && root.contains?.(e.target))) place(); });
@@ -90,6 +155,8 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       clearTimers();
       trigger = null;
       items = [];
+      related = [];
+      if (!stashArmed) stash = "";
       destroyRoot();
     }
 
@@ -139,7 +206,7 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
 
     function render() {
       if (dead || !trigger) return;
-      const isPage = trigger.kind === "page";
+      const kind = trigger.kind;
       const created = !root;
       if (created) {
         root = doc.createElement("div");
@@ -180,7 +247,7 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
         view?.addEventListener?.("wheel", onWinWheel, { capture: true, passive: true });
         scheduleLive();
       }
-      footerTitle.textContent = isPage ? "Page search" : "Block search";
+      footerTitle.textContent = kind === "hash" ? "Tag search" : kind === "page" ? "Page search" : "Block search";
       scroll.replaceChildren?.();
       rows = [];
       const message = (text, title) => {
@@ -194,11 +261,20 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
         row.append(inner);
         scroll.append(row);
       };
-      if (status === "hint") message(isPage ? "Search for a page" : "Search for a block");
+      const all = [...items, ...related];
+      const hintText = kind === "block" ? "Search for a block" : "Search for a page";
+      const noneText = kind === "block" ? "No blocks found." : "No pages found.";
+      if (status === "hint") message(hintText);
       else if (status === "error") message("Search failed");
-      else if (!items.length) message(isPage ? "No pages found." : "No blocks found.");
+      else if (!all.length) message(noneText);
       else {
-        items.forEach((item, k) => {
+        all.forEach((item, k) => {
+          if (k === items.length && related.length) {
+            const head = doc.createElement("div");
+            head.className = "plexus-picker-header";
+            head.textContent = "Related";
+            scroll.append(head);
+          }
           const row = doc.createElement("div");
           row.setAttribute("title", item.kind === "block" ? item.str : item.title);
           row.className = "dont-unfocus-block";
@@ -209,6 +285,14 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
           if (item.kind === "create") label.textContent = `+ Create page ${item.title}`;
           else segs(label, item.kind === "block" ? blockSnippet(item.str, trigger.query) : item.title, trigger.query);
           inner.append(label);
+          if (item.kind === "page" || item.kind === "date") {
+            const n = Number.isInteger(item.refs) ? item.refs : refCount(item.title);
+            if (Number.isInteger(n) && n > 0) {
+              const sup = doc.createElement("sup");
+              sup.textContent = String(n);
+              inner.append(sup);
+            }
+          }
           row.append(inner);
           if (item.kind === "date") {
             const sub = doc.createElement("div");
@@ -269,11 +353,7 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       const q = trig.query.trim();
       try {
         let found;
-        if (trig.kind === "page") {
-          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
-          found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
-          found = await pageRows(q, found);
-        } else {
+        if (trig.kind === "block") {
           const res = await api.data.async.search({ "search-str": q, "search-pages": false, "search-blocks": true, "hide-code-blocks": true, limit: 12 });
           found = await Promise.all((res || []).map(async (r) => {
             const uid = r[":block/uid"] ?? r.uid;
@@ -284,6 +364,21 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
             } catch { /* page title is decoration */ }
             return { kind: "block", uid, str: r[":block/string"] ?? r.string ?? "", pageTitle };
           }));
+        } else if (trig.kind === "hash") {
+          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
+          found = [];
+          for (const r of res || []) {
+            if (!r || typeof r !== "object") continue;
+            const title = r[":node/title"] ?? r.title;
+            if (typeof title !== "string" || !title) continue;
+            const n = refCount(title);
+            if (n > 0) found.push({ kind: "page", title, uid: r[":block/uid"] ?? r.uid, refs: n });
+            if (found.length >= 12) break;
+          }
+        } else {
+          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
+          found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
+          found = await pageRows(q, found);
         }
         if (mine !== seq || dead) return;
         if (!connected()) { detach(); return; }
@@ -300,27 +395,90 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       }
     }
 
+    function semanticEnabled() {
+      if (semanticOn !== null && typeof semanticOn.then !== "function") return semanticOn;
+      if (semanticOn && typeof semanticOn.then === "function") return semanticOn;
+      try {
+        const fn = api.data?.semanticSearchEnabled;
+        const value = typeof fn === "function" ? fn.call(api.data) : false;
+        if (value && typeof value.then === "function") {
+          semanticOn = Promise.resolve(value).then(
+            (v) => { semanticOn = v === true; return semanticOn; },
+            () => { semanticOn = false; return false; },
+          );
+          return semanticOn;
+        }
+        semanticOn = value === true;
+      } catch { semanticOn = false; }
+      return semanticOn;
+    }
+
+    async function relatedSearch(q, mine) {
+      try {
+        const fn = api.data?.async?.semanticSearch;
+        if (typeof fn !== "function") return;
+        const res = await fn.call(api.data.async, { "search-str": q, limit: 5 });
+        if (mine !== seq || dead) return;
+        if (!connected()) { detach(); return; }
+        const shown = new Set(items.map((it) => it.uid).filter(Boolean));
+        const out = [];
+        for (const r of res || []) {
+          if (!r || typeof r !== "object") continue;
+          const uid = r[":block/uid"] ?? r.uid;
+          if (!uid || shown.has(uid)) continue;
+          shown.add(uid);
+          out.push({ kind: "block", uid, str: r[":block/string"] ?? r.string ?? r[":node/title"] ?? "", pageTitle: "", related: true });
+        }
+        if (!out.length) return;
+        related = out;
+        render();
+      } catch (error) { warn("related", error); }
+    }
+
     function setTrigger(next) {
       const kindChanged = !trigger || trigger.kind !== next.kind;
       seq++;
       if (timer != null) { clearT(timer); timer = null; }
+      if (relatedTimer != null) { clearT(relatedTimer); relatedTimer = null; }
+      related = [];
       trigger = next;
       active = 0;
       if (kindChanged) { items = []; destroyRoot(); }
-      if (!next.query.trim()) {
-        items = [];
-        status = "hint";
+      const mine = seq;
+      const trimmed = next.query.trim();
+      const delay = next.kind === "block" ? (debounce.block ?? 150) : (debounce.page ?? 60);
+      if (!trimmed) {
+        if (next.kind === "block") {
+          items = [];
+          status = "hint";
+          render();
+          return;
+        }
+        items = recentItems(next.kind);
+        status = "results";
         render();
         return;
       }
       status = "loading";
-      const mine = seq;
       timer = setT(() => {
         timer = null;
         if (mine !== seq || dead) return;
         if (!connected()) { detach(); return; }
         search(next, mine);
-      }, debounce[next.kind] ?? 60);
+      }, delay);
+      if (next.kind === "page") {
+        const arm = (on) => {
+          if (!on || mine !== seq || dead || relatedTimer != null) return;
+          relatedTimer = setT(() => {
+            relatedTimer = null;
+            if (mine !== seq || dead) return;
+            relatedSearch(trimmed, mine);
+          }, RELATED_MS);
+        };
+        const gate = semanticEnabled();
+        if (gate && typeof gate.then === "function") gate.then(arm);
+        else if (gate === true) arm(true);
+      }
     }
 
     function recheck(canOpen) {
@@ -332,20 +490,26 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       setTrigger(trig);
     }
 
+    function dispatchInput() {
+      let ev;
+      try {
+        ev = new (view.InputEvent || view.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
+      } catch { ev = new view.Event("input", { bubbles: true }); }
+      el.dispatchEvent(ev);
+    }
+
     function pick(item) {
       const text = el.value ?? "";
       const caret = el.selectionStart ?? text.length;
       const trig = findTrigger(text, caret);
       if (!trig) { close(); return; }
-      const out = applyPick(text, caret, trig, item.kind === "block" ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title });
+      const picked = item.kind === "block" ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title };
+      const out = applyPick(text, caret, trig, picked, stash);
+      stashArmed = false;
       setValue(el, out.text);
       el.setSelectionRange?.(out.caret, out.caret);
-      let ev;
-      try {
-        ev = new (view.InputEvent || view.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
-      } catch { ev = new view.Event("input", { bubbles: true }); }
       close();
-      el.dispatchEvent(ev);
+      dispatchInput();
       if (el.value === out.text) el.setSelectionRange?.(out.caret, out.caret);
       if (item.kind === "create") {
         try {
@@ -359,24 +523,23 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
     function embedPick(e) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const item = status === "results" ? items[active] : null;
+      const item = status === "results" ? [...items, ...related][active] : null;
       if (!item) return;
       const text = el.value ?? "";
       const caret = el.selectionStart ?? text.length;
       const trig = findTrigger(text, caret);
       if (!trig) { close(); return; }
       const isBlock = item.kind === "block";
+      const picked = isBlock ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title };
+      const applied = applyPick(text, caret, trig, picked, stash);
+      const ref = applied.text.slice(trig.start, applied.caret);
       try {
-        onEmbedPick({ kind: isBlock ? "block" : "page", ref: isBlock ? `((${item.uid}))` : `[[${item.title}]]`, title: isBlock ? item.str : item.title, uid: item.uid, create: item.kind === "create", el });
+        onEmbedPick({ kind: isBlock ? "block" : "page", ref, title: isBlock ? item.str : item.title, uid: item.uid, create: item.kind === "create", el });
       } catch (error) { warn("embed pick", error); }
       const out = stripTrigger(text, caret, trig);
       setValue(el, out.text);
       el.setSelectionRange?.(out.caret, out.caret);
-      let ev;
-      try {
-        ev = new (view.InputEvent || view.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
-      } catch { ev = new view.Event("input", { bubbles: true }); }
-      el.dispatchEvent(ev);
+      dispatchInput();
       close();
       el.blur?.();
     }
@@ -389,10 +552,35 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       if (e?.type === "keyup" && !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
       if (trigger) recheck(false);
     });
+    const completesPair = (text, caret, key) => {
+      if ((key !== "[" && key !== "(") || caret < 1 || text[caret - 1] !== key) return false;
+      return !(caret >= 2 && text[caret - 2] === key);
+    };
+    // A second [ or ( closes the pair. A selection stashes an alias until close().
     const onKeydown = safe("keydown", (e) => {
-      if (!root || e.isComposing || e.keyCode === 229) return;
-      const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
-      if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && typeof onEmbedPick === "function" && isWysiwyg()) { embedPick(e); return; }
+      if (e.isComposing || e.keyCode === 229) return;
+      const text = el.value ?? "";
+      const caret = Number.isInteger(el.selectionStart) ? el.selectionStart : text.length;
+      const end = Number.isInteger(el.selectionEnd) ? el.selectionEnd : caret;
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (plain && (e.key === "[" || e.key === "(") && caret !== end) { stash = text.slice(Math.min(caret, end), Math.max(caret, end)); stashArmed = true; }
+      else if (plain && caret === end && completesPair(text, caret, e.key)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const closer = e.key === "[" ? "]" : ")";
+        // The opener is already before the caret; the key plus both closers makes [[]] or (()).
+        const next = text.slice(0, caret) + e.key + closer + closer + text.slice(caret);
+        const pos = caret + 1;
+        setValue(el, next);
+        el.setSelectionRange?.(pos, pos);
+        dispatchInput();
+        if (el.value === next) el.setSelectionRange?.(pos, pos);
+        return;
+      } else if (plain && typeof e.key === "string" && e.key.length === 1) { stash = ""; stashArmed = false; }
+      else if (e.key === "Backspace" || e.key === "Delete") { stash = ""; stashArmed = false; }
+      if (!root) return;
+      const bare = plain && !e.shiftKey;
+      if (e.key === "Enter" && e.shiftKey && plain && typeof onEmbedPick === "function" && isWysiwyg()) { embedPick(e); return; }
       const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
       let move = 0;
       let commit = false;
@@ -409,13 +597,14 @@ export function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () 
       if (move) {
         if (rows.length) setActive((active + move + rows.length) % rows.length, true);
       } else if (commit) {
+        const choice = [...items, ...related][active];
         if (status === "loading") return;
-        if (status === "results" && items[active]) pick(items[active]);
+        if (status === "results" && choice) pick(choice);
         else if (status === "results" && trigger?.kind === "page" && trigger.query.trim()) pick({ kind: "page", title: trigger.query.trim() });
         else close();
-      } else if (esc) close();
+      } else if (esc) { stashArmed = false; close(); }
     });
-    const onBlur = safe("blur", () => close());
+    const onBlur = safe("blur", () => { stashArmed = false; close(); });
 
     el.addEventListener("input", onInput);
     el.addEventListener("keydown", onKeydown, true);

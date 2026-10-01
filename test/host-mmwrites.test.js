@@ -250,6 +250,41 @@ test("a rejected queued op does not stall the next one", async () => {
   assert.equal(s.writes.length, 1);
 });
 
+test("a rejected job sticks failed and pending returns to 0", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true } } });
+  assert.deepEqual(s.w.status("missing"), { pending: 0, failed: false });
+  s.api.data.block.create = async () => { throw new Error("boom"); };
+  let idle = 0;
+  const job = s.w.createChild("r", "p", { uid: "a" });
+  assert.deepEqual(s.w.status("r"), { pending: 1, failed: false });
+  s.w.onIdle("r", () => { idle += 1; assert.deepEqual(s.w.status("r"), { pending: 0, failed: true }); });
+  await assert.rejects(job, /boom/);
+  assert.deepEqual(s.w.status("r"), { pending: 0, failed: true });
+  assert.equal(s.w.isBusy("r"), false);
+  assert.equal(idle, 1);
+});
+
+test("a following successful createChild clears failed", async () => {
+  const s = setup({ blocks: { p: { ":block/open": true } } });
+  let first = true;
+  const orig = s.api.data.block.create;
+  s.api.data.block.create = async (a) => { if (first) { first = false; throw new Error("boom"); } return orig(a); };
+  await assert.rejects(s.w.createChild("r", "p", { uid: "a" }), /boom/);
+  assert.deepEqual(s.w.status("r"), { pending: 0, failed: true });
+  assert.equal(await s.w.createChild("r", "p", { uid: "b" }), "b");
+  assert.deepEqual(s.w.status("r"), { pending: 0, failed: false });
+  assert.equal(s.writes.length, 1);
+});
+
+test("updateString resolving { ok: false } sticks failed until a later success", async () => {
+  const s = setup({ blocks: { a: { ":block/string": "old" } } });
+  assert.deepEqual(await s.w.updateString("r", "a", "new", "stale"), { ok: false, reason: "changed" });
+  assert.deepEqual(s.w.status("r"), { pending: 0, failed: true });
+  assert.equal(s.writes.length, 0);
+  assert.deepEqual(await s.w.updateString("r", "a", "old", "old"), { ok: true, written: false });
+  assert.deepEqual(s.w.status("r"), { pending: 0, failed: false });
+});
+
 test("watchTree uses the recursive pattern on the root uid and unwatches with the same pattern", () => {
   const s = setup();
   const off = s.w.watchTree("R", () => {});

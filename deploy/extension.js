@@ -1,4 +1,4 @@
-/* Plexus v0.19.0 | MIT | generated; edit src/ */
+/* Plexus v0.20.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -10262,6 +10262,8 @@ var NODE_CAP = 500;
 var DELETE_WINDOW_MS = 3e3;
 var LOAD_WAIT_MS = 5e3;
 var MAX_WAIT_MS = 4e3;
+var QUEUE_POLL_MS = 200;
+var QUEUE_SHOW_MS = 2500;
 var FORCE_MARK_MS = 5e3;
 var PLACEHOLDER_WINDOW_MS = 3e4;
 var DRAG_START_PX = 4;
@@ -10272,6 +10274,7 @@ var GROW_HINT = "Use Tab / Enter to grow this map";
 var FOLLOW_HINT = "Mind-map nodes follow the outline; Alt+Backspace deletes a branch";
 var MARKUP_HINT = "Edit this node in the outline (it has links or formatting)";
 var WRITE_FAILED = "Could not update the outline";
+var QUEUE_PENDING = "Outline update pending";
 var CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
 var LABEL_HINT = "Edit the attribute block in the outline";
 var FLOW_LABEL_HINT = "Edit the Yes:/No: prefix in the outline";
@@ -10398,6 +10401,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let input = null;
     const fontSig = /* @__PURE__ */ new Map();
     let loadedTimer = null;
+    let queueTimer = null;
+    let queueChip = null;
+    let busySince = null;
     let deferredSince = null;
     const forceMarks = /* @__PURE__ */ new Map();
     const rootDefaults = /* @__PURE__ */ new Map();
@@ -11531,6 +11537,56 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       }
       return true;
     }
+    function removeQueueChip() {
+      if (!queueChip) return;
+      try {
+        queueChip.remove();
+      } catch {
+      }
+      queueChip = null;
+    }
+    function syncQueueChip() {
+      let failed = false;
+      let pending = false;
+      for (const root of trees.keys()) {
+        let st = null;
+        try {
+          st = writer.status(root);
+        } catch (error) {
+          warn7("queue status", error);
+        }
+        if (!st) continue;
+        if (st.failed) failed = true;
+        if (st.pending > 0) pending = true;
+      }
+      if (!pending) busySince = null;
+      else if (busySince == null) busySince = now();
+      const label = failed ? WRITE_FAILED : pending && now() - busySince >= QUEUE_SHOW_MS ? QUEUE_PENDING : "";
+      if (!label) {
+        removeQueueChip();
+        return;
+      }
+      if (!queueChip) {
+        queueChip = doc.createElement("div");
+        queueChip.className = "plexus-queue-chip";
+        queueChip.style.pointerEvents = "none";
+        doc.body.append(queueChip);
+      }
+      queueChip.textContent = label;
+    }
+    function pollQueue() {
+      queueTimer = null;
+      if (!alive) return;
+      syncQueueChip();
+      if (!alive) return;
+      queueTimer = setTimeout(pollQueue, QUEUE_POLL_MS);
+    }
+    function stopQueuePoll() {
+      if (queueTimer != null) clearTimeout(queueTimer);
+      queueTimer = null;
+      removeQueueChip();
+      busySince = null;
+    }
     const listen = (target, type, fn, opts) => {
       target.addEventListener(type, fn, opts);
       offs.push(() => target.removeEventListener(type, fn, opts));
@@ -11562,6 +11618,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       if (doc.visibilityState === "hidden") flush();
     });
     start();
+    if (typeof writer.status === "function") pollQueue();
     return {
       app,
       selectedNode,
@@ -11578,6 +11635,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         if (scheduled != null) caf(scheduled);
         loadedTimer = null;
         scheduled = null;
+        stopQueuePoll();
         if (input) removeInput(input);
         endDrag();
         pendingDrop = null;
@@ -11661,12 +11719,16 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
   const state = (root) => {
     let s = queues.get(root);
     if (!s) {
-      s = { tail: Promise.resolve(), pending: 0 };
+      s = { tail: Promise.resolve(), pending: 0, failed: false };
       queues.set(root, s);
     }
     return s;
   };
   const busy2 = (root) => (queues.get(root)?.pending || 0) > 0;
+  const status = (root) => {
+    const s = queues.get(root);
+    return s ? { pending: s.pending, failed: s.failed } : { pending: 0, failed: false };
+  };
   function pullRaw(pattern, uid) {
     if (!uid) return null;
     const raw = api.data.pull(pattern, [":block/uid", uid]);
@@ -11687,9 +11749,14 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     const s = state(rootUid);
     s.pending += 1;
     const job = s.tail.then(() => underLocks([rootUid, ...extraRoots], fn));
-    s.tail = job.then(() => {
-    }, () => {
-    });
+    s.tail = job.then(
+      (value) => {
+        s.failed = value?.ok === false;
+      },
+      () => {
+        s.failed = true;
+      }
+    );
     return job.finally(() => {
       s.pending -= 1;
       if (s.pending === 0) for (const hook of [...drainHooks.get(rootUid) || []]) hook();
@@ -11924,7 +11991,7 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     };
     hooks.add(hook);
   }
-  return { isBusy: busy2, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  return { isBusy: busy2, status, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
 }
 
 // src/host/snapshots.js
@@ -20947,29 +21014,71 @@ function parseNaturalDate(text, now = /* @__PURE__ */ new Date()) {
 // src/model/suggest.js
 var MAX_LOOKBACK = 300;
 var MAX_QUERY = 100;
-function findTrigger(text, caret) {
-  if (typeof text !== "string" || !Number.isInteger(caret) || caret < 2 || caret > text.length) return null;
-  const floor = Math.max(0, caret - MAX_LOOKBACK);
-  for (let i = caret - 2; i >= floor; i--) {
+function hashQueryOk(query) {
+  return query.length <= MAX_QUERY && !/\s/.test(query) && !query.includes("]]") && !query.includes("))");
+}
+function findHash(text, caret, from) {
+  const floor = Math.max(0, from, caret - MAX_LOOKBACK);
+  for (let i = caret - 1; i >= floor; i--) {
     const c = text[i];
     if (c === "\n") return null;
-    const pair = c + text[i + 1];
-    if (pair !== "[[" && pair !== "((") continue;
-    const tail = text.slice(i + 2, caret);
-    if (tail.includes("\n") || tail.includes("]]") || tail.includes("))") || tail.length > MAX_QUERY) return null;
-    return { kind: pair === "[[" ? "page" : "block", start: i, query: tail };
+    if (c !== "#") continue;
+    const query = text.slice(i + 1, caret);
+    if (!hashQueryOk(query)) return null;
+    return { kind: "hash", start: i, query };
   }
   return null;
 }
+function hashAfterRejectedPair(text, caret, pairAt, tail) {
+  if (tail.includes("\n")) return null;
+  const pageClose = tail.indexOf("]]");
+  const blockClose = tail.indexOf("))");
+  const rel = pageClose < 0 ? blockClose : blockClose < 0 ? pageClose : Math.min(pageClose, blockClose);
+  if (rel < 0) return null;
+  return findHash(text, caret, pairAt + 2 + rel + 2);
+}
+function findTrigger(text, caret) {
+  if (typeof text !== "string" || !Number.isInteger(caret) || caret < 1 || caret > text.length) return null;
+  if (caret < 2) return text[0] === "#" ? { kind: "hash", start: 0, query: "" } : null;
+  const floor = Math.max(0, caret - MAX_LOOKBACK);
+  let lineStart = floor;
+  for (let i = caret - 2; i >= floor; i--) {
+    const c = text[i];
+    if (c === "\n") {
+      lineStart = i + 1;
+      break;
+    }
+    const pair = c + text[i + 1];
+    if (pair !== "[[" && pair !== "((") continue;
+    const tail = text.slice(i + 2, caret);
+    if (tail.includes("\n") || tail.includes("]]") || tail.includes("))") || tail.length > MAX_QUERY) {
+      return hashAfterRejectedPair(text, caret, i, tail);
+    }
+    return { kind: pair === "[[" ? "page" : "block", start: i, query: tail };
+  }
+  return findHash(text, caret, lineStart);
+}
 function replaceTrigger(text, caret, trigger, token) {
-  const closer = trigger.kind === "page" ? "]]" : "))";
+  const closer = trigger.kind === "page" ? "]]" : trigger.kind === "block" ? "))" : "";
   const rest = text.slice(caret);
   const lead = /^[^\n[\]()]*/.exec(rest)[0];
-  const cut2 = rest.startsWith(closer, lead.length) ? caret + lead.length + 2 : caret;
+  const cut2 = closer && rest.startsWith(closer, lead.length) ? caret + lead.length + closer.length : caret;
   return { text: text.slice(0, trigger.start) + token + text.slice(cut2), caret: trigger.start + token.length };
 }
-function applyPick(text, caret, trigger, pick3) {
-  return replaceTrigger(text, caret, trigger, pick3.kind === "page" ? `[[${pick3.title}]]` : `((${pick3.uid}))`);
+function pageAlias(alias) {
+  if (typeof alias !== "string") return "";
+  const flat = alias.replace(/\s+/g, " ").trim();
+  if (!flat || flat.includes("[") || flat.includes("]")) return "";
+  return flat;
+}
+function pickToken(trigger, pick3, alias) {
+  if (pick3.kind !== "page") return `((${pick3.uid}))`;
+  if (trigger.kind === "hash") return `#[[${pick3.title}]]`;
+  const name = pageAlias(alias);
+  return name ? `[${name}]([[${pick3.title}]])` : `[[${pick3.title}]]`;
+}
+function applyPick(text, caret, trigger, pick3, alias) {
+  return replaceTrigger(text, caret, trigger, pickToken(trigger, pick3, alias));
 }
 function stripTrigger(text, caret, trigger) {
   return replaceTrigger(text, caret, trigger, "");
@@ -21055,6 +21164,41 @@ var ENTER_ICON = '<svg data-icon="key-enter" width="16" height="16" viewBox="0 0
 var COPY_PROPS = ["direction", "boxSizing", "width", "height", "overflowX", "overflowY", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "fontFamily", "lineHeight", "textAlign", "textTransform", "textIndent", "letterSpacing", "wordSpacing", "tabSize", "whiteSpace", "wordBreak", "overflowWrap"];
 var warn3 = (what, error) => console.warn(`[plexus] link suggest ${what} failed`, error);
 var same2 = (a, b) => !!a && !!b && a.kind === b.kind && a.start === b.start && a.query === b.query;
+var PAGE_RECENT_Q = "[:find ?title ?time :where [?p :node/title ?title] [?p :edit/time ?time]]";
+var HASH_RECENT_Q = "[:find ?title ?time :where [?p :node/title ?title] [?p :edit/time ?time] [?b :block/refs ?p]]";
+var REF_COUNT_Q = "[:find (count ?b) :in $ ?title :where [?p :node/title ?title] [?b :block/refs ?p]]";
+var RELATED_MS = 150;
+var RECENT_MS = 1e4;
+function rankRecent(raw) {
+  const ranked = [];
+  const list = Array.isArray(raw) ? raw : [];
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i];
+    if (!Array.isArray(row) || typeof row[0] !== "string" || !row[0]) continue;
+    const time = typeof row[1] === "number" && Number.isFinite(row[1]) ? row[1] : 0;
+    ranked.push({ title: row[0], time, i });
+  }
+  ranked.sort((a, b) => b.time - a.time || a.i - b.i);
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const row of ranked) {
+    if (seen.has(row.title)) continue;
+    seen.add(row.title);
+    out.push({ kind: "page", title: row.title });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+function positiveCount(raw) {
+  let found = 0;
+  const walk2 = (v) => {
+    if (typeof v === "number") {
+      if (Number.isInteger(v) && v > found) found = v;
+    } else if (Array.isArray(v)) for (const x of v) walk2(x);
+  };
+  walk2(raw);
+  return found;
+}
 function setValue(el, v) {
   for (let p = Object.getPrototypeOf(el); p; p = Object.getPrototypeOf(p)) {
     const d = Object.getOwnPropertyDescriptor(p, "value");
@@ -21092,6 +21236,34 @@ function measureCaret(doc, el, caret) {
 function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @__PURE__ */ new Date(), zIndexFor = () => 1e3, debounce = { page: 60, block: 150 }, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) } = {}) {
   const view2 = doc.defaultView;
   const attached = /* @__PURE__ */ new Set();
+  let pageCache = null;
+  let hashCache = null;
+  function refCount(title) {
+    if (typeof api.data?.q !== "function" || typeof title !== "string" || !title) return 0;
+    try {
+      return positiveCount(api.data.q(REF_COUNT_Q, title));
+    } catch {
+      return 0;
+    }
+  }
+  function recentItems(kind) {
+    const hash = kind === "hash";
+    const t = now().getTime();
+    const hit = hash ? hashCache : pageCache;
+    if (hit && t - hit.at < RECENT_MS) return hit.rows.slice();
+    if (typeof api.data?.q !== "function") return [];
+    let rows;
+    try {
+      rows = rankRecent(api.data.q(hash ? HASH_RECENT_Q : PAGE_RECENT_Q));
+    } catch (error) {
+      warn3("recent", error);
+      return [];
+    }
+    const entry = { at: t, rows };
+    if (hash) hashCache = entry;
+    else pageCache = entry;
+    return rows.slice();
+  }
   function attach(el) {
     let trigger = null;
     let items = [];
@@ -21105,6 +21277,11 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
     let footerTitle = null;
     let lastMouse = null;
     let rows = [];
+    let related = [];
+    let relatedTimer = null;
+    let stash = "";
+    let stashArmed = false;
+    let semanticOn = null;
     let dead = false;
     const safe2 = (what, fn) => (e) => {
       try {
@@ -21122,6 +21299,10 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       if (liveTimer != null) {
         clearT(liveTimer);
         liveTimer = null;
+      }
+      if (relatedTimer != null) {
+        clearT(relatedTimer);
+        relatedTimer = null;
       }
     };
     const onWinScroll = safe2("scroll", (e) => {
@@ -21151,6 +21332,8 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       clearTimers();
       trigger = null;
       items = [];
+      related = [];
+      if (!stashArmed) stash = "";
       destroyRoot();
     }
     function place() {
@@ -21198,7 +21381,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
     }
     function render() {
       if (dead || !trigger) return;
-      const isPage = trigger.kind === "page";
+      const kind = trigger.kind;
       const created = !root;
       if (created) {
         root = doc.createElement("div");
@@ -21242,7 +21425,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         view2?.addEventListener?.("wheel", onWinWheel, { capture: true, passive: true });
         scheduleLive();
       }
-      footerTitle.textContent = isPage ? "Page search" : "Block search";
+      footerTitle.textContent = kind === "hash" ? "Tag search" : kind === "page" ? "Page search" : "Block search";
       scroll.replaceChildren?.();
       rows = [];
       const message = (text, title) => {
@@ -21256,11 +21439,20 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         row.append(inner2);
         scroll.append(row);
       };
-      if (status === "hint") message(isPage ? "Search for a page" : "Search for a block");
+      const all = [...items, ...related];
+      const hintText = kind === "block" ? "Search for a block" : "Search for a page";
+      const noneText = kind === "block" ? "No blocks found." : "No pages found.";
+      if (status === "hint") message(hintText);
       else if (status === "error") message("Search failed");
-      else if (!items.length) message(isPage ? "No pages found." : "No blocks found.");
+      else if (!all.length) message(noneText);
       else {
-        items.forEach((item, k) => {
+        all.forEach((item, k) => {
+          if (k === items.length && related.length) {
+            const head = doc.createElement("div");
+            head.className = "plexus-picker-header";
+            head.textContent = "Related";
+            scroll.append(head);
+          }
           const row = doc.createElement("div");
           row.setAttribute("title", item.kind === "block" ? item.str : item.title);
           row.className = "dont-unfocus-block";
@@ -21271,6 +21463,14 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
           if (item.kind === "create") label.textContent = `+ Create page ${item.title}`;
           else segs(label, item.kind === "block" ? blockSnippet(item.str, trigger.query) : item.title, trigger.query);
           inner2.append(label);
+          if (item.kind === "page" || item.kind === "date") {
+            const n = Number.isInteger(item.refs) ? item.refs : refCount(item.title);
+            if (Number.isInteger(n) && n > 0) {
+              const sup = doc.createElement("sup");
+              sup.textContent = String(n);
+              inner2.append(sup);
+            }
+          }
           row.append(inner2);
           if (item.kind === "date") {
             const sub = doc.createElement("div");
@@ -21337,11 +21537,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       const q = trig.query.trim();
       try {
         let found;
-        if (trig.kind === "page") {
-          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
-          found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
-          found = await pageRows(q, found);
-        } else {
+        if (trig.kind === "block") {
           const res = await api.data.async.search({ "search-str": q, "search-pages": false, "search-blocks": true, "hide-code-blocks": true, limit: 12 });
           found = await Promise.all((res || []).map(async (r) => {
             const uid = r[":block/uid"] ?? r.uid;
@@ -21353,6 +21549,21 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
             }
             return { kind: "block", uid, str: r[":block/string"] ?? r.string ?? "", pageTitle };
           }));
+        } else if (trig.kind === "hash") {
+          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
+          found = [];
+          for (const r of res || []) {
+            if (!r || typeof r !== "object") continue;
+            const title = r[":node/title"] ?? r.title;
+            if (typeof title !== "string" || !title) continue;
+            const n = refCount(title);
+            if (n > 0) found.push({ kind: "page", title, uid: r[":block/uid"] ?? r.uid, refs: n });
+            if (found.length >= 12) break;
+          }
+        } else {
+          const res = await api.data.async.search({ "search-str": q, "search-pages": true, "search-blocks": false, limit: 12 });
+          found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
+          found = await pageRows(q, found);
         }
         if (mine !== seq || dead) return;
         if (!connected()) {
@@ -21371,6 +21582,57 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         render();
       }
     }
+    function semanticEnabled() {
+      if (semanticOn !== null && typeof semanticOn.then !== "function") return semanticOn;
+      if (semanticOn && typeof semanticOn.then === "function") return semanticOn;
+      try {
+        const fn = api.data?.semanticSearchEnabled;
+        const value = typeof fn === "function" ? fn.call(api.data) : false;
+        if (value && typeof value.then === "function") {
+          semanticOn = Promise.resolve(value).then(
+            (v) => {
+              semanticOn = v === true;
+              return semanticOn;
+            },
+            () => {
+              semanticOn = false;
+              return false;
+            }
+          );
+          return semanticOn;
+        }
+        semanticOn = value === true;
+      } catch {
+        semanticOn = false;
+      }
+      return semanticOn;
+    }
+    async function relatedSearch(q, mine) {
+      try {
+        const fn = api.data?.async?.semanticSearch;
+        if (typeof fn !== "function") return;
+        const res = await fn.call(api.data.async, { "search-str": q, limit: 5 });
+        if (mine !== seq || dead) return;
+        if (!connected()) {
+          detach();
+          return;
+        }
+        const shown = new Set(items.map((it) => it.uid).filter(Boolean));
+        const out = [];
+        for (const r of res || []) {
+          if (!r || typeof r !== "object") continue;
+          const uid = r[":block/uid"] ?? r.uid;
+          if (!uid || shown.has(uid)) continue;
+          shown.add(uid);
+          out.push({ kind: "block", uid, str: r[":block/string"] ?? r.string ?? r[":node/title"] ?? "", pageTitle: "", related: true });
+        }
+        if (!out.length) return;
+        related = out;
+        render();
+      } catch (error) {
+        warn3("related", error);
+      }
+    }
     function setTrigger(next) {
       const kindChanged = !trigger || trigger.kind !== next.kind;
       seq++;
@@ -21378,20 +21640,33 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         clearT(timer);
         timer = null;
       }
+      if (relatedTimer != null) {
+        clearT(relatedTimer);
+        relatedTimer = null;
+      }
+      related = [];
       trigger = next;
       active = 0;
       if (kindChanged) {
         items = [];
         destroyRoot();
       }
-      if (!next.query.trim()) {
-        items = [];
-        status = "hint";
+      const mine = seq;
+      const trimmed = next.query.trim();
+      const delay = next.kind === "block" ? debounce.block ?? 150 : debounce.page ?? 60;
+      if (!trimmed) {
+        if (next.kind === "block") {
+          items = [];
+          status = "hint";
+          render();
+          return;
+        }
+        items = recentItems(next.kind);
+        status = "results";
         render();
         return;
       }
       status = "loading";
-      const mine = seq;
       timer = setT(() => {
         timer = null;
         if (mine !== seq || dead) return;
@@ -21400,7 +21675,20 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
           return;
         }
         search(next, mine);
-      }, debounce[next.kind] ?? 60);
+      }, delay);
+      if (next.kind === "page") {
+        const arm = (on) => {
+          if (!on || mine !== seq || dead || relatedTimer != null) return;
+          relatedTimer = setT(() => {
+            relatedTimer = null;
+            if (mine !== seq || dead) return;
+            relatedSearch(trimmed, mine);
+          }, RELATED_MS);
+        };
+        const gate = semanticEnabled();
+        if (gate && typeof gate.then === "function") gate.then(arm);
+        else if (gate === true) arm(true);
+      }
     }
     function recheck(canOpen) {
       if (dead) return;
@@ -21413,6 +21701,15 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       if (!canOpen && !trigger) return;
       setTrigger(trig);
     }
+    function dispatchInput() {
+      let ev;
+      try {
+        ev = new (view2.InputEvent || view2.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
+      } catch {
+        ev = new view2.Event("input", { bubbles: true });
+      }
+      el.dispatchEvent(ev);
+    }
     function pick3(item) {
       const text = el.value ?? "";
       const caret = el.selectionStart ?? text.length;
@@ -21421,17 +21718,13 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         close2();
         return;
       }
-      const out = applyPick(text, caret, trig, item.kind === "block" ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title });
+      const picked = item.kind === "block" ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title };
+      const out = applyPick(text, caret, trig, picked, stash);
+      stashArmed = false;
       setValue(el, out.text);
       el.setSelectionRange?.(out.caret, out.caret);
-      let ev;
-      try {
-        ev = new (view2.InputEvent || view2.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
-      } catch {
-        ev = new view2.Event("input", { bubbles: true });
-      }
       close2();
-      el.dispatchEvent(ev);
+      dispatchInput();
       if (el.value === out.text) el.setSelectionRange?.(out.caret, out.caret);
       if (item.kind === "create") {
         try {
@@ -21445,7 +21738,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
     function embedPick(e) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const item = status === "results" ? items[active] : null;
+      const item = status === "results" ? [...items, ...related][active] : null;
       if (!item) return;
       const text = el.value ?? "";
       const caret = el.selectionStart ?? text.length;
@@ -21455,21 +21748,18 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         return;
       }
       const isBlock = item.kind === "block";
+      const picked = isBlock ? { kind: "block", uid: item.uid } : { kind: "page", title: item.title };
+      const applied = applyPick(text, caret, trig, picked, stash);
+      const ref = applied.text.slice(trig.start, applied.caret);
       try {
-        onEmbedPick({ kind: isBlock ? "block" : "page", ref: isBlock ? `((${item.uid}))` : `[[${item.title}]]`, title: isBlock ? item.str : item.title, uid: item.uid, create: item.kind === "create", el });
+        onEmbedPick({ kind: isBlock ? "block" : "page", ref, title: isBlock ? item.str : item.title, uid: item.uid, create: item.kind === "create", el });
       } catch (error) {
         warn3("embed pick", error);
       }
       const out = stripTrigger(text, caret, trig);
       setValue(el, out.text);
       el.setSelectionRange?.(out.caret, out.caret);
-      let ev;
-      try {
-        ev = new (view2.InputEvent || view2.Event)("input", { bubbles: true, inputType: "insertReplacementText" });
-      } catch {
-        ev = new view2.Event("input", { bubbles: true });
-      }
-      el.dispatchEvent(ev);
+      dispatchInput();
       close2();
       el.blur?.();
     }
@@ -21481,10 +21771,40 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       if (e?.type === "keyup" && !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
       if (trigger) recheck(false);
     });
+    const completesPair = (text, caret, key) => {
+      if (key !== "[" && key !== "(" || caret < 1 || text[caret - 1] !== key) return false;
+      return !(caret >= 2 && text[caret - 2] === key);
+    };
     const onKeydown = safe2("keydown", (e) => {
-      if (!root || e.isComposing || e.keyCode === 229) return;
-      const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
-      if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && typeof onEmbedPick === "function" && isWysiwyg()) {
+      if (e.isComposing || e.keyCode === 229) return;
+      const text = el.value ?? "";
+      const caret = Number.isInteger(el.selectionStart) ? el.selectionStart : text.length;
+      const end = Number.isInteger(el.selectionEnd) ? el.selectionEnd : caret;
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (plain && (e.key === "[" || e.key === "(") && caret !== end) {
+        stash = text.slice(Math.min(caret, end), Math.max(caret, end));
+        stashArmed = true;
+      } else if (plain && caret === end && completesPair(text, caret, e.key)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const closer = e.key === "[" ? "]" : ")";
+        const next = text.slice(0, caret) + e.key + closer + closer + text.slice(caret);
+        const pos = caret + 1;
+        setValue(el, next);
+        el.setSelectionRange?.(pos, pos);
+        dispatchInput();
+        if (el.value === next) el.setSelectionRange?.(pos, pos);
+        return;
+      } else if (plain && typeof e.key === "string" && e.key.length === 1) {
+        stash = "";
+        stashArmed = false;
+      } else if (e.key === "Backspace" || e.key === "Delete") {
+        stash = "";
+        stashArmed = false;
+      }
+      if (!root) return;
+      const bare = plain && !e.shiftKey;
+      if (e.key === "Enter" && e.shiftKey && plain && typeof onEmbedPick === "function" && isWysiwyg()) {
         embedPick(e);
         return;
       }
@@ -21504,13 +21824,20 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       if (move) {
         if (rows.length) setActive((active + move + rows.length) % rows.length, true);
       } else if (commit) {
+        const choice = [...items, ...related][active];
         if (status === "loading") return;
-        if (status === "results" && items[active]) pick3(items[active]);
+        if (status === "results" && choice) pick3(choice);
         else if (status === "results" && trigger?.kind === "page" && trigger.query.trim()) pick3({ kind: "page", title: trigger.query.trim() });
         else close2();
-      } else if (esc2) close2();
+      } else if (esc2) {
+        stashArmed = false;
+        close2();
+      }
     });
-    const onBlur = safe2("blur", () => close2());
+    const onBlur = safe2("blur", () => {
+      stashArmed = false;
+      close2();
+    });
     el.addEventListener("input", onInput);
     el.addEventListener("keydown", onKeydown, true);
     el.addEventListener("keyup", onRecheck);

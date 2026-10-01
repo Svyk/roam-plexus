@@ -8,6 +8,8 @@ const NODE_CAP = 500;
 const DELETE_WINDOW_MS = 3000;
 const LOAD_WAIT_MS = 5000;
 const MAX_WAIT_MS = 4000;
+const QUEUE_POLL_MS = 200;
+const QUEUE_SHOW_MS = 2500;
 const FORCE_MARK_MS = 5000;
 const PLACEHOLDER_WINDOW_MS = 30000;
 const DRAG_START_PX = 4;
@@ -18,6 +20,7 @@ const GROW_HINT = "Use Tab / Enter to grow this map";
 const FOLLOW_HINT = "Mind-map nodes follow the outline; Alt+Backspace deletes a branch";
 const MARKUP_HINT = "Edit this node in the outline (it has links or formatting)";
 const WRITE_FAILED = "Could not update the outline";
+const QUEUE_PENDING = "Outline update pending";
 const CHANGED_ELSEWHERE = "Block changed elsewhere; not overwritten";
 const LABEL_HINT = "Edit the attribute block in the outline";
 const FLOW_LABEL_HINT = "Edit the Yes:/No: prefix in the outline";
@@ -130,6 +133,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     let input = null;
     const fontSig = new Map();
     let loadedTimer = null;
+    let queueTimer = null;
+    let queueChip = null;
+    let busySince = null;
     let deferredSince = null;
     const forceMarks = new Map();
     const rootDefaults = new Map();
@@ -1117,6 +1123,51 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       return true;
     }
 
+    // Failed wins at once. Pending waits out the busy stretch. Idle and not failed removes the chip, and this is not a toast.
+    function removeQueueChip() {
+      if (!queueChip) return;
+      try { queueChip.remove(); } catch { /* detached */ }
+      queueChip = null;
+    }
+
+    function syncQueueChip() {
+      let failed = false;
+      let pending = false;
+      for (const root of trees.keys()) {
+        let st = null;
+        try { st = writer.status(root); } catch (error) { warn("queue status", error); }
+        if (!st) continue;
+        if (st.failed) failed = true;
+        if (st.pending > 0) pending = true;
+      }
+      if (!pending) busySince = null;
+      else if (busySince == null) busySince = now();
+      const label = failed ? WRITE_FAILED : (pending && now() - busySince >= QUEUE_SHOW_MS) ? QUEUE_PENDING : "";
+      if (!label) { removeQueueChip(); return; }
+      if (!queueChip) {
+        queueChip = doc.createElement("div");
+        queueChip.className = "plexus-queue-chip";
+        queueChip.style.pointerEvents = "none";
+        doc.body.append(queueChip);
+      }
+      queueChip.textContent = label;
+    }
+
+    function pollQueue() {
+      queueTimer = null;
+      if (!alive) return;
+      syncQueueChip();
+      if (!alive) return;
+      queueTimer = setTimeout(pollQueue, QUEUE_POLL_MS);
+    }
+
+    function stopQueuePoll() {
+      if (queueTimer != null) clearTimeout(queueTimer);
+      queueTimer = null;
+      removeQueueChip();
+      busySince = null;
+    }
+
     // ---- wiring ----
 
     const listen = (target, type, fn, opts) => {
@@ -1142,6 +1193,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     if (view?.addEventListener) listen(view, "pagehide", () => flush({ unloading: true }));
     if (doc.addEventListener) listen(doc, "visibilitychange", () => { if (doc.visibilityState === "hidden") flush(); });
     start();
+    if (typeof writer.status === "function") pollQueue();
 
     return {
       app,
@@ -1159,6 +1211,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
         if (scheduled != null) caf(scheduled);
         loadedTimer = null;
         scheduled = null;
+        stopQueuePoll();
         if (input) removeInput(input);
         endDrag();
         pendingDrop = null;

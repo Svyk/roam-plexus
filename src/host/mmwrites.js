@@ -17,7 +17,7 @@ function walk(node, fn) {
 // block.create, block.update with ONLY string or ONLY open, block.move (moveBranch, moveTo), block.reorderBlocks
 // (moveTo), block.delete (deleteBranch and discardPlaceholder). Props are never written.
 export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, graph, raf } = {}) {
-  const queues = new Map(); // rootUid -> { tail, pending }
+  const queues = new Map(); // rootUid -> { tail, pending, failed }
   const drainHooks = new Map(); // rootUid -> Set<fn>
   const created = new Set();
   const schedule = raf || ((fn) => (typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16)));
@@ -25,10 +25,14 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
   const graphName = () => graph ?? api.graph?.name;
   const state = (root) => {
     let s = queues.get(root);
-    if (!s) { s = { tail: Promise.resolve(), pending: 0 }; queues.set(root, s); }
+    if (!s) { s = { tail: Promise.resolve(), pending: 0, failed: false }; queues.set(root, s); }
     return s;
   };
   const busy = (root) => (queues.get(root)?.pending || 0) > 0;
+  const status = (root) => {
+    const s = queues.get(root);
+    return s ? { pending: s.pending, failed: s.failed } : { pending: 0, failed: false };
+  };
 
   function pullRaw(pattern, uid) {
     if (!uid) return null;
@@ -49,11 +53,15 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
   }
 
   // Serialized per root (queue) and cross-tab (Web Lock). A move between maps queues on the first root.
+  // Tail handlers never throw: the tail fulfills so the next job runs. failed sticks on reject or { ok: false }.
   function run(rootUid, fn, extraRoots = []) {
     const s = state(rootUid);
     s.pending += 1;
     const job = s.tail.then(() => underLocks([rootUid, ...extraRoots], fn));
-    s.tail = job.then(() => {}, () => {});
+    s.tail = job.then(
+      (value) => { s.failed = value?.ok === false; },
+      () => { s.failed = true; },
+    );
     return job.finally(() => {
       s.pending -= 1;
       if (s.pending === 0) for (const hook of [...(drainHooks.get(rootUid) || [])]) hook();
@@ -274,5 +282,5 @@ export function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = wit
     hooks.add(hook);
   }
 
-  return { isBusy: busy, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
+  return { isBusy: busy, status, onIdle, createChild, createSiblingAfter, updateString, setOpen, moveBranch, moveTo, copyBranch, deleteBranch, discardPlaceholder, pullTree, watchTree };
 }

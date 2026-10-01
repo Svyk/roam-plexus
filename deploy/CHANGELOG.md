@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.20.0]
+
+- Typing `[[` or `((` inserts the closer and leaves the caret inside. Selected words stay the alias, and a page pick writes `[words]([[Title]])`. An empty `[[` lists recent pages. A `#` lists referenced pages. Page rows show the ref count. Related appears only when semantic search is enabled.
+- A quiet chip on an open mind map. "Outline update pending" after the queue has been busy for 2.5 s. "Could not update the outline" when the last write failed, until a later write succeeds. No second save control.
+- The palette stays two entries. The command list stays 53.
+
 ## [0.19.0]
 
 - One selected embed, frame, or region anchor, and not while editing. Alt+arrows select the nearest anchor in a 90-degree cone. Shift+Tab selects its frame parent. Cmd/Ctrl+L copies `((uid))` when that anchor has a block. Alt+Enter opens the block in the sidebar. Space shows a cached crop in the crop popover and does not load app-excalidraw.js. Five settings, on by default. A key with nothing to do is left alone. Plain arrows still nudge.

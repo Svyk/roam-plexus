@@ -30,6 +30,31 @@ test("findTrigger caps query length and lookback", () => {
   assert.equal(findTrigger(`[[${"a ".repeat(200)}`, 402), null);
 });
 
+test("findTrigger treats a bare hash as a hash trigger", () => {
+  assert.deepEqual(findTrigger("#", 1), { kind: "hash", start: 0, query: "" });
+  assert.deepEqual(findTrigger("#tag", 4), { kind: "hash", start: 0, query: "tag" });
+  assert.deepEqual(findTrigger("see #tag", 8), { kind: "hash", start: 4, query: "tag" });
+  assert.deepEqual(findTrigger("ab#", 3), { kind: "hash", start: 2, query: "" });
+  assert.equal(findTrigger("#ab c", 5), null);
+  assert.equal(findTrigger("#ab ", 4), null);
+  assert.equal(findTrigger("[", 1), null);
+  assert.equal(findTrigger("#a]]b", 5), null);
+  assert.equal(findTrigger("#a))b", 5), null);
+  assert.equal(findTrigger(`#${"a".repeat(101)}`, 102), null);
+  assert.equal(findTrigger(`#${"a".repeat(100)}`, 101).query.length, 100);
+});
+
+test("findTrigger keeps a hash inside an open pair and stops at a newline", () => {
+  assert.deepEqual(findTrigger("[[#x", 4), { kind: "page", start: 0, query: "#x" });
+  assert.deepEqual(findTrigger("((#x", 4), { kind: "block", start: 0, query: "#x" });
+  assert.equal(findTrigger("[[a\nb", 5), null);
+  assert.equal(findTrigger("#tag\n", 5), null);
+  assert.deepEqual(findTrigger("[[a\n#b", 6), { kind: "hash", start: 4, query: "b" });
+  assert.deepEqual(findTrigger("[[a]] #tag", 10), { kind: "hash", start: 6, query: "tag" });
+  assert.deepEqual(findTrigger("((a)) #z", 8), { kind: "hash", start: 6, query: "z" });
+  assert.equal(findTrigger(`[[${"a".repeat(99)}#z`, 103), null);
+});
+
 test("applyPick replaces the token for pages and blocks", () => {
   const t = findTrigger("see [[Plex", 10);
   assert.deepEqual(applyPick("see [[Plex", 10, t, { kind: "page", title: "Plexus" }), { text: "see [[Plexus]]", caret: 14 });
@@ -55,6 +80,31 @@ test("applyPick keeps text when the closer is of the other kind or absent", () =
   assert.equal(applyPick("[[ab)) z", 4, t, { kind: "page", title: "P" }).text, "[[P]])) z");
   assert.equal(applyPick("[[ab z", 4, t, { kind: "page", title: "P" }).text, "[[P]] z");
   assert.equal(applyPick("[[ab\nrest]]", 4, t, { kind: "page", title: "P" }).text, "[[P]]\nrest]]");
+});
+
+test("applyPick writes a page alias and ignores it for hash and block picks", () => {
+  const paired = findTrigger("[[]]", 2);
+  assert.deepEqual(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }), { text: "[[Title]]", caret: 9 });
+  assert.deepEqual(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "words"), { text: "[words]([[Title]])", caret: 18 });
+  assert.deepEqual(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "  wo  rds "), { text: "[wo rds]([[Title]])", caret: 19 });
+  assert.equal(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "word]s").text, "[[Title]]");
+  assert.equal(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "  [x").text, "[[Title]]");
+  assert.equal(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "").text, "[[Title]]");
+  assert.equal(applyPick("[[]]", 2, paired, { kind: "page", title: "Title" }, "   ").text, "[[Title]]");
+  const typed = findTrigger("see [[Plex", 10);
+  assert.deepEqual(applyPick("see [[Plex", 10, typed, { kind: "page", title: "Plexus" }, "words"), { text: "see [words]([[Plexus]])", caret: 23 });
+  const hash = findTrigger("#Plex", 5);
+  assert.equal(applyPick("#Plex", 5, hash, { kind: "page", title: "Plexus" }, "words").text, "#[[Plexus]]");
+  const block = findTrigger("x ((ab", 6);
+  assert.equal(applyPick("x ((ab", 6, block, { kind: "block", uid: "AbC123xyz" }, "words").text, "x ((AbC123xyz))");
+});
+
+test("applyPick does not let a hash trigger eat a closer", () => {
+  const brackets = findTrigger("#tag]]", 4);
+  assert.deepEqual(applyPick("#tag]]", 4, brackets, { kind: "page", title: "Title" }), { text: "#[[Title]]]]", caret: 10 });
+  const parens = findTrigger("#tag))", 4);
+  assert.equal(applyPick("#tag))", 4, parens, { kind: "page", title: "Title" }).text, "#[[Title]]))");
+  assert.equal(applyPick("#Plex more]]", 5, findTrigger("#Plex more]]", 5), { kind: "page", title: "Plexus" }).text, "#[[Plexus]] more]]");
 });
 
 test("matchSegments highlights each token case-insensitively", () => {

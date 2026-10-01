@@ -1,31 +1,79 @@
 const MAX_LOOKBACK = 300;
 const MAX_QUERY = 100;
 
-export function findTrigger(text, caret) {
-  if (typeof text !== "string" || !Number.isInteger(caret) || caret < 2 || caret > text.length) return null;
-  const floor = Math.max(0, caret - MAX_LOOKBACK);
-  for (let i = caret - 2; i >= floor; i--) {
+function hashQueryOk(query) {
+  return query.length <= MAX_QUERY && !/\s/.test(query) && !query.includes("]]") && !query.includes("))");
+}
+
+function findHash(text, caret, from) {
+  const floor = Math.max(0, from, caret - MAX_LOOKBACK);
+  for (let i = caret - 1; i >= floor; i--) {
     const c = text[i];
     if (c === "\n") return null;
-    const pair = c + text[i + 1];
-    if (pair !== "[[" && pair !== "((") continue;
-    const tail = text.slice(i + 2, caret);
-    if (tail.includes("\n") || tail.includes("]]") || tail.includes("))") || tail.length > MAX_QUERY) return null;
-    return { kind: pair === "[[" ? "page" : "block", start: i, query: tail };
+    if (c !== "#") continue;
+    const query = text.slice(i + 1, caret);
+    if (!hashQueryOk(query)) return null;
+    return { kind: "hash", start: i, query };
   }
   return null;
 }
 
+// A closer ends the pair, so a later # can still trigger. An unclosed pair keeps the # inside its query.
+function hashAfterRejectedPair(text, caret, pairAt, tail) {
+  if (tail.includes("\n")) return null;
+  const pageClose = tail.indexOf("]]");
+  const blockClose = tail.indexOf("))");
+  const rel = pageClose < 0 ? blockClose : blockClose < 0 ? pageClose : Math.min(pageClose, blockClose);
+  if (rel < 0) return null;
+  return findHash(text, caret, pairAt + 2 + rel + 2);
+}
+
+export function findTrigger(text, caret) {
+  if (typeof text !== "string" || !Number.isInteger(caret) || caret < 1 || caret > text.length) return null;
+  if (caret < 2) return text[0] === "#" ? { kind: "hash", start: 0, query: "" } : null;
+  const floor = Math.max(0, caret - MAX_LOOKBACK);
+  let lineStart = floor;
+  for (let i = caret - 2; i >= floor; i--) {
+    const c = text[i];
+    if (c === "\n") {
+      lineStart = i + 1;
+      break;
+    }
+    const pair = c + text[i + 1];
+    if (pair !== "[[" && pair !== "((") continue;
+    const tail = text.slice(i + 2, caret);
+    if (tail.includes("\n") || tail.includes("]]") || tail.includes("))") || tail.length > MAX_QUERY) {
+      return hashAfterRejectedPair(text, caret, i, tail);
+    }
+    return { kind: pair === "[[" ? "page" : "block", start: i, query: tail };
+  }
+  return findHash(text, caret, lineStart);
+}
+
 function replaceTrigger(text, caret, trigger, token) {
-  const closer = trigger.kind === "page" ? "]]" : "))";
+  const closer = trigger.kind === "page" ? "]]" : trigger.kind === "block" ? "))" : "";
   const rest = text.slice(caret);
   const lead = /^[^\n[\]()]*/.exec(rest)[0];
-  const cut = rest.startsWith(closer, lead.length) ? caret + lead.length + 2 : caret;
+  const cut = closer && rest.startsWith(closer, lead.length) ? caret + lead.length + closer.length : caret;
   return { text: text.slice(0, trigger.start) + token + text.slice(cut), caret: trigger.start + token.length };
 }
 
-export function applyPick(text, caret, trigger, pick) {
-  return replaceTrigger(text, caret, trigger, pick.kind === "page" ? `[[${pick.title}]]` : `((${pick.uid}))`);
+function pageAlias(alias) {
+  if (typeof alias !== "string") return "";
+  const flat = alias.replace(/\s+/g, " ").trim();
+  if (!flat || flat.includes("[") || flat.includes("]")) return "";
+  return flat;
+}
+
+function pickToken(trigger, pick, alias) {
+  if (pick.kind !== "page") return `((${pick.uid}))`;
+  if (trigger.kind === "hash") return `#[[${pick.title}]]`;
+  const name = pageAlias(alias);
+  return name ? `[${name}]([[${pick.title}]])` : `[[${pick.title}]]`;
+}
+
+export function applyPick(text, caret, trigger, pick, alias) {
+  return replaceTrigger(text, caret, trigger, pickToken(trigger, pick, alias));
 }
 
 export function stripTrigger(text, caret, trigger) {

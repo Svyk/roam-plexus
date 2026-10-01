@@ -92,7 +92,9 @@ function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}
     zoomTo() {},
   };
   const measurer = { measure, ensureFonts: async () => false, clear() {} };
-  const mm = createMindMap({ doc, api, writer, measurer, native, toaster, raf, caf, now: () => Date.now(), ...mmOpts });
+  const { writer: writerPatch, ...mmRest } = mmOpts;
+  if (writerPatch) Object.assign(writer, writerPatch);
+  const mm = createMindMap({ doc, api, writer, measurer, native, toaster, raf, caf, now: () => Date.now(), ...mmRest });
   const unmount = mm.mount({ app, containerEl, outerEl: null, zIndex: 100, ...mountOpts });
   flush();
   const key = (init) => {
@@ -591,4 +593,43 @@ test("an outline fold of the root (open false, no block removed) is applied, not
   t.flush();
   assert.ok(t.live().length <= 2, `live ${t.live().length}`);
   assert.deepEqual(refusals, []);
+});
+
+test("queue chip waits 2.5s while pending, shows a failure at once, and unmount removes it", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = 0;
+  const snap = { pending: 1, failed: false };
+  const seen = [];
+  const ctx = setup({ mmOpts: { now: () => clock, writer: { status: (uid) => { seen.push(uid); return snap; } } } });
+  const chip = () => ctx.doc.body.children.find((el) => String(el.className).includes("plexus-queue-chip"));
+  assert.ok(seen.includes("R"));
+  assert.equal(chip(), undefined);
+  t.mock.timers.tick(200);
+  assert.equal(chip(), undefined);
+  clock = 2499;
+  t.mock.timers.tick(200);
+  assert.equal(chip(), undefined);
+  clock = 2500;
+  t.mock.timers.tick(200);
+  assert.equal(chip().textContent, "Outline update pending");
+  assert.match(chip().className, /plexus-queue-chip/);
+  assert.equal(chip().style.pointerEvents, "none");
+  snap.failed = true;
+  clock = 0;
+  t.mock.timers.tick(200);
+  assert.equal(chip().textContent, "Could not update the outline");
+  snap.pending = 0;
+  snap.failed = false;
+  t.mock.timers.tick(200);
+  assert.equal(chip(), undefined);
+  snap.failed = true;
+  t.mock.timers.tick(200);
+  assert.equal(chip().textContent, "Could not update the outline");
+  ctx.unmount();
+  assert.equal(chip(), undefined);
+  t.mock.timers.tick(1000);
+  assert.equal(chip(), undefined);
+  assert.equal(ctx.doc.body.children.length, 0);
+  assert.equal(ctx.toasts.includes("Outline update pending"), false);
+  assert.equal(ctx.toasts.includes("Could not update the outline"), false);
 });

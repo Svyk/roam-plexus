@@ -67,7 +67,7 @@ function makeInput(value = "", caret = value.length) {
   return el;
 }
 
-function setup({ search, pull, util, ...opts } = {}) {
+function setup({ search, pull, util, q, semanticSearch, semanticSearchEnabled, ...opts } = {}) {
   const view = new Target();
   view.innerHeight = 800;
   view.innerWidth = 1200;
@@ -90,6 +90,9 @@ function setup({ search, pull, util, ...opts } = {}) {
     },
   };
   if (util) api.util = util;
+  if (typeof q === "function") api.data.q = q;
+  if (typeof semanticSearch === "function") api.data.async.semanticSearch = semanticSearch;
+  if (typeof semanticSearchEnabled === "function") api.data.semanticSearchEnabled = semanticSearchEnabled;
   const suggest = createLinkSuggest({ doc, api, setTimeout: setT, clearTimeout: clearT, ...opts });
   const roots = () => body.children.filter((c) => /plexus-suggest/.test(c.className));
   return { suggest, doc, view, body, timers, tick, calls, roots, setT, clearT };
@@ -101,7 +104,19 @@ const rowsOf = (root) => [...walk(root)].filter((n) => /dont-unfocus-block/.test
 const key = (el, k, extra = {}) => el.fire("keydown", { key: k, ...extra });
 
 test("empty query shows a hint row and makes no search call", async () => {
-  const s = setup();
+  const recent = [];
+  let clock = 1_700_000_000_000;
+  const rows = [["Zed", 1], ["Alpha", 5], ["Alpha", 3], ["Beta", 4]];
+  for (let i = 0; i < 10; i++) rows.push([`P${i}`, 10 + i]);
+  const s = setup({
+    now: () => new Date(clock),
+    q: (query) => {
+      const text = String(query);
+      if (text.includes("(count")) return [];
+      recent.push(text);
+      return rows;
+    },
+  });
   const el = makeInput("");
   s.suggest.attach(el);
   typeText(el, "[[");
@@ -111,10 +126,26 @@ test("empty query shows a hint row and makes no search call", async () => {
   const [root] = s.roots();
   assert.ok(root);
   assert.match(root.className, /rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-suggest/);
-  assert.equal(rowsOf(root)[0].attrs.title, "Search for a page");
+  const shown = rowsOf(root).map((r) => r.attrs.title);
+  assert.equal(shown.includes("Search for a page"), false);
+  assert.equal(shown.length, 12);
+  assert.equal(shown[0], "P9");
+  assert.equal(shown.at(-1), "Beta");
+  assert.equal(shown.filter((t) => t === "Alpha").length, 1);
+  assert.equal(shown.includes("Zed"), false);
+  assert.equal(recent.length, 1);
+  assert.match(recent[0], /edit\/time/);
+  assert.doesNotMatch(recent[0], /block\/refs/);
+  assert.equal([...walk(root)].find((n) => n.className === "rm-autocomplete-footer__title").textContent, "Page search");
   typeText(el, "((");
   assert.equal(rowsOf(s.roots()[0])[0].attrs.title, "Search for a block");
   typeText(el, "[[   ");
+  assert.equal(s.calls.length, 0);
+  assert.equal(recent.length, 1);
+  assert.notEqual(rowsOf(s.roots()[0])[0].attrs.title, "Search for a page");
+  clock += 10000;
+  typeText(el, "[[");
+  assert.equal(recent.length, 2);
   assert.equal(s.calls.length, 0);
 });
 
@@ -747,6 +778,464 @@ test("AUTH-4: block row and create row report their refs; a throwing handler is 
   key(el2, "Enter", { shiftKey: true });
   const last = picks[picks.length - 1];
   assert.deepEqual([last.kind, last.ref, last.create], ["page", "[[fresh]]", true]);
+});
+
+const fireMs = (s, ms) => {
+  for (const [i, t] of [...s.timers.entries()]) if (t.ms === ms) { s.timers.delete(i); t.fn(); }
+};
+const supText = (row) => [...walk(row)].find((n) => n.tagName === "SUP")?.textContent ?? "";
+
+test("a second [ inserts the closer and leaves the caret between the pairs", () => {
+  const s = setup();
+  const el = makeInput("pre [", 5);
+  s.suggest.attach(el);
+  const e = key(el, "[");
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(e.stopped, true);
+  assert.equal(el.value, "pre [[]]");
+  assert.equal(el.selectionStart, 6);
+  assert.equal(el.dispatched[0].type, "input");
+  assert.equal(el.dispatched[0].inputType, "insertReplacementText");
+  assert.equal(el.dispatched[0].bubbles, true);
+  const triple = makeInput("[[", 2);
+  s.suggest.attach(triple);
+  const again = key(triple, "[");
+  assert.equal(again.defaultPrevented, false);
+  assert.equal(triple.value, "[[");
+  const paren = makeInput("(", 1);
+  s.suggest.attach(paren);
+  const opened = key(paren, "(");
+  assert.equal(opened.defaultPrevented, true);
+  assert.equal(opened.stopped, true);
+  assert.equal(paren.value, "(())");
+  assert.equal(paren.selectionStart, 2);
+  const ime = makeInput("[", 1);
+  s.suggest.attach(ime);
+  assert.equal(key(ime, "[", { isComposing: true }).defaultPrevented, false);
+  assert.equal(key(ime, "[", { keyCode: 229 }).defaultPrevented, false);
+  assert.equal(ime.value, "[");
+  const sel = makeInput("words");
+  sel.selectionStart = 0;
+  sel.selectionEnd = 5;
+  s.suggest.attach(sel);
+  const held = key(sel, "[");
+  assert.equal(held.defaultPrevented, false);
+  assert.equal(sel.value, "words");
+});
+
+test("a stashed selection is the page alias, and close or a plain key drops it", async () => {
+  const openAlias = async (extra = {}) => {
+    const s = setup({ search: async () => [page("Title")], ...extra });
+    const el = makeInput("words");
+    el.selectionStart = 0;
+    el.selectionEnd = 5;
+    s.suggest.attach(el);
+    key(el, "[");
+    return { s, el };
+  };
+  const picked = await openAlias();
+  typeText(picked.el, "[[Ti");
+  picked.s.tick();
+  await flush();
+  key(picked.el, "ArrowDown");
+  key(picked.el, "Enter");
+  assert.equal(picked.el.value, "[words]([[Title]])");
+
+  const cleared = await openAlias();
+  key(cleared.el, "a");
+  typeText(cleared.el, "[[Ti");
+  cleared.s.tick();
+  await flush();
+  key(cleared.el, "Enter");
+  assert.equal(cleared.el.value, "[[Title]]");
+
+  const escaped = await openAlias();
+  key(escaped.el, "Escape");
+  typeText(escaped.el, "[[Ti");
+  escaped.s.tick();
+  await flush();
+  key(escaped.el, "Enter");
+  assert.equal(escaped.el.value, "[words]([[Title]])");
+
+  const closed = await openAlias();
+  typeText(closed.el, "[[Ti");
+  closed.s.tick();
+  await flush();
+  key(closed.el, "Escape");
+  typeText(closed.el, "[[Ti");
+  closed.s.tick();
+  await flush();
+  key(closed.el, "Enter");
+  assert.equal(closed.el.value, "[[Title]]");
+
+  const brackets = setup({ search: async () => [page("Title")] });
+  const bad = makeInput("word]s");
+  bad.selectionStart = 0;
+  bad.selectionEnd = 6;
+  brackets.suggest.attach(bad);
+  key(bad, "[");
+  typeText(bad, "[[Ti");
+  brackets.tick();
+  await flush();
+  key(bad, "Enter");
+  assert.equal(bad.value, "[[Title]]");
+
+  const picks = [];
+  const embed = setup({ onEmbedPick: (p) => picks.push(p), search: async () => [page("Beta")] });
+  const el = wysiwyg("words");
+  el.selectionStart = 0;
+  el.selectionEnd = 5;
+  embed.suggest.attach(el);
+  key(el, "[");
+  typeText(el, "see [[Be");
+  embed.tick();
+  await flush();
+  key(el, "Enter", { shiftKey: true });
+  assert.equal(picks[0].ref, "[words]([[Beta]])");
+  assert.equal(picks[0].kind, "page");
+  assert.equal(el.value, "see ");
+
+  const hash = setup({
+    onEmbedPick: (p) => picks.push(p),
+    search: async () => [page("Beta")],
+    q: (_query, title) => (title === "Beta" ? [[1]] : [[0]]),
+  });
+  const hel = wysiwyg("words");
+  hel.selectionStart = 0;
+  hel.selectionEnd = 5;
+  hash.suggest.attach(hel);
+  key(hel, "[");
+  typeText(hel, "#Be");
+  hash.tick();
+  await flush();
+  key(hel, "Enter", { shiftKey: true });
+  assert.equal(picks.at(-1).ref, "#[[Beta]]");
+
+  const block = setup({
+    onEmbedPick: (p) => picks.push(p),
+    search: async (a) => (a["search-blocks"] ? [{ ":block/uid": "abc123456", ":block/string": "hello" }] : []),
+  });
+  const bel = wysiwyg("words");
+  bel.selectionStart = 0;
+  bel.selectionEnd = 5;
+  block.suggest.attach(bel);
+  key(bel, "[");
+  typeText(bel, "((hel");
+  block.tick();
+  await flush();
+  key(bel, "Enter", { shiftKey: true });
+  assert.equal(picks.at(-1).ref, "((abc123456))");
+
+  const created = [];
+  const make = setup({
+    createPage: (t) => created.push(t),
+    onEmbedPick: (p) => picks.push(p),
+    search: async () => [],
+  });
+  const cel = wysiwyg("words");
+  cel.selectionStart = 0;
+  cel.selectionEnd = 5;
+  make.suggest.attach(cel);
+  key(cel, "[");
+  typeText(cel, "[[fresh");
+  make.tick();
+  await flush();
+  key(cel, "Enter", { shiftKey: true });
+  assert.equal(picks.at(-1).ref, "[words]([[fresh]])");
+  assert.equal(picks.at(-1).create, true);
+  assert.deepEqual(created, []);
+});
+
+test("the input after the first bracket keeps the alias", async () => {
+  const s = setup({
+    q: (query) => (String(query).includes("(count") ? [[3]] : [["Title", 2]]),
+    search: async () => [page("Title")],
+  });
+  const el = makeInput("words");
+  el.selectionStart = 0;
+  el.selectionEnd = 5;
+  s.suggest.attach(el);
+  const first = key(el, "[");
+  assert.equal(first.defaultPrevented, false);
+  el._v = "[";
+  el.selectionStart = 1;
+  el.selectionEnd = 1;
+  el.fire("input", { isComposing: false });
+  assert.equal(s.roots().length, 0);
+  const second = key(el, "[");
+  assert.equal(second.defaultPrevented, true);
+  assert.equal(el.value, "[[]]");
+  assert.equal(el.selectionStart, 2);
+  const rows = rowsOf(s.roots()[0]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].attrs.title, "Title");
+  rows[0].fire("click");
+  assert.equal(el.value, "[words]([[Title]])");
+});
+
+test("empty hash lists referenced pages and a hash query searches tags", async () => {
+  const recent = [];
+  const s = setup({
+    now: () => new Date(1_700_000_000_000),
+    search: async () => [page("Kept"), page("Drop"), page("Other")],
+    q: (query, title) => {
+      const text = String(query);
+      if (text.includes("(count")) {
+        if (title === "Kept") return [[2]];
+        if (title === "Other") return [[1]];
+        if (title === "Ref") return [[5]];
+        return [[0]];
+      }
+      recent.push(text);
+      return [["Nope", 9], ["Ref", 4], ["Ref", 2]];
+    },
+  });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "#");
+  await flush();
+  assert.equal(s.calls.length, 0);
+  assert.equal(recent.length, 1);
+  assert.match(recent[0], /block\/refs/);
+  assert.match(recent[0], /edit\/time/);
+  assert.deepEqual(rowsOf(s.roots()[0]).map((r) => r.attrs.title), ["Nope", "Ref"]);
+  assert.equal([...walk(s.roots()[0])].find((n) => n.className === "rm-autocomplete-footer__title").textContent, "Tag search");
+  assert.equal(supText(rowsOf(s.roots()[0])[0]), "");
+  assert.equal(supText(rowsOf(s.roots()[0])[1]), "5");
+  typeText(el, "[[");
+  assert.equal(recent.length, 2);
+  assert.doesNotMatch(recent[1], /block\/refs/);
+  typeText(el, "#");
+  assert.equal(recent.length, 2);
+  typeText(el, "#ke");
+  assert.equal([...s.timers.values()].some((t) => t.ms === 60), true);
+  s.tick();
+  await flush();
+  assert.deepEqual(s.calls[0], { "search-str": "ke", "search-pages": true, "search-blocks": false, limit: 12 });
+  assert.deepEqual(rowsOf(s.roots()[0]).map((r) => r.attrs.title), ["Kept", "Other"]);
+  assert.equal(supText(rowsOf(s.roots()[0])[0]), "2");
+  assert.equal([...walk(s.roots()[0])].find((n) => n.className === "rm-autocomplete-footer__title").textContent, "Tag search");
+  key(el, "Enter");
+  assert.equal(el.value, "#[[Kept]]");
+  typeText(el, "[[#x");
+  s.tick();
+  await flush();
+  assert.equal(s.calls.at(-1)["search-str"], "#x");
+  assert.equal(s.calls.at(-1)["search-pages"], true);
+  assert.equal([...walk(s.roots()[0])].find((n) => n.className === "rm-autocomplete-footer__title").textContent, "Page search");
+});
+
+test("page and date rows show a ref count and block, create, zero, and throwing counts do not", async () => {
+  const seen = [];
+  const s = setup({
+    util: { dateToPageTitle: () => "D30" },
+    now: () => new Date(2026, 8, 29),
+    createPage: () => {},
+    search: async () => [page("Plexus"), page("Zero"), page("Bad")],
+    q: (query, title) => {
+      if (!String(query).includes("(count")) return [];
+      seen.push(title);
+      if (title === "Bad") throw new Error("x");
+      if (title === "Plexus") return [[4]];
+      if (title === "D30") return [[6]];
+      return [[0]];
+    },
+  });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[tomorrow");
+  s.tick();
+  await flush();
+  const rows = rowsOf(s.roots()[0]);
+  const of = (title) => supText(rows.find((r) => r.attrs.title === title));
+  assert.equal(of("D30"), "6");
+  assert.equal(of("Plexus"), "4");
+  assert.equal(of("Zero"), "");
+  assert.equal(of("Bad"), "");
+  assert.equal(of("tomorrow"), "");
+  assert.ok(seen.includes("Plexus"));
+  const b = setup({
+    search: async () => [{ ":block/uid": "b1", ":block/string": "hello" }],
+    q: () => [[8]],
+  });
+  const el2 = makeInput("");
+  b.suggest.attach(el2);
+  typeText(el2, "((hel");
+  b.tick();
+  await flush();
+  assert.equal([...walk(b.roots()[0])].some((n) => n.tagName === "SUP"), false);
+});
+
+test("semantic search stays off unless semanticSearchEnabled is true", async () => {
+  const sem = [];
+  let enabledCalls = 0;
+  const off = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => { enabledCalls++; return false; },
+    semanticSearch: async (a) => { sem.push(a); return [{ ":block/uid": "b", ":block/string": "nope" }]; },
+  });
+  const el = makeInput("");
+  off.suggest.attach(el);
+  typeText(el, "[[plex");
+  typeText(el, "[[ple");
+  assert.equal([...off.timers.values()].some((t) => t.ms === 150), false);
+  off.tick();
+  await flush();
+  assert.equal(sem.length, 0);
+  assert.equal(enabledCalls, 1);
+  assert.equal([...walk(off.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+
+  const sem2 = [];
+  const thrown = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => { throw new Error("off"); },
+    semanticSearch: async () => { sem2.push(1); return [{ ":block/uid": "b", ":block/string": "nope" }]; },
+  });
+  const el2 = makeInput("");
+  thrown.suggest.attach(el2);
+  typeText(el2, "[[plex");
+  thrown.tick();
+  await flush();
+  assert.equal(sem2.length, 0);
+
+  const sem3 = [];
+  const missing = setup({
+    search: async () => [page("Plexus")],
+    semanticSearch: async () => { sem3.push(1); return [{ ":block/uid": "b", ":block/string": "x" }]; },
+  });
+  const el3 = makeInput("");
+  missing.suggest.attach(el3);
+  typeText(el3, "[[plex");
+  missing.tick();
+  await flush();
+  assert.equal(sem3.length, 0);
+  assert.equal([...walk(missing.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+});
+
+test("related rows appear 150ms after a page query when semantic search is enabled", async () => {
+  const sem = [];
+  const s = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => true,
+    semanticSearch: async (a) => {
+      sem.push(a);
+      return [
+        { ":block/uid": "u-Plexus", ":block/string": "same page" },
+        { ":block/uid": "b9", ":block/string": "related hit" },
+      ];
+    },
+  });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "#ta");
+  s.tick();
+  await flush();
+  assert.equal(sem.length, 0);
+  typeText(el, "((ta");
+  s.tick();
+  await flush();
+  assert.equal(sem.length, 0);
+  typeText(el, "see [[plex");
+  assert.equal([...s.timers.values()].some((t) => t.ms === 60), true);
+  assert.equal([...s.timers.values()].some((t) => t.ms === 150), true);
+  fireMs(s, 60);
+  await flush();
+  assert.equal(sem.length, 0);
+  assert.equal([...walk(s.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+  fireMs(s, 150);
+  await flush();
+  assert.deepEqual(sem[0], { "search-str": "plex", limit: 5 });
+  assert.equal([...walk(s.roots()[0])].find((n) => n.className === "plexus-picker-header").textContent, "Related");
+  assert.deepEqual(rowsOf(s.roots()[0]).map((r) => r.attrs.title), ["Plexus", "related hit"]);
+  key(el, "ArrowDown");
+  key(el, "Enter");
+  assert.equal(el.value, "see ((b9))");
+
+  const empty = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => true,
+    semanticSearch: async () => [],
+  });
+  const el2 = makeInput("");
+  empty.suggest.attach(el2);
+  typeText(el2, "[[plex");
+  fireMs(empty, 60);
+  await flush();
+  fireMs(empty, 150);
+  await flush();
+  assert.equal([...walk(empty.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+
+  const bad = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => true,
+    semanticSearch: async () => { throw new Error("nope"); },
+  });
+  const el3 = makeInput("");
+  bad.suggest.attach(el3);
+  typeText(el3, "[[plex");
+  fireMs(bad, 60);
+  await flush();
+  fireMs(bad, 150);
+  await flush();
+  assert.equal([...walk(bad.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+  assert.equal(rowsOf(bad.roots()[0])[0].attrs.title, "Plexus");
+
+  let release;
+  const slow = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => true,
+    semanticSearch: () => new Promise((res) => { release = res; }),
+  });
+  const el4 = makeInput("");
+  slow.suggest.attach(el4);
+  typeText(el4, "[[aa");
+  fireMs(slow, 60);
+  await flush();
+  fireMs(slow, 150);
+  typeText(el4, "[[bb");
+  release([{ ":block/uid": "z", ":block/string": "late" }]);
+  await flush();
+  assert.equal([...walk(slow.roots()[0])].some((n) => n.textContent === "late"), false);
+  assert.equal([...walk(slow.roots()[0])].some((n) => n.className === "plexus-picker-header"), false);
+});
+
+test("a promised semantic flag arms related only after it resolves true", async () => {
+  let resolve;
+  const sem = [];
+  const s = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => new Promise((r) => { resolve = r; }),
+    semanticSearch: async (a) => { sem.push(a); return [{ ":block/uid": "b9", ":block/string": "related hit" }]; },
+  });
+  const el = makeInput("");
+  s.suggest.attach(el);
+  typeText(el, "[[plex");
+  assert.equal([...s.timers.values()].some((t) => t.ms === 150), false);
+  resolve(false);
+  await flush();
+  assert.equal([...s.timers.values()].some((t) => t.ms === 150), false);
+  assert.equal(sem.length, 0);
+
+  let resolveOn;
+  const on = setup({
+    search: async () => [page("Plexus")],
+    semanticSearchEnabled: () => new Promise((r) => { resolveOn = r; }),
+    semanticSearch: async (a) => { sem.push(a); return [{ ":block/uid": "b9", ":block/string": "related hit" }]; },
+  });
+  const el2 = makeInput("");
+  on.suggest.attach(el2);
+  typeText(el2, "[[plex");
+  assert.equal([...on.timers.values()].some((t) => t.ms === 150), false);
+  resolveOn(true);
+  await flush();
+  assert.equal([...on.timers.values()].some((t) => t.ms === 150), true);
+  fireMs(on, 60);
+  await flush();
+  assert.equal(sem.length, 0);
+  fireMs(on, 150);
+  await flush();
+  assert.deepEqual(sem[0], { "search-str": "plex", limit: 5 });
+  assert.equal([...walk(on.roots()[0])].find((n) => n.className === "plexus-picker-header").textContent, "Related");
 });
 
 test("AUTH-4: Shift+Enter is consumed as a no-op while loading or hinting, and passes when not applicable", async () => {
