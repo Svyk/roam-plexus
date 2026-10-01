@@ -1679,3 +1679,19 @@ body.bt-theme-dark .plexus-portal.plexus-minimap {
   background: rgba(37, 42, 49, 0.92);
   border-color: rgba(255, 255, 255, 0.35);
 }
+
+.excalidraw-outer-container.plexus-live .layer-ui__wrapper,
+.excalidraw-outer-container.plexus-live .plexus-minimap { visibility: hidden; }
+
+.plexus-root.plexus-occlude-host { position: relative; }
+
+.plexus-occlude {
+  position: absolute;
+  background: #fff;
+  pointer-events: none;
+}
+
+.plexus-revealed .plexus-occlude { display: none; }
+
+:root.bp3-dark .plexus-occlude,
+body.bt-theme-dark .plexus-occlude { background: #252a31; }

@@ -1,8 +1,11 @@
 import { DEFAULT_PAD, geometryKey, isContainerString, isId, normalizeFrac, normalizePoly, parseRegion, serializeRegion } from "./model/region.js";
 import { commonBounds, elementBounds, regionSceneBBox, cropSvgToFraction, normalizeSvgSize, viewPngCropRect, viewportToScene } from "./model/scene.js";
+import { rewriteSvgTitles, roamPageUrl } from "./model/pagelink.js";
+import { createLiveShow, rememberIndex, saveIndex, viewPatch } from "./view/live-present.js";
+import { createExportDialog } from "./view/export-dialog.js";
 import { embedAnchors, embedLabel, layoutAnchorLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
 import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
-import { orderFrames } from "./model/slides.js";
+import { orderFrames, buildTier, containingRegion, coverBoxes, hiddenIds, idsForBuild, idsWithoutOccluders, maxBuild, nextStep, patchPlexus } from "./model/slides.js";
 import { DEFAULT_PRESET, frameId, applyOrderRewrite, bumped, childrenOutside, frameAt, layoutFrames, nearestFrame, nextSlideSlot, planOrders, presetFrame, presetSize, reformatRect, selectedFrameOf, withOrder } from "./model/frames.js";
 import { captionRefsFromElements, captionRefsInfo } from "./model/caption.js";
 import { clipSvgToPolygon, parseImageRefs, polyBBox, polyToLocal, simplifyPoly, thumbnailSize } from "./model/image.js";
@@ -277,6 +280,9 @@ export function createActions({
   let stopSpotlight = null;
   const busy = new Set();
   let presentOwner = null;
+  let liveStop = null;
+  const liveAt = new Map();
+  let exportDialog = null;
   let printJob = null;
   let labelTimer = null;
   let labelGen = 0;
@@ -996,9 +1002,170 @@ export function createActions({
     return true;
   }
 
+  function stepOfEl(el) {
+    const n = el?.customData?.plexus?.step;
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+
+  function stampSelection(label, patchFor, empty) {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return false;
+    }
+    const ids = new Set(native.selectedElementIds(editor.app));
+    if (!ids.size) {
+      toaster.show(empty || "Select something first", { kind: "error" });
+      return false;
+    }
+    let wrote = false;
+    const ok = guard.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => current.map((el) => {
+        if (!el || el.isDeleted || !ids.has(el.id)) return el;
+        const patch = patchFor(el, current);
+        if (!patch) return el;
+        wrote = true;
+        return patchPlexus(el, patch);
+      }),
+    });
+    if (ok && !wrote) toaster.show(empty || "Nothing to change", { kind: "error" });
+    return !!ok && wrote;
+  }
+
+  async function revealRegion(regionUid) {
+    if (!isId(regionUid)) return false;
+    const block = safe(() => host.pullBlock?.(regionUid));
+    const region = block ? parseRegion(block.string) : null;
+    if (!region?.supported) return false;
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || editor.drawingUid !== region.drawingUid) return false;
+    const elements = sceneElements(editor.app);
+    const ids = idsWithoutOccluders(hotIds(region, elements), elements, regionUid);
+    if (!ids.length) return false;
+    const svg = await captureSafe(editor.app, ids);
+    if (!svg) return false;
+    const target = resolveRegionTarget(host, region);
+    if (target?.error || !target?.hash) return false;
+    const key = cropKey({ regionUid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "svg-reveal" });
+    await cache.put(key, new Blob([normalizeSvgSize(svg)], { type: "image/svg+xml" }), svgSize(svg));
+    return true;
+  }
+
+  async function markFlashcardOnce() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const ids = new Set(native.selectedElementIds(editor.app));
+    const elements = sceneElements(editor.app);
+    const selected = elements.filter((el) => ids.has(el?.id) && !el.isDeleted);
+    const hit = containingRegion(safe(() => host.regionsOf?.(editor.drawingUid)) || [], elements, editor.app.state, selected.length ? commonBounds(selected) : null);
+    if (!hit?.uid) {
+      toaster.show("Create a region over this first", { kind: "error" });
+      return null;
+    }
+    const kids = safe(() => host.pullBlock?.(hit.uid)?.children) || [];
+    if (kids.some((c) => String(c?.string ?? "").includes("#flashcard"))) {
+      toaster.show("Already a flashcard");
+      return hit.uid;
+    }
+    let child = null;
+    try {
+      child = await host.createBlock?.({ parentUid: hit.uid, order: "last", string: "#flashcard" });
+    } catch (error) {
+      console.warn("[plexus] flashcard failed", error);
+    }
+    if (!child) {
+      toaster.show("Could not mark the flashcard", { kind: "error" });
+      return null;
+    }
+    toaster.show("Marked as a flashcard");
+    return hit.uid;
+  }
+
+  function pageUrl(title) {
+    const graph = safe(() => host.graphName?.());
+    if (!graph || !api?.data?.pull) return null;
+    let uid = null;
+    try { uid = api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] ?? null; } catch { return null; }
+    return roamPageUrl(graph, uid);
+  }
+
+  async function exportOnce(editor, choice) {
+    const elements = sceneElements(editor.app).filter((el) => el && !el.isDeleted);
+    const selected = native.selectedElementIds(editor.app);
+    const ids = choice?.scope === "selection" && selected.length ? selected : elements.map((el) => el.id);
+    if (!ids.length) {
+      toaster.show("Nothing to export", { kind: "error" });
+      return null;
+    }
+    if (choice?.output === "clipboard") {
+      const svg = await captureSafe(editor.app, ids);
+      if (!svg) {
+        toaster.show("Could not export", { kind: "error" });
+        return null;
+      }
+      const text = rewriteSvgTitles(normalizeSvgSize(svg), pageUrl);
+      try {
+        const write = () => clipboard.writeText(text);
+        await (native.withClipboard ? native.withClipboard(write) : write());
+      } catch (error) {
+        console.warn("[plexus] export copy failed", error);
+        toaster.show("Clipboard access was blocked", { kind: "error" });
+        return null;
+      }
+      toaster.show("Export copied");
+      return "clipboard";
+    }
+    const png = typeof native.captureSelectionPng === "function"
+      ? await native.captureSelectionPng(editor.app, ids, { scale: choice.scale, dark: choice.theme === "dark", padding: choice.padding, clipboard })
+      : null;
+    if (!png) {
+      toaster.show("Could not export", { kind: "error" });
+      return null;
+    }
+    if (choice.output === "download") {
+      const url = urls.createObjectURL(png);
+      try {
+        const a = doc.createElement("a");
+        a.href = url;
+        a.download = "drawing.png";
+        doc.body?.append?.(a);
+        a.click?.();
+        a.remove?.();
+      } finally {
+        setTimeout(() => urls.revokeObjectURL?.(url), revokeDelayMs);
+      }
+      toaster.show("Export downloaded");
+      return "download";
+    }
+    try {
+      const file = new File([png], "drawing.png", { type: "image/png" });
+      const res = await (upload ? upload(file) : api.file.upload({ file }));
+      const raw = typeof res === "string" ? res : res?.url ?? "";
+      const md = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(String(raw).trim());
+      const href = md ? md[1] : String(raw).trim();
+      if (!href) throw new Error("[plexus] upload returned nothing");
+      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: `![drawing](${href})` });
+      if (!made) throw new Error("[plexus] no child");
+      toaster.show("Export inserted");
+      return "insert";
+    } catch (error) {
+      console.warn("[plexus] export insert failed", error);
+      toaster.show("Could not insert the image", { kind: "error" });
+      return null;
+    }
+  }
+
   return {
     dispose() {
       disposed = true;
+      liveStop?.();
+      liveStop = null;
       activeTool?.cancel?.();
       activeTool = null;
       activePrompt?.cancel?.();
@@ -1352,6 +1519,128 @@ export function createActions({
     }),
 
     presentDrawing: ({ drawingUid, from = "start", at } = {}) => runPresent((release) => presentOnce(drawingUid, release, { from, at })),
+
+    presentLive: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.outer) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const elements = sceneElements(editor.app);
+      const frames = orderFrames(elements);
+      if (!frames.length) {
+        toaster.show("No frames in this drawing", { kind: "error" });
+        return null;
+      }
+      liveStop?.();
+      const { app, outer, drawingUid } = editor;
+      const readView = () => {
+        const z = app.state?.zoom;
+        return {
+          scrollX: app.state?.scrollX || 0,
+          scrollY: app.state?.scrollY || 0,
+          zoom: (typeof z === "number" ? z : z?.value) || 1,
+        };
+      };
+      const hud = doc.createElement("div");
+      hud.className = "plexus-portal plexus-live-hud";
+      hud.hidden = true;
+      doc.body?.append?.(hud);
+      const view = doc.defaultView;
+      const show = createLiveShow({
+        frames,
+        elements,
+        viewport: { width: app.state?.width || outer.clientWidth || 1, height: app.state?.height || outer.clientHeight || 1 },
+        readView,
+        writeView: (next) => { try { app.updateScene(viewPatch(next)); } catch (error) { console.warn("[plexus] live view failed", error); } },
+        onChrome: (on) => {
+          outer.classList?.toggle?.("plexus-live", !!on);
+          hud.hidden = !on;
+        },
+        onStatus: (index, build, total) => { hud.textContent = `${index + 1} / ${total}${build ? ` · ${build + 1}` : ""} · Esc`; },
+        now: () => view?.performance?.now?.() ?? Date.now(),
+        raf: (fn) => (typeof view?.requestAnimationFrame === "function" ? view.requestAnimationFrame(fn) : setTimeout(() => fn(Date.now()), 16)),
+        caf: (id) => (typeof view?.cancelAnimationFrame === "function" ? view.cancelAnimationFrame(id) : clearTimeout(id)),
+      });
+      const onKey = (e) => {
+        if (!e || e.metaKey || e.ctrlKey || e.altKey) return;
+        const next = e.key === "ArrowRight" || e.key === "PageDown" || e.key === " " || e.key === "Spacebar";
+        const prev = e.key === "ArrowLeft" || e.key === "PageUp" || e.key === "Backspace";
+        if (e.key !== "Escape" && !next && !prev) return;
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        if (e.key === "Escape") finish();
+        else if (next) show.next();
+        else show.prev();
+      };
+      function finish() {
+        if (liveStop !== finish) return;
+        liveStop = null;
+        saveIndex(liveAt, drawingUid, show.index());
+        show.exit();
+        doc.removeEventListener?.("keydown", onKey, true);
+        hud.remove?.();
+      }
+      liveStop = finish;
+      doc.addEventListener?.("keydown", onKey, true);
+      show.start(rememberIndex(liveAt, drawingUid, frames.length));
+      return drawingUid;
+    },
+
+    setRevealStep: () => stampSelection("Reveal step", (el, current) => (
+      el.frameId ? { step: nextStep(current, el.frameId) } : null
+    ), "Select elements inside a frame"),
+
+    clearRevealStep: () => stampSelection("Clear reveal step", (el) => (stepOfEl(el) === null ? null : { step: null }), "Select a stepped element"),
+
+    addOcclusion: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const ids = new Set(native.selectedElementIds(editor.app));
+      const elements = sceneElements(editor.app);
+      const selected = elements.filter((el) => ids.has(el?.id) && !el.isDeleted);
+      if (!selected.length) {
+        toaster.show("Select the cover first", { kind: "error" });
+        return null;
+      }
+      const hit = containingRegion(safe(() => host.regionsOf?.(editor.drawingUid)) || [], elements, editor.app.state, commonBounds(selected));
+      if (!hit?.uid) {
+        toaster.show("Create a region over this first", { kind: "error" });
+        return null;
+      }
+      const ok = guard.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Add occlusion",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => current.map((el) => (el && ids.has(el.id) && !el.isDeleted ? patchPlexus(el, { occlude: hit.uid }) : el)),
+      });
+      if (!ok) return null;
+      Promise.resolve(revealRegion(hit.uid)).catch((error) => console.warn("[plexus] reveal capture failed", error));
+      toaster.show("Occlusion added");
+      return hit.uid;
+    },
+
+    markFlashcard: () => markFlashcardOnce(),
+
+    revealRegion: (uid) => revealRegion(uid),
+
+    exportDrawing: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!exportDialog) exportDialog = createExportDialog({ doc });
+      const selected = native.selectedElementIds(editor.app);
+      exportDialog.open({
+        hasSelection: selected.length > 0,
+        onSubmit: (choice) => { Promise.resolve(exportOnce(editor, choice)).catch((error) => console.warn("[plexus] export failed", error)); },
+      });
+      return true;
+    },
 
     presentFromRegion: async (regionUid) => {
       const block = isId(regionUid) ? safe(() => host.pullBlock(regionUid)) : null;
@@ -3034,7 +3323,7 @@ export function createActions({
       if (!coldState) out.renderFailed = true;
       return coldState;
     };
-    const cropFrame = async (frame) => {
+    const cropFrame = async (frame, covers) => {
       const rendered = await ensureCold();
       if (!rendered || !alive()) return null;
       const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "" };
@@ -3042,7 +3331,7 @@ export function createActions({
       if (box.error) return null;
       const crop = viewPngCropRect({ elements: drawing.elements, appState: drawing.appState, bbox: box.bbox, naturalWidth: rendered.naturalWidth, naturalHeight: rendered.naturalHeight });
       if (crop.error) return null;
-      const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
+      const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, covers });
       return { type: "png", blob, w: crop.sw, h: crop.sh, persist: rendered.settled !== false };
     };
     const native2x = async (frame) => {
@@ -3058,18 +3347,20 @@ export function createActions({
         return null;
       }
     };
-    for (const { frame, i } of items) {
+    for (const item of items) {
+      const { frame, i } = item;
       if (!alive()) break;
       let result = null;
       const live = mounted && native.activeEditor(doc)?.app === mounted.app;
       try {
-        if (live && format === "svg") {
-          const svg = await captureSafe(mounted.app, [frame.id]);
+        if (live && format === "svg" && item.ids?.length !== 0) {
+          const ids = item.ids?.length ? item.ids : [frame.id];
+          const svg = await captureSafe(mounted.app, ids);
           result = svg ? { type: "svg", svg: normalizeSvgSize(svg) } : null;
-        } else if (live) {
-          result = (await native2x(frame)) ?? (await cropFrame(frame));
+        } else if (live && item.ids?.length !== 0 && !item.covers?.length) {
+          result = (await native2x(frame)) ?? (await cropFrame(frame, item.covers));
         } else {
-          result = await cropFrame(frame);
+          result = await cropFrame(frame, item.covers);
         }
       } catch (error) {
         console.warn("[plexus] frame render failed", error);
@@ -3163,7 +3454,8 @@ export function createActions({
     }
     const mounted = editor && editor.drawingUid === uid ? editor : null;
     const drawing = host.drawing(uid);
-    const frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
+    const elements = mounted ? sceneElements(mounted.app) : drawing?.elements ?? [];
+    const frames = orderFrames(elements);
     if (!frames.length) {
       toaster.show("No frames in this drawing", { kind: "error" });
       return null;
@@ -3192,21 +3484,34 @@ export function createActions({
     const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
     const regions = safe(() => host.regionsOf?.(uid)) ?? [];
     const added = [];
-    const slides = frames.map((frame, idx) => {
+    const slides = [];
+    frames.forEach((frame, idx) => {
+      const top = maxBuild(elements, frame);
+      const stepped = top > 0;
       const region = { kind: "cframe", drawingUid: uid, frameId: frame.id, caption: frame.name || "" };
       const gk = geometryKey(region);
       const found = notesFor(regions, frame.id);
       const hasKids = !!found && (safe(() => host.pullBlock?.(found.uid)?.children?.length) || 0) > 0;
-      return {
-        frame,
-        region,
-        name: frame.name || `Frame ${idx + 1}`,
-        url: null,
-        notes: { rootUid: found?.uid ?? null, ...(hasKids ? {} : { onAdd: () => addNotesForFrame(uid, frame, added) }) },
-        svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
-        pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" }),
-      };
+      const box = elementBounds(frame);
+      const base = frame.name || `Frame ${idx + 1}`;
+      for (let build = 0; build <= top; build++) {
+        slides.push({
+          frame,
+          build,
+          ids: stepped ? idsForBuild(elements, frame, build) : null,
+          covers: stepped ? coverBoxes(elements, hiddenIds(elements, frame, build), box) : null,
+          name: stepped ? `${base} ${build + 1}/${top + 1}` : base,
+          url: null,
+          notes: {
+            rootUid: found?.uid ?? null,
+            ...(build === 0 && !hasKids ? { onAdd: () => addNotesForFrame(uid, frame, added) } : {}),
+          },
+          svgKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: buildTier(build, stepped, "svg") }),
+          pngKey: cropKey({ regionUid: `slide:${uid}:${frame.id}`, geometryKey: gk, drawingHash: slideHash, tier: buildTier(build, stepped, "png") }),
+        });
+      }
     });
+    const openAt = Math.max(0, slides.findIndex((s) => s.frame === frames[start] && s.build === 0));
     // Whatever is already cached opens immediately; the rest fills in behind it.
     for (const slide of slides) {
       const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
@@ -3214,7 +3519,7 @@ export function createActions({
     }
     const handle = presenter.open({
       slides: slides.map(({ name, url, notes }) => ({ name, url, notes })),
-      index: start,
+      index: openAt,
       onClose: () => { release?.(); afterPresent(added); },
       laser: laserNow(),
     });
@@ -3225,8 +3530,8 @@ export function createActions({
     const fail = (i) => { if (handle.isOpen()) handle.setSlide(i, { error: true }); };
     const fill = (i, entry) => { if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url }); };
     // From the start slide forward, then the ones before it.
-    const rank = (i) => (i >= start ? i - start : slides.length + i);
-    const items = missing.sort((a, b) => rank(a[1]) - rank(b[1])).map(([slide, i]) => ({ frame: slide.frame, i }));
+    const rank = (i) => (i >= openAt ? i - openAt : slides.length + i);
+    const items = missing.sort((a, b) => rank(a[1]) - rank(b[1])).map(([slide, i]) => ({ frame: slide.frame, i, ids: slide.ids, covers: slide.covers }));
     try {
       const result = await frameImages({
         uid, drawing, mounted, items, format: "svg",

@@ -1,4 +1,5 @@
 import { parseRegion, geometryKey } from "../model/region.js";
+import { coverBoxes, occluderIds } from "../model/slides.js";
 import { exportBounds, naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
 import { clipPolyToUnit, imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
 import { fnv1a } from "../model/hash.js";
@@ -122,14 +123,14 @@ export function resolveRegionTarget(host, region) {
 
 // Cold pixels for one region: the view PNG (drawings) or the decoded image (plain blocks), cropped and,
 // for polygon kinds, clipped. Resolves { blob, w, h, settled } or { error }.
-export async function renderRegionCrop({ region, target, cold, doc, api, settleMs, loadBitmap = loadImageBitmap }) {
+export async function renderRegionCrop({ region, target, cold, doc, api, settleMs, loadBitmap = loadImageBitmap, covers } = {}) {
   if (isImageKind(region.kind)) {
     const bitmap = await loadBitmap(target.url, { api });
     const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
     const crop = imageCropRect({ naturalWidth: bitmap.width, naturalHeight: bitmap.height, f });
     if (!crop) return { error: "bad-crop" };
     const poly = region.kind === "imgpoly" ? polyToLocal(region.p, f) : undefined;
-    const blob = await cropToBlob(bitmap, crop, { doc, poly });
+    const blob = await cropToBlob(bitmap, crop, { doc, poly, covers });
     return { blob, w: crop.sw, h: crop.sh, settled: true };
   }
   const { drawing, sceneBox } = target;
@@ -151,7 +152,7 @@ export async function renderRegionCrop({ region, target, cold, doc, api, settleM
     if (!p) return { error: "outside-crop" };
     poly = polyToLocal(p, polyBBox(p));
   }
-  const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly });
+  const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly, covers });
   return { blob, w: crop.sw, h: crop.sh, settled: rendered.settled !== false };
 }
 
@@ -163,7 +164,7 @@ const num = (v, d) => (Number.isFinite(Number(v)) && v !== "" && v != null ? Num
 
 const overlaps = (bbox, el) => el.x < bbox[2] && el.x + el.width > bbox[0] && el.y < bbox[3] && el.y + el.height > bbox[1];
 
-export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
+export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onReveal, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
   const roots = new Map();
   const aliases = new Map();
   const notRegions = new WeakSet();
@@ -281,6 +282,8 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     }
     img.src = entry.url;
     root.className = `plexus-root plexus-regionref plexus-regionref--${info.mode}`;
+    const boxes = occludeCovers(target, info.refUid);
+    if (boxes.length) root.classList.add("plexus-occlude-host");
     if (root.style) {
       const align = info.align;
       root.style.marginLeft = align === "center" || align === "right" ? "auto" : align === "left" ? "0" : "";
@@ -288,7 +291,40 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     }
     root.textContent = "";
     root.append(img);
+    for (const box of boxes) {
+      const span = doc.createElement("span");
+      span.className = "plexus-occlude";
+      span.style.left = `${box.x * 100}%`;
+      span.style.top = `${box.y * 100}%`;
+      span.style.width = `${box.w * 100}%`;
+      span.style.height = `${box.h * 100}%`;
+      root.append(span);
+    }
   };
+
+  function occludeCovers(target, uid) {
+    if (!target?.drawing || !uid) return [];
+    const ids = occluderIds(target.drawing.elements, uid);
+    if (!ids.length || !target.sceneBox?.bbox) return [];
+    return coverBoxes(target.drawing.elements, ids, target.sceneBox.bbox);
+  }
+
+  async function showReveal(root, uid, region, target) {
+    if (!root?.isConnected || !target?.hash) return;
+    const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "svg-reveal" });
+    const read = async () => {
+      try { return cache.peek?.(key) || await cache.get?.(key); } catch { return null; }
+    };
+    let entry = await read();
+    if (!entry?.url && typeof onReveal === "function") {
+      try { await onReveal(uid); } catch (error) { console.warn("[plexus] reveal failed", error); }
+      entry = await read();
+    }
+    if (!entry?.url) return;
+    const img = (root.children || []).find((child) => child?.tag === "img");
+    if (img) img.src = entry.url;
+    root.classList.add("plexus-revealed");
+  }
 
   function invertible(region, target, s) {
     if (!s.darkCrops || isImageKind(region.kind) || !target?.drawing) return false;
@@ -332,7 +368,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   };
 
   // Cache, then a cold render. Resolves { entry, entryKey } | { error } | { gone }.
-  async function fetchEntry(region, target, keys, alive) {
+  async function fetchEntry(region, target, keys, alive, covers) {
     let entry = null;
     let entryKey = keys.svg || keys.png;
     if (keys.svg) entry = await cache.get(keys.svg);
@@ -348,7 +384,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       if (!alive()) return { gone: true };
       let rendered;
       try {
-        rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+        rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap, covers: covers?.length ? covers : undefined });
       } catch (error) {
         console.warn("[plexus] crop failed", error);
         rendered = { error: "render-failed" };
@@ -380,7 +416,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     let entry = hot?.entry;
     let key = hot?.key;
     if (!entry?.url) {
-      const res = await fetchEntry(region, target, keys, () => true);
+      const res = await fetchEntry(region, target, keys, () => true, occludeCovers(target, uid));
       if (res?.entry?.url) {
         entry = res.entry;
         key = res.entryKey;
@@ -564,13 +600,22 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       root.setAttribute("tabindex", "0");
       if (mode !== "link") applyCaption(root, region, ctx, info, capState);
 
+      let sceneTarget = null;
+      const occluded = (e) => !e?.shiftKey && !root.classList.contains("plexus-revealed") && occluderIds(sceneTarget?.drawing?.elements, uid).length > 0;
+      const openFrom = (e) => {
+        if (occluded(e)) {
+          void showReveal(root, uid, region, sceneTarget);
+          return;
+        }
+        onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+      };
       root.addEventListener("keydown", (e) => {
         try {
           if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
           e.stopPropagation();
-          onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+          openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -583,13 +628,14 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         e.stopPropagation();
         e.preventDefault();
         try {
-          onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+          openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
       }, true);
 
       const target = resolveRegionTarget(host, region);
+      sceneTarget = target.error ? null : target;
       if (target.error) return chip(root, target.error);
       const keys = keysFor(uid, region, target);
 
@@ -626,7 +672,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
 
       void (async () => {
         try {
-          const res = await fetchEntry(region, target, keys, () => root.isConnected);
+          const res = await fetchEntry(region, target, keys, () => root.isConnected, occludeCovers(target, uid));
           if (res.gone) return;
           if (res.error) return finishChip(root, region);
           if (!root.isConnected) return;

@@ -51,7 +51,7 @@ const elements = [
   { id: "rect-b", type: "rectangle", x: 420, y: 120, width: 160, height: 100, angle: 0, isDeleted: false },
 ];
 
-function setup({ regionString, hit, cold, cacheGet, drawing: drawingOverride, onOpen = () => {}, settings = {} }) {
+function setup({ regionString, hit, cold, cacheGet, drawing: drawingOverride, onOpen = () => {}, onReveal, settings = {} }) {
   const parent = makeEl("p");
   const btn = makeEl("button");
   parent.append(btn);
@@ -81,6 +81,7 @@ function setup({ regionString, hit, cold, cacheGet, drawing: drawingOverride, on
     cold: cold || { renderDrawing: async () => null },
     getSettings: () => ({ figureHeight: 360, openInSidebar: false, ...settings }),
     onOpen,
+    onReveal,
     doc,
   });
   return { r, btn, parent, puts, peeks, deleted };
@@ -532,4 +533,59 @@ test("host attr survives React overwriting the ancestor className", () => {
   assert.equal(chain[0].attrs["data-plexus-card-host"], "1");
   r.releaseAll();
   assert.equal(chain[0].attrs["data-plexus-card-host"], undefined);
+});
+
+test("an occluded region reveals on click and still opens on shift-click", async () => {
+  const occluded = [
+    { id: "rect-a", type: "rectangle", x: 100, y: 100, width: 220, height: 140, angle: 0, isDeleted: false },
+    { id: "cover", type: "rectangle", x: 120, y: 120, width: 40, height: 30, angle: 0, isDeleted: false, customData: { plexus: { occlude: regionUid } } },
+  ];
+  const calls = [];
+  const reveals = [];
+  const hit = { url: "blob:x", w: 10, h: 10, type: "image/svg+xml" };
+  const { r, btn, parent } = setup({
+    regionString: areaString,
+    hit,
+    drawing: { uid: "drw000001", elements: occluded, hash: "abcd1234" },
+    onOpen: (uid, opts) => calls.push([uid, opts]),
+    onReveal: (uid) => { reveals.push(uid); },
+    cacheGet: async (key) => (String(key).endsWith("|svg-reveal") ? { url: "blob:reveal", w: 2, h: 2 } : null),
+  });
+  r.claim(btn);
+  const root = parent.children[1];
+  assert.ok(root.classes.has("plexus-occlude-host"));
+  assert.ok(root.children.some((child) => child.classes.has("plexus-occlude")));
+  root.listeners.click({ shiftKey: false, stopPropagation() {}, preventDefault() {} });
+  await flush();
+  assert.deepEqual(calls, []);
+  assert.deepEqual(reveals, []);
+  assert.equal(root.children[0].src, "blob:reveal");
+  assert.ok(root.classes.has("plexus-revealed"));
+  root.listeners.click({ shiftKey: false, stopPropagation() {}, preventDefault() {} });
+  assert.deepEqual(calls, [[regionUid, { sidebar: false }]]);
+
+  const shiftCalls = [];
+  const shifted = setup({
+    regionString: areaString,
+    hit,
+    drawing: { uid: "drw000001", elements: occluded, hash: "abcd1234" },
+    onOpen: (uid, opts) => shiftCalls.push([uid, opts]),
+  });
+  shifted.r.claim(shifted.btn);
+  shifted.parent.children[1].listeners.click({ shiftKey: true, stopPropagation() {}, preventDefault() {} });
+  assert.deepEqual(shiftCalls, [[regionUid, { sidebar: true }]]);
+
+  const missed = [];
+  const cold = setup({
+    regionString: areaString,
+    hit,
+    drawing: { uid: "drw000001", elements: occluded, hash: "abcd1234" },
+    onReveal: (uid) => { missed.push(uid); },
+    cacheGet: async () => null,
+  });
+  cold.r.claim(cold.btn);
+  cold.parent.children[1].listeners.keydown({ key: " ", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, preventDefault() {}, stopPropagation() {} });
+  await flush();
+  assert.deepEqual(missed, [regionUid]);
+  assert.ok(!cold.parent.children[1].classes.has("plexus-revealed"));
 });

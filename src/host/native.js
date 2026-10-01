@@ -166,14 +166,16 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
 
 const pngItemType = (item) => item?.types?.find?.((t) => t === "image/png");
 
-async function capturePngOnce(app, ids, { scale = 2, dark = false, clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500, doneWaitMs = 1000 } = {}) {
+async function capturePngOnce(app, ids, { scale = 2, dark = false, padding = null, clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3000, graceMs = 1500, doneWaitMs = 1000 } = {}) {
   if (!clipboard) throw new Error("clipboard unavailable");
   const action = app?.actionManager?.actions?.copyAsPng;
   if (!action || typeof app.actionManager.executeAction !== "function") throw new Error("copyAsPng unavailable");
   // Read inside the queued run: an earlier capture in the queue has restored these by now.
+  const pad = Number.isFinite(padding) ? padding : null;
   const prev = {
     exportScale: app.state?.exportScale ?? 1,
     exportWithDarkMode: app.state?.exportWithDarkMode ?? false,
+    ...(pad != null ? { exportPadding: app.state?.exportPadding } : {}),
   };
   const prevIds = { ...(app.state?.selectedElementIds || {}) };
   const prevGroups = { ...(app.state?.selectedGroupIds || {}) };
@@ -190,7 +192,13 @@ async function capturePngOnce(app, ids, { scale = 2, dark = false, clipboard = g
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
-    app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {}, exportScale: scale, exportWithDarkMode: !!dark } });
+    app.updateScene({ appState: {
+      selectedElementIds: selection,
+      selectedGroupIds: {},
+      exportScale: scale,
+      exportWithDarkMode: !!dark,
+      ...(pad != null ? { exportPadding: pad } : {}),
+    } });
     await new Promise((resolve) => (typeof raf === "function" ? raf(() => resolve()) : setTimeout(resolve, 16)));
 
     let settle;

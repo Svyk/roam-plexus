@@ -122,6 +122,6 @@ export function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = global
   };
 }
 
-export function cropCanvasToBlob(canvas, rect, { doc = globalThis.document, poly } = {}) {
-  return cropToBlob(canvas, rect, { doc, poly });
+export function cropCanvasToBlob(canvas, rect, { doc = globalThis.document, poly, covers } = {}) {
+  return cropToBlob(canvas, rect, { doc, poly, covers });
 }

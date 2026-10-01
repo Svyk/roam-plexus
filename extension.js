@@ -1,4 +1,4 @@
-/* Plexus v0.23.0 | MIT | generated; edit src/ */
+/* Plexus v0.24.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -1966,13 +1966,15 @@ async function captureOnce(app, ids, { clipboard = globalThis.navigator?.clipboa
   }
 }
 var pngItemType = (item) => item?.types?.find?.((t) => t === "image/png");
-async function capturePngOnce(app, ids, { scale = 2, dark = false, clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500, doneWaitMs = 1e3 } = {}) {
+async function capturePngOnce(app, ids, { scale = 2, dark = false, padding = null, clipboard = globalThis.navigator?.clipboard, raf = globalThis.requestAnimationFrame, timeoutMs = 3e3, graceMs = 1500, doneWaitMs = 1e3 } = {}) {
   if (!clipboard) throw new Error("clipboard unavailable");
   const action = app?.actionManager?.actions?.copyAsPng;
   if (!action || typeof app.actionManager.executeAction !== "function") throw new Error("copyAsPng unavailable");
+  const pad2 = Number.isFinite(padding) ? padding : null;
   const prev = {
     exportScale: app.state?.exportScale ?? 1,
-    exportWithDarkMode: app.state?.exportWithDarkMode ?? false
+    exportWithDarkMode: app.state?.exportWithDarkMode ?? false,
+    ...pad2 != null ? { exportPadding: app.state?.exportPadding } : {}
   };
   const prevIds = { ...app.state?.selectedElementIds || {} };
   const prevGroups = { ...app.state?.selectedGroupIds || {} };
@@ -1993,7 +1995,13 @@ async function capturePngOnce(app, ids, { scale = 2, dark = false, clipboard = g
   try {
     const selection = {};
     for (const id of ids) selection[id] = true;
-    app.updateScene({ appState: { selectedElementIds: selection, selectedGroupIds: {}, exportScale: scale, exportWithDarkMode: !!dark } });
+    app.updateScene({ appState: {
+      selectedElementIds: selection,
+      selectedGroupIds: {},
+      exportScale: scale,
+      exportWithDarkMode: !!dark,
+      ...pad2 != null ? { exportPadding: pad2 } : {}
+    } });
     await new Promise((resolve) => typeof raf === "function" ? raf(() => resolve()) : setTimeout(resolve, 16));
     let settle;
     const captured = new Promise((resolve) => {
@@ -2388,7 +2396,16 @@ function polyPoints(poly) {
   if (pts.length < 3 || pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
   return pts;
 }
-function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document } = {}) {
+function paintCovers(ctx, width, height, covers, color = "#ffffff") {
+  if (!ctx || !covers?.length || !(width > 0) || !(height > 0)) return;
+  ctx.fillStyle = color;
+  for (const b of covers) {
+    const w = b.w * width;
+    const h = b.h * height;
+    if (w > 0 && h > 0) ctx.fillRect(b.x * width, b.y * height, w, h);
+  }
+}
+function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document, covers } = {}) {
   const out = doc.createElement("canvas");
   out.width = sw;
   out.height = sh;
@@ -2401,6 +2418,7 @@ function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document }
     ctx.clip();
   }
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+  paintCovers(ctx, sw, sh, covers);
   return new Promise((resolve, reject) => {
     out.toBlob((blob) => blob ? resolve(blob) : reject(new Error("[plexus] toBlob failed")), "image/png");
   });
@@ -2561,8 +2579,8 @@ function createColdRenderer({ api = globalThis.roamAlphaAPI, doc = globalThis.do
     }
   };
 }
-function cropCanvasToBlob(canvas, rect, { doc = globalThis.document, poly } = {}) {
-  return cropToBlob(canvas, rect, { doc, poly });
+function cropCanvasToBlob(canvas, rect, { doc = globalThis.document, poly, covers } = {}) {
+  return cropToBlob(canvas, rect, { doc, poly, covers });
 }
 
 // src/view/toast.js
@@ -5205,6 +5223,160 @@ function installCanvasPaste({ win, doc, toast, createSibling, insertText, blockU
   return () => win.removeEventListener("paste", onPaste, true);
 }
 
+// src/model/slides.js
+var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+var orderOf = (el) => {
+  const o = el?.customData?.plexus?.order;
+  return typeof o === "number" && Number.isFinite(o) ? o : null;
+};
+function orderFrames(elements) {
+  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
+  return frames.sort((a, b) => {
+    const oa = orderOf(a), ob = orderOf(b);
+    if (oa !== null && ob !== null) {
+      if (oa !== ob) return oa - ob;
+    } else if (oa !== null) return -1;
+    else if (ob !== null) return 1;
+    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+    if (n) return n;
+    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
+  });
+}
+function stepOf(el) {
+  const n = el?.customData?.plexus?.step;
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+function occludeOf(el) {
+  const v = el?.customData?.plexus?.occlude;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+var idMap = (elements) => new Map(liveElements(elements).map((el) => [el.id, el]));
+function effectiveStep(el, byId) {
+  const own = stepOf(el);
+  if (own !== null) return own;
+  const parent = el?.containerId ? byId.get(el.containerId) : null;
+  return parent ? stepOf(parent) : null;
+}
+function frameMembers(elements, frameId2) {
+  if (!frameId2) return [];
+  return liveElements(elements).filter((el) => el.frameId === frameId2 && el.id !== frameId2);
+}
+function maxBuild(elements, frame) {
+  const byId = idMap(elements);
+  let max = 0;
+  for (const el of frameMembers(elements, frame?.id)) {
+    const s = effectiveStep(el, byId);
+    if (s !== null && s > max) max = s;
+  }
+  return max;
+}
+function nextStep(elements, frameId2) {
+  let max = 0;
+  for (const el of frameMembers(elements, frameId2)) {
+    const s = stepOf(el);
+    if (s !== null && s > max) max = s;
+  }
+  return max + 1;
+}
+function idsForBuild(elements, frame, build) {
+  if (!frame?.id) return [];
+  const live3 = liveElements(elements);
+  const byId = idMap(elements);
+  const b = Number.isInteger(build) && build >= 0 ? build : 0;
+  const members = frameMembers(elements, frame.id);
+  const later = members.some((el) => {
+    const s = effectiveStep(el, byId);
+    return s !== null && s > b;
+  });
+  const ids = [];
+  if (!later && live3.some((el) => el.id === frame.id)) ids.push(frame.id);
+  for (const el of members) {
+    const s = effectiveStep(el, byId);
+    if (s === null || s <= b) ids.push(el.id);
+  }
+  return ids;
+}
+function hiddenIds(elements, frame, build) {
+  const byId = idMap(elements);
+  const b = Number.isInteger(build) && build >= 0 ? build : 0;
+  return frameMembers(elements, frame?.id).filter((el) => {
+    const s = effectiveStep(el, byId);
+    return s !== null && s > b;
+  }).map((el) => el.id);
+}
+function buildTier(build, stepped, kind = "svg") {
+  if (!stepped) return kind;
+  const b = Number.isInteger(build) && build >= 0 ? build : 0;
+  return `${kind}-b${b}`;
+}
+function occluderIds(elements, regionUid) {
+  if (!regionUid) return [];
+  return liveElements(elements).filter((el) => occludeOf(el) === regionUid).map((el) => el.id);
+}
+function idsWithoutOccluders(ids, elements, regionUid) {
+  const drop = new Set(occluderIds(elements, regionUid));
+  for (const el of liveElements(elements)) if (el.containerId && drop.has(el.containerId)) drop.add(el.id);
+  return (ids || []).filter((id) => !drop.has(id));
+}
+function coverBoxes(elements, ids, bbox) {
+  if (!bbox) return [];
+  const [bx, by, bx2, by2] = bbox;
+  const bw = bx2 - bx;
+  const bh = by2 - by;
+  if (!(bw > 0) || !(bh > 0)) return [];
+  const set = new Set(ids || []);
+  const out = [];
+  for (const el of liveElements(elements)) {
+    if (!set.has(el.id)) continue;
+    const [x1, y1, x2, y2] = elementBounds(el);
+    const left = (x1 - bx) / bw;
+    const top = (y1 - by) / bh;
+    const right = (x2 - bx) / bw;
+    const bottom = (y2 - by) / bh;
+    const x = Math.max(0, left);
+    const y = Math.max(0, top);
+    const w = Math.min(1, right) - x;
+    const h = Math.min(1, bottom) - y;
+    if (w > 0 && h > 0) out.push({ x, y, w, h });
+  }
+  return out;
+}
+function containingRegion(entries, elements, appState, box) {
+  if (!box) return null;
+  let best = null;
+  let area = Infinity;
+  for (const entry of entries || []) {
+    if (!entry?.region?.supported) continue;
+    const hit = regionSceneBBox(entry.region, elements, appState);
+    if (!hit?.bbox) continue;
+    const [x1, y1, x2, y2] = hit.bbox;
+    if (box[0] < x1 || box[1] < y1 || box[2] > x2 || box[3] > y2) continue;
+    const a = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    if (a < area) {
+      area = a;
+      best = entry;
+    }
+  }
+  return best;
+}
+function patchPlexus(el, patch) {
+  const base2 = el?.customData && typeof el.customData === "object" ? el.customData : {};
+  const plexus = { ...base2.plexus && typeof base2.plexus === "object" ? base2.plexus : {} };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value == null) delete plexus[key];
+    else plexus[key] = value;
+  }
+  const customData = { ...base2 };
+  if (Object.keys(plexus).length) customData.plexus = plexus;
+  else delete customData.plexus;
+  return {
+    ...el,
+    customData,
+    version: (Number(el?.version) || 0) + 1,
+    versionNonce: (Number(el?.versionNonce) || 0) + 1
+  };
+}
+
 // src/host/theme.js
 var MEMO_MS = 1e3;
 var memo2 = null;
@@ -5664,14 +5836,14 @@ function resolveRegionTarget(host, region) {
   if (sceneBox.error) return { error: `Region unavailable (${sceneBox.error})` };
   return { drawing, sceneBox, hash: drawing.hash };
 }
-async function renderRegionCrop({ region, target, cold, doc, api, settleMs, loadBitmap = loadImageBitmap }) {
+async function renderRegionCrop({ region, target, cold, doc, api, settleMs, loadBitmap = loadImageBitmap, covers } = {}) {
   if (isImageKind2(region.kind)) {
     const bitmap = await loadBitmap(target.url, { api });
     const f = region.kind === "imgrect" ? region.f : polyBBox(region.p);
     const crop2 = imageCropRect({ naturalWidth: bitmap.width, naturalHeight: bitmap.height, f });
     if (!crop2) return { error: "bad-crop" };
     const poly2 = region.kind === "imgpoly" ? polyToLocal(region.p, f) : void 0;
-    const blob2 = await cropToBlob(bitmap, crop2, { doc, poly: poly2 });
+    const blob2 = await cropToBlob(bitmap, crop2, { doc, poly: poly2, covers });
     return { blob: blob2, w: crop2.sw, h: crop2.sh, settled: true };
   }
   const { drawing, sceneBox } = target;
@@ -5693,14 +5865,14 @@ async function renderRegionCrop({ region, target, cold, doc, api, settleMs, load
     if (!p) return { error: "outside-crop" };
     poly = polyToLocal(p, polyBBox(p));
   }
-  const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly });
+  const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, poly, covers });
   return { blob, w: crop.sw, h: crop.sh, settled: rendered.settled !== false };
 }
 var GLYPH = '<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M1.5 5V1.5H5M9 1.5h3.5V5M12.5 9v3.5H9M5 12.5H1.5V9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 var isDarkTier = (key) => typeof key === "string" && key.endsWith("|png2x-dark");
 var num2 = (v, d) => Number.isFinite(Number(v)) && v !== "" && v != null ? Number(v) : d;
 var overlaps = (bbox, el) => el.x < bbox[2] && el.x + el.width > bbox[0] && el.y < bbox[3] && el.y + el.height > bbox[1];
-function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
+function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onReveal, doc, api = globalThis.roamAlphaAPI, loadBitmap = loadImageBitmap }) {
   const roots = /* @__PURE__ */ new Map();
   const aliases = /* @__PURE__ */ new Map();
   const notRegions = /* @__PURE__ */ new WeakSet();
@@ -5817,6 +5989,8 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     }
     img.src = entry.url;
     root.className = `plexus-root plexus-regionref plexus-regionref--${info.mode}`;
+    const boxes = occludeCovers(target, info.refUid);
+    if (boxes.length) root.classList.add("plexus-occlude-host");
     if (root.style) {
       const align = info.align;
       root.style.marginLeft = align === "center" || align === "right" ? "auto" : align === "left" ? "0" : "";
@@ -5824,7 +5998,46 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     }
     root.textContent = "";
     root.append(img);
+    for (const box of boxes) {
+      const span = doc.createElement("span");
+      span.className = "plexus-occlude";
+      span.style.left = `${box.x * 100}%`;
+      span.style.top = `${box.y * 100}%`;
+      span.style.width = `${box.w * 100}%`;
+      span.style.height = `${box.h * 100}%`;
+      root.append(span);
+    }
   };
+  function occludeCovers(target, uid) {
+    if (!target?.drawing || !uid) return [];
+    const ids = occluderIds(target.drawing.elements, uid);
+    if (!ids.length || !target.sceneBox?.bbox) return [];
+    return coverBoxes(target.drawing.elements, ids, target.sceneBox.bbox);
+  }
+  async function showReveal(root, uid, region, target) {
+    if (!root?.isConnected || !target?.hash) return;
+    const key = cropKey({ regionUid: uid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "svg-reveal" });
+    const read = async () => {
+      try {
+        return cache.peek?.(key) || await cache.get?.(key);
+      } catch {
+        return null;
+      }
+    };
+    let entry = await read();
+    if (!entry?.url && typeof onReveal === "function") {
+      try {
+        await onReveal(uid);
+      } catch (error) {
+        console.warn("[plexus] reveal failed", error);
+      }
+      entry = await read();
+    }
+    if (!entry?.url) return;
+    const img = (root.children || []).find((child) => child?.tag === "img");
+    if (img) img.src = entry.url;
+    root.classList.add("plexus-revealed");
+  }
   function invertible(region, target, s) {
     if (!s.darkCrops || isImageKind2(region.kind) || !target?.drawing) return false;
     if (target.drawing.appState?.theme === "dark") return false;
@@ -5859,7 +6072,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     const e = cache.peek(keys.png);
     return e ? { entry: e, key: keys.png } : null;
   };
-  async function fetchEntry(region, target, keys, alive) {
+  async function fetchEntry(region, target, keys, alive, covers) {
     let entry = null;
     let entryKey = keys.svg || keys.png;
     if (keys.svg) entry = await cache.get(keys.svg);
@@ -5878,7 +6091,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       if (!alive()) return { gone: true };
       let rendered;
       try {
-        rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap });
+        rendered = await renderRegionCrop({ region, target, cold, doc, api, loadBitmap, covers: covers?.length ? covers : void 0 });
       } catch (error) {
         console.warn("[plexus] crop failed", error);
         rendered = { error: "render-failed" };
@@ -5907,7 +6120,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     let entry = hot?.entry;
     let key = hot?.key;
     if (!entry?.url) {
-      const res = await fetchEntry(region, target, keys, () => true);
+      const res = await fetchEntry(region, target, keys, () => true, occludeCovers(target, uid));
       if (res?.entry?.url) {
         entry = res.entry;
         key = res.entryKey;
@@ -6072,13 +6285,22 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       root.setAttribute("aria-label", label);
       root.setAttribute("tabindex", "0");
       if (mode !== "link") applyCaption(root, region, ctx, info, capState);
+      let sceneTarget = null;
+      const occluded = (e) => !e?.shiftKey && !root.classList.contains("plexus-revealed") && occluderIds(sceneTarget?.drawing?.elements, uid).length > 0;
+      const openFrom = (e) => {
+        if (occluded(e)) {
+          void showReveal(root, uid, region, sceneTarget);
+          return;
+        }
+        onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+      };
       root.addEventListener("keydown", (e) => {
         try {
           if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
           e.stopPropagation();
-          onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+          openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -6091,12 +6313,13 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
         e.stopPropagation();
         e.preventDefault();
         try {
-          onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
+          openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
       }, true);
       const target = resolveRegionTarget(host, region);
+      sceneTarget = target.error ? null : target;
       if (target.error) return chip(root, target.error);
       const keys = keysFor(uid, region, target);
       const hoverEntry = () => hoverEntryOf(region, target, keys, uid);
@@ -6128,7 +6351,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       root.style.width = `${Math.round(h * bw / bh)}px`;
       void (async () => {
         try {
-          const res = await fetchEntry(region, target, keys, () => root.isConnected);
+          const res = await fetchEntry(region, target, keys, () => root.isConnected, occludeCovers(target, uid));
           if (res.gone) return;
           if (res.error) return finishChip(root, region);
           if (!root.isConnected) return;
@@ -7271,26 +7494,6 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
       rings.clear();
     }
   };
-}
-
-// src/model/slides.js
-var collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-var orderOf = (el) => {
-  const o = el?.customData?.plexus?.order;
-  return typeof o === "number" && Number.isFinite(o) ? o : null;
-};
-function orderFrames(elements) {
-  const frames = liveElements(elements).filter((el) => el.type === "frame" || el.type === "magicframe");
-  return frames.sort((a, b) => {
-    const oa = orderOf(a), ob = orderOf(b);
-    if (oa !== null && ob !== null) {
-      if (oa !== ob) return oa - ob;
-    } else if (oa !== null) return -1;
-    else if (ob !== null) return 1;
-    const n = collator.compare(String(a.name ?? ""), String(b.name ?? ""));
-    if (n) return n;
-    return (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0);
-  });
 }
 
 // src/model/frames.js
@@ -16407,6 +16610,267 @@ function createMeasurer({ doc = globalThis.document } = {}) {
   return { measure: measure3, ensureFonts, clear: () => memo3.clear(), size: () => memo3.size };
 }
 
+// src/model/pagelink.js
+function roamPageUrl(graph, uid) {
+  if (!graph || !uid) return null;
+  return `https://roamresearch.com/#/app/${encodeURIComponent(graph)}/page/${uid}`;
+}
+var esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+function rewriteSvgTitles(svg, lookup) {
+  if (typeof svg !== "string" || typeof lookup !== "function" || !svg.includes("[[")) return svg;
+  return svg.replace(/>([^<]*)</g, (full, text) => {
+    if (!text.includes("[[")) return full;
+    const next = text.replace(/\[\[([^[\]]+)\]\]/g, (token, title) => {
+      let url = null;
+      try {
+        url = lookup(String(title));
+      } catch {
+        url = null;
+      }
+      if (!url) return token;
+      return `<a href="${esc(url)}">${esc(title)}</a>`;
+    });
+    return `>${next}<`;
+  });
+}
+
+// src/view/live-present.js
+function viewPatch(view2) {
+  return {
+    appState: {
+      scrollX: view2.scrollX,
+      scrollY: view2.scrollY,
+      zoom: { value: view2.zoom }
+    },
+    captureUpdate: "NEVER"
+  };
+}
+function rememberIndex(store, uid, count) {
+  const n = store?.get?.(uid);
+  return Number.isInteger(n) && n >= 0 && n < count ? n : 0;
+}
+function saveIndex(store, uid, index) {
+  if (!store || !uid || !Number.isInteger(index) || index < 0) return;
+  store.set(uid, index);
+}
+var ease = (p) => p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2;
+function createLiveShow({
+  frames,
+  elements,
+  viewport,
+  readView,
+  writeView: writeView2,
+  onChrome,
+  onStatus,
+  now,
+  raf,
+  caf,
+  duration = 400
+} = {}) {
+  const list = Array.isArray(frames) ? frames : [];
+  const els = Array.isArray(elements) ? elements : [];
+  const vw = Math.max(1, Number(viewport?.width) || 1);
+  const vh = Math.max(1, Number(viewport?.height) || 1);
+  const clock = now || (() => 0);
+  const request2 = raf || ((fn) => {
+    fn(clock());
+    return 0;
+  });
+  const cancel = caf || (() => {
+  });
+  const ms = duration > 0 ? duration : 0;
+  let saved = null;
+  let index = 0;
+  let build = 0;
+  let timer = null;
+  let token = 0;
+  let dead = false;
+  const targetOf = (frame) => fitZoom({ bbox: elementBounds(frame), viewportWidth: vw, viewportHeight: vh });
+  const status = () => {
+    try {
+      onStatus?.(index, build, list.length);
+    } catch {
+    }
+  };
+  const stop = () => {
+    token += 1;
+    if (timer != null) cancel(timer);
+    timer = null;
+  };
+  const place2 = (i, b, animate) => {
+    if (!list.length || dead) return;
+    const to = targetOf(list[i]);
+    index = i;
+    build = b;
+    status();
+    if (!animate || ms === 0) {
+      stop();
+      writeView2?.(to);
+      return;
+    }
+    stop();
+    const mine = token;
+    const from = readView?.() || to;
+    const t0 = clock();
+    const frame = (t) => {
+      if (dead || mine !== token) return;
+      const same3 = t === t0;
+      const p = same3 ? 1 : Math.min(1, (t - t0) / ms);
+      const e = ease(p);
+      writeView2?.({
+        scrollX: from.scrollX + (to.scrollX - from.scrollX) * e,
+        scrollY: from.scrollY + (to.scrollY - from.scrollY) * e,
+        zoom: from.zoom + (to.zoom - from.zoom) * e
+      });
+      if (p < 1) timer = request2(frame);
+      else timer = null;
+    };
+    timer = request2(frame);
+  };
+  return {
+    start(i = 0) {
+      if (!list.length || dead) return;
+      saved = readView?.() || { scrollX: 0, scrollY: 0, zoom: 1 };
+      try {
+        onChrome?.(true);
+      } catch {
+      }
+      place2(Math.min(Math.max(0, i), list.length - 1), 0, false);
+    },
+    next() {
+      if (dead || !list.length) return;
+      const top = maxBuild(els, list[index]);
+      if (build < top) {
+        build += 1;
+        status();
+        return;
+      }
+      if (index < list.length - 1) place2(index + 1, 0, true);
+    },
+    prev() {
+      if (dead || !list.length) return;
+      if (build > 0) {
+        build -= 1;
+        status();
+        return;
+      }
+      if (index > 0) place2(index - 1, maxBuild(els, list[index - 1]), true);
+    },
+    exit() {
+      if (dead) return;
+      dead = true;
+      stop();
+      if (saved) writeView2?.(saved);
+      try {
+        onChrome?.(false);
+      } catch {
+      }
+    },
+    index: () => index,
+    build: () => build
+  };
+}
+
+// src/view/export-dialog.js
+var num4 = (value, fallback, min, max) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+};
+function createExportDialog({ doc } = {}) {
+  let node = null;
+  const close2 = () => {
+    const cur = node;
+    node = null;
+    if (!cur) return;
+    try {
+      if (cur.open) cur.close?.();
+    } catch {
+    }
+    cur.remove?.();
+  };
+  return {
+    isOpen: () => !!node,
+    close: close2,
+    open({ hasSelection: hasSelection2 = false, onSubmit } = {}) {
+      close2();
+      const dialog = doc.createElement("dialog");
+      dialog.className = "plexus-portal plexus-export";
+      dialog.setAttribute?.("aria-label", "Export drawing");
+      const scope = doc.createElement("select");
+      scope.className = "plexus-export-scope";
+      const all = doc.createElement("option");
+      all.value = "all";
+      all.textContent = "Whole drawing";
+      const sel = doc.createElement("option");
+      sel.value = "selection";
+      sel.textContent = "Selection";
+      sel.disabled = !hasSelection2;
+      scope.append?.(all, sel);
+      scope.value = "all";
+      const scale = doc.createElement("input");
+      scale.className = "plexus-export-scale";
+      scale.value = "2";
+      const padding = doc.createElement("input");
+      padding.className = "plexus-export-padding";
+      padding.value = "10";
+      const theme = doc.createElement("select");
+      theme.className = "plexus-export-theme";
+      const light = doc.createElement("option");
+      light.value = "light";
+      light.textContent = "Light";
+      const dark = doc.createElement("option");
+      dark.value = "dark";
+      dark.textContent = "Dark";
+      theme.append?.(light, dark);
+      theme.value = "light";
+      const read = (output) => ({
+        scope: scope.value === "selection" && hasSelection2 ? "selection" : "all",
+        scale: num4(scale.value, 2, 1, 4),
+        padding: num4(padding.value, 10, 0, 80),
+        theme: theme.value === "dark" ? "dark" : "light",
+        output
+      });
+      const button = (label, className, output) => {
+        const b = doc.createElement("button");
+        b.type = "button";
+        b.className = className;
+        b.textContent = label;
+        b.addEventListener?.("click", () => {
+          const choice = read(output);
+          close2();
+          try {
+            onSubmit?.(choice);
+          } catch (error) {
+            console.warn("[plexus] export choice failed", error);
+          }
+        });
+        return b;
+      };
+      dialog.append?.(
+        scope,
+        scale,
+        padding,
+        theme,
+        button("Copy", "plexus-export-copy", "clipboard"),
+        button("Download", "plexus-export-download", "download"),
+        button("Insert", "plexus-export-insert", "insert")
+      );
+      dialog.addEventListener?.("cancel", (e) => {
+        e?.preventDefault?.();
+        close2();
+      });
+      doc.body?.append?.(dialog);
+      node = dialog;
+      try {
+        dialog.showModal?.();
+      } catch {
+      }
+      return dialog;
+    }
+  };
+}
+
 // src/model/edn.js
 var MAX_DEPTH = 512;
 var NUMBER_RE = /^[+-]?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
@@ -17077,7 +17541,7 @@ var BLEED_MM = 0.5;
 var PAPER = { letter: [215.9, 279.4], a4: [210, 297] };
 var SLIDE_MM = [254, 142.875];
 var warn2 = (msg, error) => console.warn(`[plexus] ${msg}`, error);
-var esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var esc2 = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var mm = (n) => `${Number(n.toFixed(3))}mm`;
 function buildPrintDocument({ drawing = "", pages = [], size = "letter", margin } = {}) {
   const slide = size === "16:9";
@@ -17105,10 +17569,10 @@ function buildPrintDocument({ drawing = "", pages = [], size = "letter", margin 
   ].join("\n");
   const body = pages.map((p) => {
     const landscape = slide || !(p.width > 0 && p.height > 0) || p.width > p.height;
-    return `<div class="pg ${slide ? "s" : landscape ? "l" : "p"}"><img src="${esc(p.url)}" alt="${esc(p.name)}"></div>`;
+    return `<div class="pg ${slide ? "s" : landscape ? "l" : "p"}"><img src="${esc2(p.url)}" alt="${esc2(p.name)}"></div>`;
   }).join("\n");
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${esc(`${drawing} frames`)}</title><style>
+<html><head><meta charset="utf-8"><title>${esc2(`${drawing} frames`)}</title><style>
 ${css}
 </style></head><body>
 ${body}
@@ -17732,6 +18196,9 @@ function createActions({
   let stopSpotlight = null;
   const busy2 = /* @__PURE__ */ new Set();
   let presentOwner = null;
+  let liveStop = null;
+  const liveAt = /* @__PURE__ */ new Map();
+  let exportDialog = null;
   let printJob = null;
   let labelTimer = null;
   let labelGen = 0;
@@ -18447,9 +18914,166 @@ function createActions({
     }
     return true;
   }
+  function stepOfEl(el) {
+    const n = el?.customData?.plexus?.step;
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+  function stampSelection(label, patchFor, empty) {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
+      return false;
+    }
+    const ids = new Set(native.selectedElementIds(editor.app));
+    if (!ids.size) {
+      toaster2.show(empty || "Select something first", { kind: "error" });
+      return false;
+    }
+    let wrote = false;
+    const ok = guard2.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current6) => current6.map((el) => {
+        if (!el || el.isDeleted || !ids.has(el.id)) return el;
+        const patch = patchFor(el, current6);
+        if (!patch) return el;
+        wrote = true;
+        return patchPlexus(el, patch);
+      })
+    });
+    if (ok && !wrote) toaster2.show(empty || "Nothing to change", { kind: "error" });
+    return !!ok && wrote;
+  }
+  async function revealRegion(regionUid) {
+    if (!isId(regionUid)) return false;
+    const block = safe2(() => host.pullBlock?.(regionUid));
+    const region = block ? parseRegion(block.string) : null;
+    if (!region?.supported) return false;
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || editor.drawingUid !== region.drawingUid) return false;
+    const elements = sceneElements(editor.app);
+    const ids = idsWithoutOccluders(hotIds(region, elements), elements, regionUid);
+    if (!ids.length) return false;
+    const svg = await captureSafe(editor.app, ids);
+    if (!svg) return false;
+    const target = resolveRegionTarget(host, region);
+    if (target?.error || !target?.hash) return false;
+    const key = cropKey({ regionUid, geometryKey: geometryKey(region), drawingHash: target.hash, tier: "svg-reveal" });
+    await cache.put(key, new Blob([normalizeSvgSize(svg)], { type: "image/svg+xml" }), svgSize(svg));
+    return true;
+  }
+  async function markFlashcardOnce() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const ids = new Set(native.selectedElementIds(editor.app));
+    const elements = sceneElements(editor.app);
+    const selected = elements.filter((el) => ids.has(el?.id) && !el.isDeleted);
+    const hit = containingRegion(safe2(() => host.regionsOf?.(editor.drawingUid)) || [], elements, editor.app.state, selected.length ? commonBounds(selected) : null);
+    if (!hit?.uid) {
+      toaster2.show("Create a region over this first", { kind: "error" });
+      return null;
+    }
+    const kids2 = safe2(() => host.pullBlock?.(hit.uid)?.children) || [];
+    if (kids2.some((c) => String(c?.string ?? "").includes("#flashcard"))) {
+      toaster2.show("Already a flashcard");
+      return hit.uid;
+    }
+    let child = null;
+    try {
+      child = await host.createBlock?.({ parentUid: hit.uid, order: "last", string: "#flashcard" });
+    } catch (error) {
+      console.warn("[plexus] flashcard failed", error);
+    }
+    if (!child) {
+      toaster2.show("Could not mark the flashcard", { kind: "error" });
+      return null;
+    }
+    toaster2.show("Marked as a flashcard");
+    return hit.uid;
+  }
+  function pageUrl(title) {
+    const graph = safe2(() => host.graphName?.());
+    if (!graph || !api?.data?.pull) return null;
+    let uid = null;
+    try {
+      uid = api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] ?? null;
+    } catch {
+      return null;
+    }
+    return roamPageUrl(graph, uid);
+  }
+  async function exportOnce(editor, choice) {
+    const elements = sceneElements(editor.app).filter((el) => el && !el.isDeleted);
+    const selected = native.selectedElementIds(editor.app);
+    const ids = choice?.scope === "selection" && selected.length ? selected : elements.map((el) => el.id);
+    if (!ids.length) {
+      toaster2.show("Nothing to export", { kind: "error" });
+      return null;
+    }
+    if (choice?.output === "clipboard") {
+      const svg = await captureSafe(editor.app, ids);
+      if (!svg) {
+        toaster2.show("Could not export", { kind: "error" });
+        return null;
+      }
+      const text = rewriteSvgTitles(normalizeSvgSize(svg), pageUrl);
+      try {
+        const write = () => clipboard.writeText(text);
+        await (native.withClipboard ? native.withClipboard(write) : write());
+      } catch (error) {
+        console.warn("[plexus] export copy failed", error);
+        toaster2.show("Clipboard access was blocked", { kind: "error" });
+        return null;
+      }
+      toaster2.show("Export copied");
+      return "clipboard";
+    }
+    const png = typeof native.captureSelectionPng === "function" ? await native.captureSelectionPng(editor.app, ids, { scale: choice.scale, dark: choice.theme === "dark", padding: choice.padding, clipboard }) : null;
+    if (!png) {
+      toaster2.show("Could not export", { kind: "error" });
+      return null;
+    }
+    if (choice.output === "download") {
+      const url = urls.createObjectURL(png);
+      try {
+        const a = doc.createElement("a");
+        a.href = url;
+        a.download = "drawing.png";
+        doc.body?.append?.(a);
+        a.click?.();
+        a.remove?.();
+      } finally {
+        setTimeout(() => urls.revokeObjectURL?.(url), revokeDelayMs);
+      }
+      toaster2.show("Export downloaded");
+      return "download";
+    }
+    try {
+      const file = new File([png], "drawing.png", { type: "image/png" });
+      const res = await (upload ? upload(file) : api.file.upload({ file }));
+      const raw = typeof res === "string" ? res : res?.url ?? "";
+      const md = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(String(raw).trim());
+      const href = md ? md[1] : String(raw).trim();
+      if (!href) throw new Error("[plexus] upload returned nothing");
+      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: `![drawing](${href})` });
+      if (!made) throw new Error("[plexus] no child");
+      toaster2.show("Export inserted");
+      return "insert";
+    } catch (error) {
+      console.warn("[plexus] export insert failed", error);
+      toaster2.show("Could not insert the image", { kind: "error" });
+      return null;
+    }
+  }
   return {
     dispose() {
       disposed = true;
+      liveStop?.();
+      liveStop = null;
       activeTool?.cancel?.();
       activeTool = null;
       activePrompt?.cancel?.();
@@ -18771,6 +19395,129 @@ function createActions({
       return elements[0].id;
     }),
     presentDrawing: ({ drawingUid, from = "start", at } = {}) => runPresent((release) => presentOnce(drawingUid, release, { from, at })),
+    presentLive: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.outer) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const elements = sceneElements(editor.app);
+      const frames = orderFrames(elements);
+      if (!frames.length) {
+        toaster2.show("No frames in this drawing", { kind: "error" });
+        return null;
+      }
+      liveStop?.();
+      const { app, outer, drawingUid } = editor;
+      const readView = () => {
+        const z = app.state?.zoom;
+        return {
+          scrollX: app.state?.scrollX || 0,
+          scrollY: app.state?.scrollY || 0,
+          zoom: (typeof z === "number" ? z : z?.value) || 1
+        };
+      };
+      const hud = doc.createElement("div");
+      hud.className = "plexus-portal plexus-live-hud";
+      hud.hidden = true;
+      doc.body?.append?.(hud);
+      const view2 = doc.defaultView;
+      const show = createLiveShow({
+        frames,
+        elements,
+        viewport: { width: app.state?.width || outer.clientWidth || 1, height: app.state?.height || outer.clientHeight || 1 },
+        readView,
+        writeView: (next) => {
+          try {
+            app.updateScene(viewPatch(next));
+          } catch (error) {
+            console.warn("[plexus] live view failed", error);
+          }
+        },
+        onChrome: (on) => {
+          outer.classList?.toggle?.("plexus-live", !!on);
+          hud.hidden = !on;
+        },
+        onStatus: (index, build, total) => {
+          hud.textContent = `${index + 1} / ${total}${build ? ` · ${build + 1}` : ""} · Esc`;
+        },
+        now: () => view2?.performance?.now?.() ?? Date.now(),
+        raf: (fn) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(fn) : setTimeout(() => fn(Date.now()), 16),
+        caf: (id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id)
+      });
+      const onKey = (e) => {
+        if (!e || e.metaKey || e.ctrlKey || e.altKey) return;
+        const next = e.key === "ArrowRight" || e.key === "PageDown" || e.key === " " || e.key === "Spacebar";
+        const prev = e.key === "ArrowLeft" || e.key === "PageUp" || e.key === "Backspace";
+        if (e.key !== "Escape" && !next && !prev) return;
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        if (e.key === "Escape") finish();
+        else if (next) show.next();
+        else show.prev();
+      };
+      function finish() {
+        if (liveStop !== finish) return;
+        liveStop = null;
+        saveIndex(liveAt, drawingUid, show.index());
+        show.exit();
+        doc.removeEventListener?.("keydown", onKey, true);
+        hud.remove?.();
+      }
+      liveStop = finish;
+      doc.addEventListener?.("keydown", onKey, true);
+      show.start(rememberIndex(liveAt, drawingUid, frames.length));
+      return drawingUid;
+    },
+    setRevealStep: () => stampSelection("Reveal step", (el, current6) => el.frameId ? { step: nextStep(current6, el.frameId) } : null, "Select elements inside a frame"),
+    clearRevealStep: () => stampSelection("Clear reveal step", (el) => stepOfEl(el) === null ? null : { step: null }, "Select a stepped element"),
+    addOcclusion: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const ids = new Set(native.selectedElementIds(editor.app));
+      const elements = sceneElements(editor.app);
+      const selected = elements.filter((el) => ids.has(el?.id) && !el.isDeleted);
+      if (!selected.length) {
+        toaster2.show("Select the cover first", { kind: "error" });
+        return null;
+      }
+      const hit = containingRegion(safe2(() => host.regionsOf?.(editor.drawingUid)) || [], elements, editor.app.state, commonBounds(selected));
+      if (!hit?.uid) {
+        toaster2.show("Create a region over this first", { kind: "error" });
+        return null;
+      }
+      const ok = guard2.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Add occlusion",
+        captureUpdate: "IMMEDIATELY",
+        next: (current6) => current6.map((el) => el && ids.has(el.id) && !el.isDeleted ? patchPlexus(el, { occlude: hit.uid }) : el)
+      });
+      if (!ok) return null;
+      Promise.resolve(revealRegion(hit.uid)).catch((error) => console.warn("[plexus] reveal capture failed", error));
+      toaster2.show("Occlusion added");
+      return hit.uid;
+    },
+    markFlashcard: () => markFlashcardOnce(),
+    revealRegion: (uid) => revealRegion(uid),
+    exportDrawing: () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!exportDialog) exportDialog = createExportDialog({ doc });
+      const selected = native.selectedElementIds(editor.app);
+      exportDialog.open({
+        hasSelection: selected.length > 0,
+        onSubmit: (choice) => {
+          Promise.resolve(exportOnce(editor, choice)).catch((error) => console.warn("[plexus] export failed", error));
+        }
+      });
+      return true;
+    },
     presentFromRegion: async (regionUid) => {
       const block = isId(regionUid) ? safe2(() => host.pullBlock(regionUid)) : null;
       const region = block ? parseRegion(block.string) : null;
@@ -20403,7 +21150,7 @@ function createActions({
       if (!coldState) out.renderFailed = true;
       return coldState;
     };
-    const cropFrame = async (frame2) => {
+    const cropFrame = async (frame2, covers) => {
       const rendered = await ensureCold();
       if (!rendered || !alive()) return null;
       const region = { kind: "cframe", drawingUid: uid, frameId: frame2.id, caption: frame2.name || "" };
@@ -20411,7 +21158,7 @@ function createActions({
       if (box.error) return null;
       const crop = viewPngCropRect({ elements: drawing.elements, appState: drawing.appState, bbox: box.bbox, naturalWidth: rendered.naturalWidth, naturalHeight: rendered.naturalHeight });
       if (crop.error) return null;
-      const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc });
+      const blob = await cropCanvasToBlob(rendered.canvas, crop, { doc, covers });
       return { type: "png", blob, w: crop.sw, h: crop.sh, persist: rendered.settled !== false };
     };
     const native2x = async (frame2) => {
@@ -20427,18 +21174,20 @@ function createActions({
         return null;
       }
     };
-    for (const { frame: frame2, i } of items) {
+    for (const item of items) {
+      const { frame: frame2, i } = item;
       if (!alive()) break;
       let result = null;
       const live3 = mounted && native.activeEditor(doc)?.app === mounted.app;
       try {
-        if (live3 && format === "svg") {
-          const svg = await captureSafe(mounted.app, [frame2.id]);
+        if (live3 && format === "svg" && item.ids?.length !== 0) {
+          const ids = item.ids?.length ? item.ids : [frame2.id];
+          const svg = await captureSafe(mounted.app, ids);
           result = svg ? { type: "svg", svg: normalizeSvgSize(svg) } : null;
-        } else if (live3) {
-          result = await native2x(frame2) ?? await cropFrame(frame2);
+        } else if (live3 && item.ids?.length !== 0 && !item.covers?.length) {
+          result = await native2x(frame2) ?? await cropFrame(frame2, item.covers);
         } else {
-          result = await cropFrame(frame2);
+          result = await cropFrame(frame2, item.covers);
         }
       } catch (error) {
         console.warn("[plexus] frame render failed", error);
@@ -20519,7 +21268,8 @@ function createActions({
     }
     const mounted = editor && editor.drawingUid === uid ? editor : null;
     const drawing = host.drawing(uid);
-    const frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
+    const elements = mounted ? sceneElements(mounted.app) : drawing?.elements ?? [];
+    const frames = orderFrames(elements);
     if (!frames.length) {
       toaster2.show("No frames in this drawing", { kind: "error" });
       return null;
@@ -20544,28 +21294,41 @@ function createActions({
     const slideHash = mounted ? fnv1a(JSON.stringify(sceneElements(mounted.app))) : drawing.hash;
     const regions = safe2(() => host.regionsOf?.(uid)) ?? [];
     const added = [];
-    const slides = frames.map((frame2, idx) => {
+    const slides = [];
+    frames.forEach((frame2, idx) => {
+      const top = maxBuild(elements, frame2);
+      const stepped = top > 0;
       const region = { kind: "cframe", drawingUid: uid, frameId: frame2.id, caption: frame2.name || "" };
       const gk = geometryKey(region);
       const found = notesFor(regions, frame2.id);
       const hasKids = !!found && (safe2(() => host.pullBlock?.(found.uid)?.children?.length) || 0) > 0;
-      return {
-        frame: frame2,
-        region,
-        name: frame2.name || `Frame ${idx + 1}`,
-        url: null,
-        notes: { rootUid: found?.uid ?? null, ...hasKids ? {} : { onAdd: () => addNotesForFrame(uid, frame2, added) } },
-        svgKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: "svg" }),
-        pngKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: "png" })
-      };
+      const box = elementBounds(frame2);
+      const base2 = frame2.name || `Frame ${idx + 1}`;
+      for (let build = 0; build <= top; build++) {
+        slides.push({
+          frame: frame2,
+          build,
+          ids: stepped ? idsForBuild(elements, frame2, build) : null,
+          covers: stepped ? coverBoxes(elements, hiddenIds(elements, frame2, build), box) : null,
+          name: stepped ? `${base2} ${build + 1}/${top + 1}` : base2,
+          url: null,
+          notes: {
+            rootUid: found?.uid ?? null,
+            ...build === 0 && !hasKids ? { onAdd: () => addNotesForFrame(uid, frame2, added) } : {}
+          },
+          svgKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: buildTier(build, stepped, "svg") }),
+          pngKey: cropKey({ regionUid: `slide:${uid}:${frame2.id}`, geometryKey: gk, drawingHash: slideHash, tier: buildTier(build, stepped, "png") })
+        });
+      }
     });
+    const openAt = Math.max(0, slides.findIndex((s) => s.frame === frames[start] && s.build === 0));
     for (const slide of slides) {
       const entry = (mounted ? cache.peek?.(slide.svgKey) : null) || cache.peek?.(slide.pngKey) || cache.peek?.(slide.svgKey);
       slide.url = entry?.url ?? null;
     }
     const handle = presenter.open({
       slides: slides.map(({ name, url, notes }) => ({ name, url, notes })),
-      index: start,
+      index: openAt,
       onClose: () => {
         release?.();
         afterPresent(added);
@@ -20584,8 +21347,8 @@ function createActions({
     const fill = (i, entry) => {
       if (entry?.url && handle.isOpen()) handle.setSlide(i, { url: entry.url });
     };
-    const rank = (i) => i >= start ? i - start : slides.length + i;
-    const items = missing.sort((a, b) => rank(a[1]) - rank(b[1])).map(([slide, i]) => ({ frame: slide.frame, i }));
+    const rank = (i) => i >= openAt ? i - openAt : slides.length + i;
+    const items = missing.sort((a, b) => rank(a[1]) - rank(b[1])).map(([slide, i]) => ({ frame: slide.frame, i, ids: slide.ids, covers: slide.covers }));
     try {
       const result = await frameImages({
         uid,
@@ -22308,13 +23071,13 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
       let move = 0;
       let commit = false;
-      let esc2 = false;
+      let esc3 = false;
       if (bare && e.key === "ArrowDown") move = 1;
       else if (bare && e.key === "ArrowUp") move = -1;
       else if (ctrlOnly && e.key === "n") move = 1;
       else if (ctrlOnly && e.key === "p") move = -1;
       else if (bare && (e.key === "Enter" || e.key === "Tab")) commit = true;
-      else if (bare && e.key === "Escape") esc2 = true;
+      else if (bare && e.key === "Escape") esc3 = true;
       else return;
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -22326,7 +23089,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         if (status === "results" && choice) pick3(choice);
         else if (status === "results" && trigger?.kind === "page" && trigger.query.trim()) pick3({ kind: "page", title: trigger.query.trim() });
         else close2();
-      } else if (esc2) {
+      } else if (esc3) {
         stashArmed = false;
         close2();
       }
@@ -23096,6 +23859,12 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     { id: "remove-embed", label: "Plexus: Remove embed (block untouched)", enabled: can(() => actions.canRemoveEmbed()), run: call("remove-embed", () => actions.removeSelectedEmbed()) },
     { id: "present", label: "Plexus: Present", enabled: can(() => actions.hasFrames()), kbd: kbd("present"), run: call("present", () => actions.presentDrawing()) },
     { id: "present-here", label: "Plexus: Present from here", enabled: can(() => actions.hasFrames()), run: call("present-here", () => actions.presentDrawing({ from: "here", at: point && toScene ? toScene(point) : void 0 })) },
+    { id: "present-live", label: "Plexus: Present live", enabled: can(() => actions.hasFrames()), run: call("present-live", () => actions.presentLive()) },
+    { id: "set-step", label: "Plexus: Set reveal step", enabled: can(() => selectedIds().length > 0), run: call("set-step", () => actions.setRevealStep()) },
+    { id: "clear-step", label: "Plexus: Clear reveal step", enabled: can(() => selectedIds().length > 0), run: call("clear-step", () => actions.clearRevealStep()) },
+    { id: "add-occlusion", label: "Plexus: Add occlusion", enabled: can(() => selectedIds().length > 0), run: call("add-occlusion", () => actions.addOcclusion()) },
+    { id: "mark-flashcard", label: "Plexus: Mark flashcard", enabled: can(() => selectedIds().length > 0), run: call("mark-flashcard", () => actions.markFlashcard()) },
+    { id: "export", label: "Plexus: Export…", enabled: can(() => !!drawingUid), run: call("export", () => actions.exportDrawing()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
     { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
@@ -27054,7 +27823,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         cold,
         getSettings,
         doc,
-        onOpen: (uid, opts) => actions.openRegion(uid, opts).catch((error) => console.warn("[plexus] open failed", error))
+        onOpen: (uid, opts) => actions.openRegion(uid, opts).catch((error) => console.warn("[plexus] open failed", error)),
+        onReveal: (uid) => actions.revealRegion?.(uid)
       });
       lifecycle.add(() => regionref.releaseAll());
       refreshAll = () => regionref.refreshAll();
@@ -27922,6 +28692,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           return Promise.resolve(actions.presentOutline(ctx?.focusedUid)).catch((error) => console.warn("[plexus] present outline failed", error));
         }
       },
+      { id: "presentLive", label: "Present live", run: () => actions ? Promise.resolve(actions.presentLive()).catch((error) => console.warn("[plexus] present live failed", error)) : unavailable("presentLive") },
+      { id: "exportDrawing", label: "Export drawing…", run: () => actions ? Promise.resolve(actions.exportDrawing()).catch((error) => console.warn("[plexus] export failed", error)) : unavailable("exportDrawing") },
       { id: "printFrames", label: "Print frames…", run: (ctx) => printMode(ctx, "print") },
       { id: "pngFrames", label: "PNG per frame", run: (ctx) => printMode(ctx, "png") },
       { id: "makeSlide", label: "Make slide", run: () => actions ? Promise.resolve(actions.makeSlide()).catch((error) => console.warn("[plexus] make slide failed", error)) : unavailable("makeSlide") },

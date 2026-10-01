@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.24.0]
+- Live present tweens the open drawing between frames. Escape restores the view. The image slideshow stays.
+- Slide builds hide later steps. Occlusion covers a region until reveal. Export copies, downloads, or inserts an image.
+- The palette stays two entries. The command list is 55.
+
 ## [0.23.0]
 - A corner minimap on a large drawing. Click or drag it to pan. The pan does not write elements. A small drawing hides it. The minimap switch is remembered.
 - The palette stays two entries. The command list stays 53.

@@ -636,6 +636,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         getSettings,
         doc,
         onOpen: (uid, opts) => actions.openRegion(uid, opts).catch((error) => console.warn("[plexus] open failed", error)),
+        onReveal: (uid) => actions.revealRegion?.(uid),
       });
       lifecycle.add(() => regionref.releaseAll());
       refreshAll = () => regionref.refreshAll();
@@ -1461,6 +1462,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           return Promise.resolve(actions.presentOutline(ctx?.focusedUid)).catch((error) => console.warn("[plexus] present outline failed", error));
         },
       },
+      { id: "presentLive", label: "Present live", run: () => (actions ? Promise.resolve(actions.presentLive()).catch((error) => console.warn("[plexus] present live failed", error)) : unavailable("presentLive")) },
+      { id: "exportDrawing", label: "Export drawing\u2026", run: () => (actions ? Promise.resolve(actions.exportDrawing()).catch((error) => console.warn("[plexus] export failed", error)) : unavailable("exportDrawing")) },
       { id: "printFrames", label: "Print frames\u2026", run: (ctx) => printMode(ctx, "print") },
       { id: "pngFrames", label: "PNG per frame", run: (ctx) => printMode(ctx, "png") },
       { id: "makeSlide", label: "Make slide", run: () => (actions ? Promise.resolve(actions.makeSlide()).catch((error) => console.warn("[plexus] make slide failed", error)) : unavailable("makeSlide")) },

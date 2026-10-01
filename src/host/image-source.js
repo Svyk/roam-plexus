@@ -14,7 +14,17 @@ export function polyPoints(poly) {
 }
 
 // Draws src (cropped by rect) onto a new canvas of rect size; poly (fractions of the crop box) clips the result.
-export function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document } = {}) {
+export function paintCovers(ctx, width, height, covers, color = "#ffffff") {
+  if (!ctx || !covers?.length || !(width > 0) || !(height > 0)) return;
+  ctx.fillStyle = color;
+  for (const b of covers) {
+    const w = b.w * width;
+    const h = b.h * height;
+    if (w > 0 && h > 0) ctx.fillRect(b.x * width, b.y * height, w, h);
+  }
+}
+
+export function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.document, covers } = {}) {
   const out = doc.createElement("canvas");
   out.width = sw;
   out.height = sh;
@@ -27,6 +37,7 @@ export function cropToBlob(src, { sx, sy, sw, sh }, { poly, doc = globalThis.doc
     ctx.clip();
   }
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+  paintCovers(ctx, sw, sh, covers);
   return new Promise((resolve, reject) => {
     out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("[plexus] toBlob failed"))), "image/png");
   });
