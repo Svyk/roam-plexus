@@ -126,6 +126,19 @@ test("IndexedDB: persists with graph prefix, hydrates, evicts to limit", async (
   assert.equal(idb.db.closed, true);
 });
 
+test("a generation stores under nN and drops the previous prefix", async () => {
+  const idb = fakeIdb();
+  idb.rows.set("g|v3|old", { key: "g|v3|old", blob: blob(4), w: 1, h: 1, size: 4, ts: 1 });
+  const cache = createCropCache({ graph: "g", idb, urls: fakeUrls(), generation: 2 });
+  await cache.put("v3|new", blob(4), { w: 2, h: 2 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(idb.rows.has("g|n2|v3|new"), true);
+  assert.equal(idb.rows.has("g|v3|old"), false);
+  const again = createCropCache({ graph: "g", idb, urls: fakeUrls(), generation: 2 });
+  const hit = await again.get("v3|new");
+  assert.equal(hit.w, 2);
+});
+
 test("persist=false ignores idb", async () => {
   const idb = fakeIdb();
   const cache = createCropCache({ graph: "g", idb, persist: false, urls: fakeUrls() });

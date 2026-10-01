@@ -15,6 +15,10 @@ test("defaults and no maxCropHeight", () => {
   assert.equal(s.darkCrops, true);
   assert.deepEqual(s.refOverrides, {});
   assert.equal("maxCropHeight" in s, false);
+  assert.equal(s.themeFollow, true);
+  assert.equal(s.fitOnOpen, false);
+  assert.equal(readSettings(fakeApi({ "theme-follow": false, "fit-on-open": true })).themeFollow, false);
+  assert.equal(readSettings(fakeApi({ "fit-on-open": true })).fitOnOpen, true);
 });
 
 test("number clamping", () => {

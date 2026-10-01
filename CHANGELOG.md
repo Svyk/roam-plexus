@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.16.0]
+
+- Canvas theme follows Roam, on by default, with captureUpdate NEVER. Closing the editor restores the stored theme, so edit time stays put. Fit on open is not called.
+- Command list: Lock or unlock selection, Unlock all, Copy diagnostics. The palette stays two entries.
+- Crop generation bumps when the extension version changes. Disk keys gain nN| when N is above 0.
+- Typing, editor closed, five rounds: +0.131 ms/key. Loaded mean 11.991. Unloaded mean 11.860.
+
 ## [0.15.0]
 
 - `apiVersion` stays 6. Command list, before Show in Compass: Focus mode, Todo mode, Embed query results, Embed page children, Link selected, Filter regions by tag. The same two palette entries attach on Cmd/Ctrl+P and drop when the palette closes. Alt+Shift+M still starts a mind map.

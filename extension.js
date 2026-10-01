@@ -1,4 +1,4 @@
-/* Plexus v0.15.0 | MIT | generated; edit src/ */
+/* Plexus v0.16.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -211,7 +211,9 @@ var SETTING_IDS = Object.freeze({
   printMargin: "print-margin",
   laserColor: "laser-color",
   laserDecay: "laser-decay",
-  mmTagColors: "mm-tag-colors"
+  mmTagColors: "mm-tag-colors",
+  themeFollow: "theme-follow",
+  fitOnOpen: "fit-on-open"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -239,7 +241,9 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.printMargin]: "10",
   [SETTING_IDS.laserColor]: "#e03131",
   [SETTING_IDS.laserDecay]: "1000",
-  [SETTING_IDS.mmTagColors]: ""
+  [SETTING_IDS.mmTagColors]: "",
+  [SETTING_IDS.themeFollow]: true,
+  [SETTING_IDS.fitOnOpen]: false
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -318,6 +322,7 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardHome, name: "New note cards go", description: "Where the block behind a new note card is created. drawing: a collapsed container under the drawing. page: the last block of the drawing's page. daily: today's daily page.", action: { type: "select", items: ["drawing", "page", "daily"] } },
       { id: SETTING_IDS.drawingName, name: "New drawing page name", description: "Title of a page made by New drawing on a page, after Drawings/. Tokens: {date}, {page}, {n}.", action: { type: "input", placeholder: DEFAULT_DRAWING_NAME } },
       { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
+      { id: SETTING_IDS.themeFollow, name: "Canvas theme follows Roam", description: "A full-screen drawing opens dark when Roam is dark, and light when Roam is light.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } }
     ]
   };
@@ -380,7 +385,9 @@ function readSettings(extensionAPI) {
     printMargin: clampNumber(get(SETTING_IDS.printMargin), 10, 0, 30),
     laserColor: laserColorOf(get(SETTING_IDS.laserColor)),
     laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1e3, 300, 3e3),
-    mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors))
+    mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors)),
+    themeFollow: get(SETTING_IDS.themeFollow) !== false && get(SETTING_IDS.themeFollow) !== "false",
+    fitOnOpen: get(SETTING_IDS.fitOnOpen) === true || get(SETTING_IDS.fitOnOpen) === "true"
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -2072,10 +2079,12 @@ var txPromise = (tx) => new Promise((resolve, reject) => {
   tx.onerror = () => reject(tx.error);
   tx.onabort = () => reject(tx.error || new Error("aborted"));
 });
-function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL } = {}) {
+function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL, generation = null } = {}) {
   const memory = /* @__PURE__ */ new Map();
   const prefix = `${graph}|`;
-  const currentPrefix = `${prefix}v${CACHE_VERSION}|`;
+  const genTag = Number.isInteger(generation) && generation > 0 ? `n${generation}|` : "";
+  const currentPrefix = `${prefix}${genTag}v${CACHE_VERSION}|`;
+  const diskKey = (key) => prefix + genTag + key;
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
@@ -2189,7 +2198,7 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
       try {
         const db = await openDb();
         if (!db || disposed) return null;
-        const dbKey = prefix + key;
+        const dbKey = diskKey(key);
         const tx = db.transaction(STORE, "readwrite");
         const store = tx.objectStore(STORE);
         const row = await reqPromise(store.get(dbKey));
@@ -2212,7 +2221,7 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
         const db = await openDb();
         if (!db || disposed) return;
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put({ key: prefix + key, blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
+        tx.objectStore(STORE).put({ key: diskKey(key), blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
         await txPromise(tx);
         knownBytes += entry.size;
         if (!scanned || knownBytes > limitBytes) await evictDb(db);
@@ -2230,7 +2239,7 @@ function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, me
         const db = await openDb();
         if (!db) return;
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).delete(prefix + key);
+        tx.objectStore(STORE).delete(diskKey(key));
         await txPromise(tx);
       } catch (error) {
         console.warn("[plexus] cache delete failed", error);
@@ -12871,7 +12880,7 @@ function createOutlineActions({
       return 0;
     }
   }
-  function copyText(text, done2) {
+  function copyText2(text, done2) {
     let pending;
     try {
       const writeText = () => clipboard.writeText(text);
@@ -12946,7 +12955,7 @@ function createOutlineActions({
         toast(built.message);
         return Promise.resolve(false);
       }
-      return copyText(outlineToMarkdown(built.outline), "Copied as Roam markdown");
+      return copyText2(outlineToMarkdown(built.outline), "Copied as Roam markdown");
     },
     closePreview,
     dispose() {
@@ -17998,7 +18007,7 @@ function createActions({
       if (!isId(uid)) return Promise.resolve(false);
       const hash = safe2(() => doc.defaultView?.location?.hash) ?? "";
       const route = String(hash).startsWith("#/offline/") ? "offline" : "app";
-      return copyText(`https://roamresearch.com/#/${route}/${encodeURIComponent(host.graphName())}/page/${uid}`, "Region link copied");
+      return copyText2(`https://roamresearch.com/#/${route}/${encodeURIComponent(host.graphName())}/page/${uid}`, "Region link copied");
     },
     copyDrawingRef() {
       const editor = native.activeEditor(doc);
@@ -18006,7 +18015,7 @@ function createActions({
         toaster.show("Open a drawing full-screen first", { kind: "error" });
         return Promise.resolve(false);
       }
-      return copyText(`((${editor.drawingUid}))`, "Drawing ref copied");
+      return copyText2(`((${editor.drawingUid}))`, "Drawing ref copied");
     },
     copyDrawingEmbed() {
       const editor = native.activeEditor(doc);
@@ -18014,7 +18023,7 @@ function createActions({
         toaster.show("Open a drawing full-screen first", { kind: "error" });
         return Promise.resolve(false);
       }
-      return copyText(`{{[[embed]]: ((${editor.drawingUid}))}}`, "Drawing embed copied");
+      return copyText2(`{{[[embed]]: ((${editor.drawingUid}))}}`, "Drawing embed copied");
     },
     selectTextOnly() {
       const editor = native.activeEditor(doc);
@@ -18080,7 +18089,7 @@ function createActions({
       toaster.show("Crop cache cleared");
     }
   };
-  function copyText(text, done2) {
+  function copyText2(text, done2) {
     let pending2;
     try {
       const write = () => clipboard.writeText(text);
@@ -24499,6 +24508,128 @@ function installTextLinks({
   };
 }
 
+// src/host/canvas-prefs.js
+var LOCK_ACTION_NAMES = Object.freeze(["toggleElementLock", "unlockAllElements"]);
+var STORAGE_KEY = "plexus-generation";
+function themeToApply({ enabled, hostDark, currentTheme }) {
+  if (!enabled) return null;
+  const want = hostDark ? "dark" : "light";
+  return currentTheme === want ? null : want;
+}
+function applyCanvasPrefs(app, { themeFollow, hostDark, fitOnOpen } = {}) {
+  const applied = { theme: null, fit: false };
+  if (!app) return applied;
+  const theme = themeToApply({ enabled: !!themeFollow, hostDark: !!hostDark, currentTheme: app.state?.theme });
+  if (theme && typeof app.updateScene === "function") {
+    app.updateScene({ appState: { theme }, captureUpdate: "NEVER" });
+    applied.theme = theme;
+  }
+  if (fitOnOpen && typeof app.scrollToContent === "function") {
+    app.scrollToContent(void 0, { fitToContent: true, animate: false });
+    applied.fit = true;
+  }
+  return applied;
+}
+function shouldReapplyTheme(before, now, applied) {
+  return !!(applied?.theme && before && now && now.theme === before.theme && now.theme !== applied.theme);
+}
+function captureView(app) {
+  const state = app?.state || {};
+  const zoom = state.zoom;
+  return {
+    theme: state.theme ?? null,
+    scrollX: state.scrollX ?? null,
+    scrollY: state.scrollY ?? null,
+    zoom: zoom && typeof zoom === "object" ? zoom.value ?? null : zoom ?? null
+  };
+}
+function restoreAutomaticView(app, { before, after, applied } = {}) {
+  const result = { theme: false, camera: false };
+  if (!app || typeof app.updateScene !== "function" || !before || !after || !applied) return result;
+  const now = captureView(app);
+  const patch = {};
+  if (applied.theme && now.theme === applied.theme && before.theme && before.theme !== now.theme) {
+    patch.theme = before.theme;
+    result.theme = true;
+  }
+  const moved = before.scrollX !== after.scrollX || before.scrollY !== after.scrollY || before.zoom !== after.zoom;
+  const stillThere = now.scrollX === after.scrollX && now.scrollY === after.scrollY && now.zoom === after.zoom;
+  if (applied.fit && moved && stillThere) {
+    patch.scrollX = before.scrollX;
+    patch.scrollY = before.scrollY;
+    if (before.zoom != null) patch.zoom = { value: before.zoom };
+    result.camera = true;
+  }
+  if (result.theme || result.camera) app.updateScene({ appState: patch, captureUpdate: "NEVER" });
+  return result;
+}
+function runNamedAction(app, name) {
+  const action = app?.actionManager?.actions?.[name];
+  if (!action || typeof app.actionManager.executeAction !== "function") return false;
+  app.actionManager.executeAction(action, "api");
+  return true;
+}
+function syncGeneration(storage, version) {
+  if (!storage || typeof storage.getItem !== "function") return { generation: 0, bumped: false };
+  let parsed = null;
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch {
+    parsed = null;
+  }
+  const previous = Number.isInteger(parsed?.generation) && parsed.generation >= 0 ? parsed.generation : 0;
+  const same3 = parsed?.version === version && Number.isInteger(parsed?.generation);
+  const generation = same3 ? previous : previous + 1;
+  if (!same3 && typeof storage.setItem === "function") {
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify({ version, generation }));
+    } catch {
+    }
+  }
+  return { generation, bumped: !same3 };
+}
+function diagnosticsText({ version, generation, themeFollow, fitOnOpen, editorOpen, lockActions }) {
+  const locks = Array.isArray(lockActions) ? lockActions.join(",") : "";
+  return [
+    `plexus ${version || "development"}`,
+    `generation ${Number.isInteger(generation) ? generation : 0}`,
+    `themeFollow ${themeFollow ? "on" : "off"}`,
+    `fitOnOpen ${fitOnOpen ? "on" : "off"}`,
+    `editor ${editorOpen ? "open" : "closed"}`,
+    `lockActions ${locks}`
+  ].join("\n");
+}
+async function copyText(text, { clipboard, doc } = {}) {
+  try {
+    if (clipboard?.writeText) {
+      await clipboard.writeText(text);
+      return "clipboard";
+    }
+  } catch {
+  }
+  const body = doc?.body;
+  const ta = doc?.createElement?.("textarea");
+  if (!ta || !body?.append) return "none";
+  ta.value = text;
+  body.append(ta);
+  try {
+    ta.select?.();
+  } catch {
+  }
+  let ok = false;
+  try {
+    ok = doc.execCommand?.("copy") === true;
+  } catch {
+    ok = false;
+  }
+  try {
+    ta.remove?.();
+  } catch {
+  }
+  return ok ? "textarea" : "none";
+}
+
 // src/extension.js
 var activeLifecycle = null;
 var THUMB_WIDTHS = [160, 480];
@@ -24651,6 +24782,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let runEmbedChildren = () => console.warn("[plexus] unavailable outside Roam: embedChildren");
     let runLinkSelected = () => console.warn("[plexus] unavailable outside Roam: linkSelected");
     let runFilterTag = () => console.warn("[plexus] unavailable outside Roam: filterTag");
+    let runLockAction = () => console.warn("[plexus] unavailable outside Roam: lock");
+    let runDiagnostics = () => console.warn("[plexus] unavailable outside Roam: diagnostics");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
@@ -24776,10 +24909,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       };
       const host = createRoamHost({ api });
       const settings = getSettings();
+      const generationState = syncGeneration(doc.defaultView?.localStorage, extension?.version || "development");
       const cache = createCropCache({
         graph: host.graphName(),
         persist: settings.cacheOnDisk && !host.isEncrypted(),
-        limitBytes: settings.cacheLimitMb * 2 ** 20
+        limitBytes: settings.cacheLimitMb * 2 ** 20,
+        generation: generationState.generation
       });
       lifecycle.add(() => cache.dispose());
       const cold = createColdRenderer({ api, doc });
@@ -25586,6 +25721,26 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           toaster.show("Could not link those cards", { kind: "error" });
         }
       };
+      runLockAction = (name) => {
+        const app = mountedApp?.();
+        if (!app) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
+        if (!runNamedAction(app, name)) toaster.show("That action is not in this Excalidraw build", { kind: "error" });
+      };
+      runDiagnostics = async () => {
+        const app = mountedApp?.();
+        const prefs = getSettings();
+        const names = LOCK_ACTION_NAMES.filter((name) => app?.actionManager?.actions?.[name]);
+        const text = diagnosticsText({
+          version: extension?.version || "development",
+          generation: generationState.generation,
+          themeFollow: prefs.themeFollow,
+          fitOnOpen: prefs.fitOnOpen,
+          editorOpen: !!app,
+          lockActions: names
+        });
+        const how = await copyText(text, { clipboard: globalThis.navigator?.clipboard, doc });
+        toaster.show(how === "none" ? "Could not copy diagnostics" : "Diagnostics copied", { kind: how === "none" ? "error" : void 0 });
+      };
       runFilterTag = (ctx) => {
         const uid = focusedUid(ctx);
         if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
@@ -25663,6 +25818,56 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           const history = createViewHistory({ onChange: () => toolbar.refresh() });
           const mountZ = outer ? baseZIndex(doc, outer) : 1e3;
           mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
+          try {
+            const prefs = getSettings();
+            const before = captureView(app);
+            const box = {
+              applied: applyCanvasPrefs(app, { themeFollow: prefs.themeFollow, hostDark: isHostDark(doc), fitOnOpen: false })
+            };
+            box.after = captureView(app);
+            const retry = setTimeout(() => {
+              try {
+                if (shouldReapplyTheme(before, captureView(app), box.applied)) {
+                  const again = applyCanvasPrefs(app, { themeFollow: prefs.themeFollow, hostDark: isHostDark(doc), fitOnOpen: false });
+                  if (again.theme) box.applied = { ...box.applied, theme: again.theme };
+                }
+                const landed = captureView(app);
+                if (box.applied.fit && (landed.scrollX !== before.scrollX || landed.scrollY !== before.scrollY || landed.zoom !== before.zoom)) {
+                  box.after = landed;
+                } else if (box.applied.theme && landed.theme === box.applied.theme) {
+                  box.after = landed;
+                }
+              } catch (error) {
+                console.warn("[plexus] canvas prefs failed", error);
+              }
+            }, 400);
+            mounted.disposers.push(() => clearTimeout(retry));
+            const applied = box.applied;
+            const after = () => box.after;
+            if (outer && (applied.theme || applied.fit)) {
+              const onClose = (event) => {
+                const hit = event.target?.closest?.(".bp3-icon-minimize, .bp3-button");
+                if (!hit || !outer.contains(hit)) return;
+                const minimize = hit.classList?.contains("bp3-icon-minimize") || hit.querySelector?.(".bp3-icon-minimize");
+                if (!minimize) return;
+                try {
+                  restoreAutomaticView(app, { before, after: after(), applied: box.applied });
+                } catch (error) {
+                  console.warn("[plexus] canvas restore failed", error);
+                }
+              };
+              outer.addEventListener("pointerdown", onClose, true);
+              outer.addEventListener("mousedown", onClose, true);
+              outer.addEventListener("click", onClose, true);
+              mounted.disposers.push(() => {
+                outer.removeEventListener("pointerdown", onClose, true);
+                outer.removeEventListener("mousedown", onClose, true);
+                outer.removeEventListener("click", onClose, true);
+              });
+            }
+          } catch (error) {
+            console.warn("[plexus] canvas prefs failed", error);
+          }
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -25960,6 +26165,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "embedChildren", label: "Embed page children", run: (ctx) => runEmbedChildren(ctx) },
       { id: "linkSelected", label: "Link selected", run: () => runLinkSelected() },
       { id: "filterRegions", label: "Filter regions by tag", run: (ctx) => runFilterTag(ctx) },
+      { id: "lockSelection", label: "Lock or unlock selection", run: () => runLockAction("toggleElementLock") },
+      { id: "unlockAll", label: "Unlock all", run: () => runLockAction("unlockAllElements") },
+      { id: "copyDiagnostics", label: "Copy diagnostics", run: () => Promise.resolve(runDiagnostics()).catch((error) => console.warn("[plexus] diagnostics failed", error)) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];

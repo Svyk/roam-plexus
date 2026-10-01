@@ -27,6 +27,8 @@ export const SETTING_IDS = Object.freeze({
   laserColor: "laser-color",
   laserDecay: "laser-decay",
   mmTagColors: "mm-tag-colors",
+  themeFollow: "theme-follow",
+  fitOnOpen: "fit-on-open",
 });
 
 const DEFAULTS = Object.freeze({
@@ -56,6 +58,8 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.laserColor]: "#e03131",
   [SETTING_IDS.laserDecay]: "1000",
   [SETTING_IDS.mmTagColors]: "",
+  [SETTING_IDS.themeFollow]: true,
+  [SETTING_IDS.fitOnOpen]: false,
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -138,6 +142,7 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardHome, name: "New note cards go", description: "Where the block behind a new note card is created. drawing: a collapsed container under the drawing. page: the last block of the drawing's page. daily: today's daily page.", action: { type: "select", items: ["drawing", "page", "daily"] } },
       { id: SETTING_IDS.drawingName, name: "New drawing page name", description: "Title of a page made by New drawing on a page, after Drawings/. Tokens: {date}, {page}, {n}.", action: { type: "input", placeholder: DEFAULT_DRAWING_NAME } },
       { id: SETTING_IDS.mmTagColors, name: "Mind map tag colors", description: "Node fill by #tag, for example urgent=#ffc9c9, done=#b2f2bb. The first matching tag in a node's text sets its color. Applies at each map's next redraw.", action: { type: "input", placeholder: "urgent=#ffc9c9, done=#b2f2bb" } },
+      { id: SETTING_IDS.themeFollow, name: "Canvas theme follows Roam", description: "A full-screen drawing opens dark when Roam is dark, and light when Roam is light.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.debug, name: "Debug logging", description: "Log Plexus diagnostics to the console.", action: { type: "switch" } },
     ],
   };
@@ -209,6 +214,8 @@ export function readSettings(extensionAPI) {
     laserColor: laserColorOf(get(SETTING_IDS.laserColor)),
     laserDecay: clampNumber(get(SETTING_IDS.laserDecay), 1000, 300, 3000),
     mmTagColors: parseTagColors(get(SETTING_IDS.mmTagColors)),
+    themeFollow: get(SETTING_IDS.themeFollow) !== false && get(SETTING_IDS.themeFollow) !== "false",
+    fitOnOpen: get(SETTING_IDS.fitOnOpen) === true || get(SETTING_IDS.fitOnOpen) === "true",
   };
 }
 

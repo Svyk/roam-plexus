@@ -51,6 +51,7 @@ import { installTextLinks } from "./view/text-links.js";
 import { parseEmbedRef } from "./model/embeds.js";
 import { elementBounds, viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
+import { LOCK_ACTION_NAMES, applyCanvasPrefs, captureView, copyText, diagnosticsText, restoreAutomaticView, runNamedAction, shouldReapplyTheme, syncGeneration } from "./host/canvas-prefs.js";
 import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
 
 let activeLifecycle = null;
@@ -190,15 +191,19 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let runEmbedChildren = () => console.warn("[plexus] unavailable outside Roam: embedChildren");
     let runLinkSelected = () => console.warn("[plexus] unavailable outside Roam: linkSelected");
     let runFilterTag = () => console.warn("[plexus] unavailable outside Roam: filterTag");
+    let runLockAction = () => console.warn("[plexus] unavailable outside Roam: lock");
+    let runDiagnostics = () => console.warn("[plexus] unavailable outside Roam: diagnostics");
     const doc = globalThis.document;
     const api = globalThis.roamAlphaAPI;
     if (doc && api) {
       const host = createRoamHost({ api });
       const settings = getSettings();
+      const generationState = syncGeneration(doc.defaultView?.localStorage, extension?.version || "development");
       const cache = createCropCache({
         graph: host.graphName(),
         persist: settings.cacheOnDisk && !host.isEncrypted(),
         limitBytes: settings.cacheLimitMb * 2 ** 20,
+        generation: generationState.generation,
       });
       lifecycle.add(() => cache.dispose());
       const cold = createColdRenderer({ api, doc });
@@ -984,6 +989,26 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           toaster.show("Could not link those cards", { kind: "error" });
         }
       };
+      runLockAction = (name) => {
+        const app = mountedApp?.();
+        if (!app) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
+        if (!runNamedAction(app, name)) toaster.show("That action is not in this Excalidraw build", { kind: "error" });
+      };
+      runDiagnostics = async () => {
+        const app = mountedApp?.();
+        const prefs = getSettings();
+        const names = LOCK_ACTION_NAMES.filter((name) => app?.actionManager?.actions?.[name]);
+        const text = diagnosticsText({
+          version: extension?.version || "development",
+          generation: generationState.generation,
+          themeFollow: prefs.themeFollow,
+          fitOnOpen: prefs.fitOnOpen,
+          editorOpen: !!app,
+          lockActions: names,
+        });
+        const how = await copyText(text, { clipboard: globalThis.navigator?.clipboard, doc });
+        toaster.show(how === "none" ? "Could not copy diagnostics" : "Diagnostics copied", { kind: how === "none" ? "error" : undefined });
+      };
       runFilterTag = (ctx) => {
         const uid = focusedUid(ctx);
         if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
@@ -1044,6 +1069,49 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           const history = camera.createViewHistory({ onChange: () => toolbar.refresh() });
           const mountZ = outer ? baseZIndex(doc, outer) : 1000;
           mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
+          try {
+            const prefs = getSettings();
+            const before = captureView(app);
+            const box = {
+              applied: applyCanvasPrefs(app, { themeFollow: prefs.themeFollow, hostDark: isHostDark(doc), fitOnOpen: false }),
+            };
+            box.after = captureView(app);
+            const retry = setTimeout(() => {
+              try {
+                if (shouldReapplyTheme(before, captureView(app), box.applied)) {
+                  const again = applyCanvasPrefs(app, { themeFollow: prefs.themeFollow, hostDark: isHostDark(doc), fitOnOpen: false });
+                  if (again.theme) box.applied = { ...box.applied, theme: again.theme };
+                }
+                const landed = captureView(app);
+                if (box.applied.fit && (landed.scrollX !== before.scrollX || landed.scrollY !== before.scrollY || landed.zoom !== before.zoom)) {
+                  box.after = landed;
+                } else if (box.applied.theme && landed.theme === box.applied.theme) {
+                  box.after = landed;
+                }
+              } catch (error) { console.warn("[plexus] canvas prefs failed", error); }
+            }, 400);
+            mounted.disposers.push(() => clearTimeout(retry));
+            const applied = box.applied;
+            const after = () => box.after;
+            if (outer && (applied.theme || applied.fit)) {
+              const onClose = (event) => {
+                const hit = event.target?.closest?.(".bp3-icon-minimize, .bp3-button");
+                if (!hit || !outer.contains(hit)) return;
+                const minimize = hit.classList?.contains("bp3-icon-minimize") || hit.querySelector?.(".bp3-icon-minimize");
+                if (!minimize) return;
+                try { restoreAutomaticView(app, { before, after: after(), applied: box.applied }); }
+                catch (error) { console.warn("[plexus] canvas restore failed", error); }
+              };
+              outer.addEventListener("pointerdown", onClose, true);
+              outer.addEventListener("mousedown", onClose, true);
+              outer.addEventListener("click", onClose, true);
+              mounted.disposers.push(() => {
+                outer.removeEventListener("pointerdown", onClose, true);
+                outer.removeEventListener("mousedown", onClose, true);
+                outer.removeEventListener("click", onClose, true);
+              });
+            }
+          } catch (error) { console.warn("[plexus] canvas prefs failed", error); }
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -1288,6 +1356,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "embedChildren", label: "Embed page children", run: (ctx) => runEmbedChildren(ctx) },
       { id: "linkSelected", label: "Link selected", run: () => runLinkSelected() },
       { id: "filterRegions", label: "Filter regions by tag", run: (ctx) => runFilterTag(ctx) },
+      { id: "lockSelection", label: "Lock or unlock selection", run: () => runLockAction("toggleElementLock") },
+      { id: "unlockAll", label: "Unlock all", run: () => runLockAction("unlockAllElements") },
+      { id: "copyDiagnostics", label: "Copy diagnostics", run: () => Promise.resolve(runDiagnostics()).catch((error) => console.warn("[plexus] diagnostics failed", error)) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];

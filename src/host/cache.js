@@ -30,10 +30,12 @@ const txPromise = (tx) => new Promise((resolve, reject) => {
   tx.onabort = () => reject(tx.error || new Error("aborted"));
 });
 
-export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL } = {}) {
+export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 ** 20, memoryEntries = 300, idb = globalThis.indexedDB, urls = globalThis.URL, generation = null } = {}) {
   const memory = new Map();
   const prefix = `${graph}|`;
-  const currentPrefix = `${prefix}v${CACHE_VERSION}|`;
+  const genTag = Number.isInteger(generation) && generation > 0 ? `n${generation}|` : "";
+  const currentPrefix = `${prefix}${genTag}v${CACHE_VERSION}|`;
+  const diskKey = (key) => prefix + genTag + key;
   const useDb = !!(persist && idb);
   let dbPromise = null;
   let disposed = false;
@@ -140,7 +142,7 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
       try {
         const db = await openDb();
         if (!db || disposed) return null;
-        const dbKey = prefix + key;
+        const dbKey = diskKey(key);
         const tx = db.transaction(STORE, "readwrite");
         const store = tx.objectStore(STORE);
         const row = await reqPromise(store.get(dbKey));
@@ -164,7 +166,7 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
         const db = await openDb();
         if (!db || disposed) return;
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put({ key: prefix + key, blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
+        tx.objectStore(STORE).put({ key: diskKey(key), blob, w, h, type: blob.type, size: entry.size, ts: Date.now() });
         await txPromise(tx);
         knownBytes += entry.size;
         if (!scanned || knownBytes > limitBytes) await evictDb(db);
@@ -180,7 +182,7 @@ export function createCropCache({ graph, persist = true, limitBytes = 100 * 2 **
         const db = await openDb();
         if (!db) return;
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).delete(prefix + key);
+        tx.objectStore(STORE).delete(diskKey(key));
         await txPromise(tx);
       } catch (error) {
         console.warn("[plexus] cache delete failed", error);
