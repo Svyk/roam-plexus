@@ -13,7 +13,7 @@ function rawTree() {
   return blk("R", "Root", [blk("a", "Alpha", [blk("a1", "Alpha one")]), blk("b", "Beta")]);
 }
 
-function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}) {
+function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {}, pull = () => ({}) } = {}) {
   const rafQ = [];
   const raf = (fn) => { rafQ.push(fn); return rafQ.length; };
   const caf = (id) => { rafQ[id - 1] = null; };
@@ -39,6 +39,9 @@ function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}
   };
   const containerListeners = [];
   const containerEl = {
+    children: [],
+    append(node) { this.children.push(node); },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
     addEventListener: (t, fn, o) => containerListeners.push([t, fn, o]),
     removeEventListener: (t, fn) => { const i = containerListeners.findIndex(([tt, f]) => tt === t && f === fn); if (i >= 0) containerListeners.splice(i, 1); },
     focus() { containerEl.focused = true; },
@@ -60,6 +63,9 @@ function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}
         style: {}, value: "", className: "",
         addEventListener: (t, fn) => l.push([t, fn]),
         removeEventListener: (t, fn) => { const i = l.findIndex(([tt, f]) => tt === t && f === fn); if (i >= 0) l.splice(i, 1); },
+        children: [],
+        append(c) { this.children.push(c); },
+        querySelectorAll() { return this.children; },
         remove() { const i = body.children.indexOf(el); if (i >= 0) body.children.splice(i, 1); },
         focus() {}, select() {}, listeners: l,
         fire(t, ev = {}) { const e = { stopPropagation() { e.stopped = true; }, preventDefault() {}, ...ev }; for (const [tt, f] of [...l]) if (tt === t) f(e); return e; },
@@ -83,7 +89,7 @@ function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}
   };
   const api = {
     util: { generateUID: (() => { let n = 0; return () => `gen${++n}xxxx`; })() },
-    data: { pull: () => ({}) },
+    data: { pull },
   };
   const native = {
     activeEditor: () => ({ app }),
@@ -105,7 +111,7 @@ function setup({ raw = rawTree(), state = {}, mmOpts = {}, mountOpts = {} } = {}
   const select = (uid) => { app.state.selectedElementIds = { [nodeId("R", uid)]: true }; };
   const live = () => elements.filter((e) => !e.isDeleted);
   const el = (uid) => elements.find((e) => e.id === nodeId("R", uid));
-  return { docListeners, viewListeners, mm, app, key, select, flush, toasts, calls, watches, listeners, containerListeners, doc, unmount, el, live, elements: () => elements, setElements: (e) => { elements = e; app.scene.nonce += 1; }, fireChange: () => { for (const cb of [...listeners.change]) cb(); }, writer };
+  return { docListeners, viewListeners, mm, app, key, select, flush, toasts, calls, watches, listeners, containerListeners, containerEl, doc, unmount, el, live, elements: () => elements, setElements: (e) => { elements = e; app.scene.nonce += 1; }, fireChange: () => { for (const cb of [...listeners.change]) cb(); }, writer };
 }
 
 const tab = { code: "Tab", key: "Tab" };
@@ -632,4 +638,98 @@ test("queue chip waits 2.5s while pending, shows a failure at once, and unmount 
   assert.equal(ctx.doc.body.children.length, 0);
   assert.equal(ctx.toasts.includes("Outline update pending"), false);
   assert.equal(ctx.toasts.includes("Could not update the outline"), false);
+});
+
+test("both sides and org chart are chosen from the command list and Alt+L returns to the five", () => {
+  const t = setup();
+  t.select("a");
+  assert.equal(t.mm.setLayout(t.app, "both"), true);
+  assert.equal(mmOf(t.el("R")).layout, "both");
+  assert.ok(t.el("a").x > t.el("R").x + t.el("R").width);
+  assert.ok(t.el("b").x + t.el("b").width < t.el("R").x);
+  t.mm.setLayout(t.app, "down");
+  const down = Math.abs(t.el("a").x - t.el("b").x);
+  t.mm.setLayout(t.app, "org");
+  assert.equal(Math.abs(t.el("a").x - t.el("b").x) - down, 18);
+  t.key({ code: "KeyL", key: "l", altKey: true });
+  assert.equal(mmOf(t.el("R")).layout, "right");
+});
+
+test("shape, connector, palette, and contrast cycle on the root marker", () => {
+  const t = setup();
+  t.select("a");
+  t.mm.cycleStyle(t.app, "shape");
+  assert.equal(t.el("a").type, "ellipse");
+  t.mm.cycleStyle(t.app, "shape");
+  assert.equal(t.el("a").type, "rectangle");
+  t.mm.cycleStyle(t.app, "connector");
+  assert.equal(t.elements().find((e) => e.id.endsWith("-a-e")).endArrowhead, "arrow");
+  t.mm.cycleStyle(t.app, "palette");
+  assert.equal(mmOf(t.el("R")).palette, "ink");
+  assert.equal(t.el("R").backgroundColor, "#e9ecef");
+  t.mm.cycleStyle(t.app, "contrast");
+  assert.equal(mmOf(t.el("R")).contrast, true);
+  assert.equal(mmOf(t.el("a")).ink, "#1e1e1e");
+});
+
+test("an indented paste becomes child blocks and a drawing is refused", () => {
+  const t = setup();
+  t.select("a");
+  const paste = t.containerListeners.find(([type]) => type === "paste")[1];
+  const event = {
+    clipboardData: { getData: () => "One\n  Two" },
+    preventDefault() { event.prevented = true; },
+    stopPropagation() {},
+  };
+  paste(event);
+  assert.equal(event.prevented, true);
+  const created = t.calls.filter((c) => c[0] === "createChild");
+  assert.equal(created.length, 2);
+  assert.equal(created[0][2], "a");
+  assert.equal(created[0][3].string, "One");
+  assert.equal(created[1][2], created[0][3].uid);
+  assert.equal(created[1][3].string, "Two");
+  assert.equal(t.doc.body.children.length, 0);
+  const before = t.calls.length;
+  paste({ clipboardData: { getData: () => "{{[[excalidraw]]}}\nchild" }, preventDefault() {}, stopPropagation() {} });
+  assert.equal(t.calls.length, before);
+  assert.ok(t.toasts.some((m) => m.includes("Drawings")));
+});
+
+test("Paste outline commits from the prompt and Escape cancels", async () => {
+  const t = setup();
+  t.select("a");
+  const pending = t.mm.pasteOutline(t.app);
+  const prompt = t.doc.body.children.find((el) => String(el.className).includes("plexus-outline-prompt"));
+  prompt.value = "Line";
+  prompt.fire("keydown", { key: "Enter", metaKey: true });
+  assert.equal(await pending, true);
+  assert.equal(t.calls.some((c) => c[3] && c[3].string === "Line"), true);
+  const cancel = t.mm.pasteOutline(t.app);
+  t.doc.body.children.find((el) => String(el.className).includes("plexus-outline-prompt")).fire("keydown", { key: "Escape" });
+  assert.equal(await cancel, false);
+});
+
+test("a page link opens that outline beside the selected node", async () => {
+  const t = setup({
+    raw: blk("R", "Root", [blk("a", "See [[Other]]"), blk("pageuid01", "Other body")]),
+    pull: (_pattern, ident) => (ident && ident[1] === "Other" ? { ":block/uid": "pageuid01" } : {}),
+  });
+  t.select("a");
+  const ax = t.el("a").x;
+  const aw = t.el("a").width;
+  assert.equal(await t.mm.openLinked(t.app), true);
+  const sub = t.elements().find((e) => e.id === "pmm-pageuid01-pageuid01");
+  assert.equal(sub.x, ax + aw + 120);
+});
+
+test("a plus button adds a child", () => {
+  const t = setup();
+  t.fireChange();
+  t.flush();
+  const host = t.containerEl.children.find((n) => n.className === "plexus-mm-chrome");
+  const plus = host.children.find((n) => n.className === "plexus-mm-plus");
+  assert.ok(plus);
+  plus.fire("click");
+  assert.equal(t.calls[0][0], "createChild");
 });

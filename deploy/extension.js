@@ -1,4 +1,4 @@
-/* Plexus v0.27.0 | MIT | generated; edit src/ */
+/* Plexus v0.28.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -3497,6 +3497,7 @@ var PAD_X = 14;
 var PAD_Y = 10;
 var LINE_HEIGHT = 1.25;
 var SIBLING_GAP = 18;
+var ORG_SIBLING_GAP = 36;
 var LEVEL_GAP = 70;
 var RADIAL_RADIUS = 220;
 var RADIAL_STEP = 180;
@@ -3818,13 +3819,15 @@ function nodeSize(text, fontSize, measure3, maxWidth = MAX_TEXT_WIDTH) {
     text: lines.join("\n")
   };
 }
-function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP, siblingGap = SIBLING_GAP }) {
   const pos = {};
   if (!tree) return pos;
   const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
   const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
   if (layout2 === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
   if (layout2 === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
+  if (layout2 === "org") return layoutTree({ tree, sizes, layout: "down", pinned, root, gapOf, siblingGap: ORG_SIBLING_GAP });
+  if (layout2 === "both") return layoutBoth(tree, sizes, pinned, root, gapOf);
   const dirL = layout2 === "cause" ? "left" : layout2;
   const horizontal = dirL === "right" || dirL === "left";
   const cross = (n) => horizontal ? sz(n).height : sz(n).width;
@@ -3833,7 +3836,7 @@ function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root 
   function extent(n) {
     let span = 0;
     const kids2 = free(n);
-    for (let i = 0; i < kids2.length; i++) span += extent(kids2[i]) + (i ? SIBLING_GAP : 0);
+    for (let i = 0; i < kids2.length; i++) span += extent(kids2[i]) + (i ? siblingGap : 0);
     for (const k of visibleChildren(n)) if (isPinned(k)) extent(k);
     const e = Math.max(cross(n), span);
     ext.set(n, { e, span });
@@ -3866,12 +3869,28 @@ function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root 
         ky = y - gap - ks.height;
       }
       place2(k, kx, ky);
-      cursor += e + SIBLING_GAP;
+      cursor += e + siblingGap;
     }
     for (const k of visibleChildren(n)) if (isPinned(k)) place2(k, pinned[k.uid].x, pinned[k.uid].y);
   }
   extent(tree);
   place2(tree, root.x, root.y);
+  return pos;
+}
+function layoutBoth(tree, sizes, pinned, rootPos, gapOf) {
+  const pos = {};
+  if (!tree) return pos;
+  const right = [];
+  const left = [];
+  visibleChildren(tree).forEach((k, i) => (i % 2 === 0 ? right : left).push(k));
+  const merge = (list, side) => {
+    if (!list.length) return;
+    const rel = layoutTree({ tree: { ...tree, children: list }, sizes, layout: side, pinned, root: rootPos, gapOf });
+    Object.assign(pos, rel);
+  };
+  merge(right, "right");
+  merge(left, "left");
+  pos[tree.uid] = { x: rootPos.x, y: rootPos.y };
   return pos;
 }
 var FISH_BONE_OFFSET = 50;
@@ -5187,6 +5206,200 @@ function installRefLines({ doc, app, containerEl, texts, requestFrame = globalTh
   };
 }
 
+// src/model/region-sync.js
+var MARKUP = /\[\[|\(\(|\{\{|#/;
+var SYNC_CAP = 20;
+function hasMarkup2(value) {
+  return MARKUP.test(String(value ?? ""));
+}
+function singleText(elements, bbox) {
+  if (!bbox || bbox.length !== 4) return null;
+  const [x1, y1, x2, y2] = bbox;
+  const hits = [];
+  for (const el of elements || []) {
+    if (!el || el.isDeleted || el.type !== "text") continue;
+    if (typeof el.id === "string" && el.id.startsWith("pmm-")) continue;
+    const cx = (Number(el.x) || 0) + (Number(el.width) || 0) / 2;
+    const cy = (Number(el.y) || 0) + (Number(el.height) || 0) / 2;
+    if (cx < x1 || cy < y1 || cx > x2 || cy > y2) continue;
+    hits.push(el);
+    if (hits.length > 1) return null;
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+function syncRows({ regions, elements, appState }) {
+  const rows = [];
+  for (const row of regions || []) {
+    const region = row?.region;
+    if (!region || region.supported === false) continue;
+    let box;
+    try {
+      box = regionSceneBBox(region, elements, appState);
+    } catch {
+      box = null;
+    }
+    if (!box?.bbox) continue;
+    const text = singleText(elements, box.bbox);
+    if (!text) continue;
+    rows.push({
+      regionUid: row.uid,
+      caption: region.caption || "",
+      text: text.originalText ?? text.text ?? "",
+      elementId: text.id
+    });
+    if (rows.length >= SYNC_CAP) break;
+  }
+  return rows;
+}
+function stepSync(prev, row) {
+  if (!row || row.editing) return { action: "none", next: prev || null };
+  const rawCap = String(row.caption ?? "").replace(/\s+/g, " ").trim();
+  const rawText = String(row.text ?? "").replace(/\s+/g, " ").trim();
+  if (hasMarkup2(rawCap) || hasMarkup2(rawText)) return { action: "none", next: prev || null };
+  if (!prev) return { action: "none", next: { caption: rawCap, text: rawText } };
+  const capChanged = rawCap !== prev.caption;
+  const textChanged = rawText !== prev.text;
+  if (capChanged && textChanged) return { action: "none", next: prev };
+  if (textChanged && rawText && rawText !== rawCap) return { action: "write", caption: rawText, next: { caption: rawText, text: rawText } };
+  if (capChanged && rawCap !== rawText) return { action: "paint", text: rawCap, next: { caption: rawCap, text: rawCap } };
+  return { action: "none", next: { caption: rawCap, text: rawText } };
+}
+
+// src/view/region-sync.js
+var PATTERN = "[:block/uid :block/string]";
+function installRegionSync({ app, api, drawingUid, regionsOf, nameRegion, requestFrame = globalThis.requestAnimationFrame, cancelFrame = globalThis.cancelAnimationFrame } = {}) {
+  if (!app || !drawingUid || typeof regionsOf !== "function" || typeof nameRegion !== "function") return () => {
+  };
+  const state = /* @__PURE__ */ new Map();
+  const watches = /* @__PURE__ */ new Map();
+  let frame = 0;
+  let queued = false;
+  let alive = true;
+  const schedule = () => {
+    if (!alive || queued) return;
+    queued = true;
+    const run = () => {
+      queued = false;
+      pass();
+    };
+    if (requestFrame) frame = requestFrame(run);
+    else run();
+  };
+  const watch = (uid) => {
+    if (typeof api?.data?.addPullWatch !== "function") return () => {
+    };
+    const ident = `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`;
+    const handler = () => schedule();
+    try {
+      api.data.addPullWatch(PATTERN, ident, handler);
+    } catch {
+      return () => {
+      };
+    }
+    let done2 = false;
+    return () => {
+      if (done2) return;
+      done2 = true;
+      try {
+        api.data.removePullWatch(PATTERN, ident, handler);
+      } catch {
+      }
+    };
+  };
+  const paint = (id, text) => {
+    const elements = app.getSceneElementsIncludingDeleted?.() || [];
+    let changed = false;
+    const next = elements.map((el) => {
+      if (!el || el.id !== id || el.isDeleted) return el;
+      const current7 = el.originalText ?? el.text ?? "";
+      if (current7 === text && el.text === text) return el;
+      changed = true;
+      return {
+        ...el,
+        text,
+        originalText: text,
+        version: (el.version || 0) + 1,
+        versionNonce: Math.floor(Math.random() * 2147483646) + 1,
+        updated: Date.now()
+      };
+    });
+    if (changed) app.updateScene?.({ elements: next, captureUpdate: "IMMEDIATELY" });
+  };
+  const pass = () => {
+    frame = 0;
+    if (!alive) return;
+    const st = app.state || {};
+    if (st.cursorButton === "down") return;
+    const editingId = st.editingTextElement?.id ?? null;
+    let regions = [];
+    try {
+      regions = regionsOf(drawingUid) || [];
+    } catch {
+      regions = [];
+    }
+    const elements = app.scene?.getNonDeletedElements?.() || [];
+    const rows = syncRows({ regions, elements, appState: st });
+    const live3 = new Set(rows.map((r) => r.regionUid));
+    for (const [uid, off] of watches) {
+      if (live3.has(uid)) continue;
+      try {
+        off();
+      } catch {
+      }
+      watches.delete(uid);
+      state.delete(uid);
+    }
+    for (const row of rows) {
+      if (!watches.has(row.regionUid)) watches.set(row.regionUid, watch(row.regionUid));
+      const prev = state.get(row.regionUid) || null;
+      const step = stepSync(prev, { ...row, editing: editingId === row.elementId });
+      state.set(row.regionUid, step.next);
+      if (step.action === "write") {
+        const snap = { caption: String(row.caption ?? "").replace(/\s+/g, " ").trim(), text: String(row.text ?? "").replace(/\s+/g, " ").trim() };
+        Promise.resolve(nameRegion(row.regionUid, step.caption)).then((ok) => {
+          if (ok === false) state.set(row.regionUid, snap);
+        }).catch(() => state.set(row.regionUid, snap));
+      } else if (step.action === "paint") {
+        try {
+          paint(row.elementId, step.text);
+        } catch {
+          state.set(row.regionUid, prev);
+        }
+      }
+    }
+  };
+  let offChange = null;
+  try {
+    offChange = app.onChangeEmitter?.on?.(() => schedule());
+  } catch {
+    offChange = null;
+  }
+  schedule();
+  return () => {
+    alive = false;
+    if (frame && cancelFrame) {
+      try {
+        cancelFrame(frame);
+      } catch {
+      }
+    }
+    if (typeof offChange === "function") {
+      try {
+        offChange();
+      } catch {
+      }
+    }
+    for (const off of watches.values()) {
+      try {
+        off();
+      } catch {
+      }
+    }
+    watches.clear();
+    state.clear();
+  };
+}
+
 // src/model/links.js
 var URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
 function parseRoamLink(link, graphName) {
@@ -5693,11 +5906,11 @@ function createCanvasBacklinks({
           e?.stopPropagation?.();
           e?.stopImmediatePropagation?.();
           e?.preventDefault?.();
-          const current6 = badges.get(key) ?? badge;
+          const current7 = badges.get(key) ?? badge;
           try {
             onAddToCanvas({
-              elementId: current6.elementId ?? null,
-              bbox: current6.bbox ? [...current6.bbox] : null,
+              elementId: current7.elementId ?? null,
+              bbox: current7.bbox ? [...current7.bbox] : null,
               ref: { uid: ref.uid, string: ref.string, page: ref.page }
             });
           } catch (error) {
@@ -5869,7 +6082,7 @@ var within2 = (node, root) => {
 };
 var hasText = (children) => (children || []).some((c) => String(c?.string ?? "").trim() || hasText(c?.children));
 function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTimer }) {
-  let current6 = null;
+  let current7 = null;
   const view2 = doc.defaultView;
   const requestFrame = raf ?? ((cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = caf ?? ((id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id));
@@ -5878,9 +6091,9 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
   const later = setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const unlater = clearTimer ?? ((id) => clearTimeout(id));
   const close2 = () => {
-    const state = current6;
+    const state = current7;
     if (!state) return;
-    current6 = null;
+    current7 = null;
     state.teardown();
     state.dialog.removeEventListener?.("keydown", state.onKey);
     state.dialog.removeEventListener?.("keyup", state.onKeyUp);
@@ -5901,7 +6114,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
     }
   };
   return {
-    isOpen: () => !!current6,
+    isOpen: () => !!current7,
     close: close2,
     dispose: close2,
     // slides: [{ name, url|null, notes?: { rootUid, onAdd? } }]. Returns a handle; setSlide fills a slide that was not ready yet.
@@ -5977,7 +6190,7 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
       let cssW = 0;
       let cssH = 0;
       const ctx = safe(() => canvas.getContext?.("2d")) ?? null;
-      const live3 = () => current6?.dialog === dialog;
+      const live3 = () => current7?.dialog === dialog;
       const unmountNotes = () => {
         for (const el of noteHosts) {
           try {
@@ -6290,26 +6503,26 @@ function createPresenter({ doc, api, host, raf, caf, now, dpr, setTimer, clearTi
         }
         view2?.removeEventListener?.("resize", onResize);
       };
-      current6 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
+      current7 = { dialog, preload, onKey, onKeyUp, onClick, onCancel, onClosed, onClose, teardown };
       doc.body.append(dialog);
       show();
       dialog.showModal();
       sizeCanvas();
       dialog.focus?.();
-      const state = current6;
+      const state = current7;
       return {
         setSlide(i, patch) {
-          if (current6 !== state || !list[i]) return;
+          if (current7 !== state || !list[i]) return;
           Object.assign(list[i], patch);
           if (i === at || i === at + 1) show();
           if (i === at && patch && "notes" in patch) renderNotes();
         },
-        isOpen: () => current6 === state,
+        isOpen: () => current7 === state,
         close: () => {
-          if (current6 === state) close2();
+          if (current7 === state) close2();
         },
         notice: (text) => {
-          if (current6 === state) notice(text);
+          if (current7 === state) notice(text);
         }
       };
     }
@@ -8602,12 +8815,12 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
     rings.set(drawingUid, ring);
     while (rings.size > maxDrawings) rings.delete(rings.keys().next().value);
   }
-  function deltaOf(current6, nextEls) {
+  function deltaOf(current7, nextEls) {
     const nextById = new Map(nextEls.map((e) => [e?.id, e]));
     const curIds = /* @__PURE__ */ new Set();
     const before = [];
     let removed = 0;
-    for (const el of current6) {
+    for (const el of current7) {
       if (!el) continue;
       curIds.add(el.id);
       if (el.isDeleted) continue;
@@ -8622,26 +8835,26 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
   function guardedWrite(app, opts = {}) {
     if (disposed || !app) return false;
     const { drawingUid, next, label = "Change", captureUpdate, appState, force = false } = opts;
-    const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const nextEls = typeof next === "function" ? next(current6) : next;
+    const current7 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const nextEls = typeof next === "function" ? next(current7) : next;
     if (!Array.isArray(nextEls)) return false;
-    const before = liveCount(current6);
+    const before = liveCount(current7);
     const after = liveCount(nextEls);
     if (!force && before > 10 && after * 5 <= before) {
-      refuse2(app, opts, before - after, before, current6);
+      refuse2(app, opts, before - after, before, current7);
       return false;
     }
-    const delta = captureUpdate !== "NEVER" ? deltaOf(current6, nextEls) : null;
+    const delta = captureUpdate !== "NEVER" ? deltaOf(current7, nextEls) : null;
     app.updateScene({ elements: nextEls, ...appState ? { appState } : {}, ...captureUpdate !== void 0 ? { captureUpdate } : {} });
     if (delta && delta.removed > 0 && drawingUid) push(drawingUid, { drawingUid, time: now(), label, before: delta.before, added: delta.added });
     return true;
   }
-  function refuse2(app, opts, n, m, current6) {
+  function refuse2(app, opts, n, m, current7) {
     const { drawingUid, next, label = "Change", captureUpdate, appState, onApplyAnyway } = opts;
     const key = `${drawingUid}|${label}|${n}|${m}`;
     if (pending && pending.key === key && now() < pending.until) return;
     const token2 = { key, until: now() + ACTION_MS };
-    const sig = signature(current6);
+    const sig = signature(current7);
     const run = () => {
       dropPending(token2);
       if (disposed) return;
@@ -8699,10 +8912,10 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
       for (const id of entry.added) added.add(id);
     }
     for (const id of added) before.delete(id);
-    const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
-    const byId = new Map(current6.map((e) => [e?.id, e]));
+    const current7 = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const byId = new Map(current7.map((e) => [e?.id, e]));
     const stamp = Date.now();
-    const elements = current6.map((el) => {
+    const elements = current7.map((el) => {
       const old = before.get(el?.id);
       if (old) return { ...old, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
       if (el && added.has(el.id) && !el.isDeleted) return { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: nonce(), updated: stamp };
@@ -9766,7 +9979,7 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
       drawingUid: uid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => [...current6, ...elements],
+      next: (current7) => [...current7, ...elements],
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
     if (!ok) throw new Error(`Not applied: ${label} was refused`);
@@ -10306,6 +10519,94 @@ function resolveDrop({ plan, tree, dragged, point, layout: layout2 }) {
   return { type: "pin" };
 }
 
+// src/model/mmextra.js
+var PASTE_CAP = 40;
+var CROSS_CAP = 12;
+var PALETTES = Object.freeze({
+  ink: Object.freeze({ root: "#e9ecef", branch: Object.freeze(["#dee2e6", "#ced4da", "#adb5bd", "#868e96", "#495057"]) }),
+  leaf: Object.freeze({ root: "#d3f9d8", branch: Object.freeze(["#b2f2bb", "#8ce99a", "#69db7c", "#51cf66", "#37b24d"]) })
+});
+var PAGE_RE2 = /\[\[([^\[\]\n]+)\]\]/;
+var BLOCK_RE = /\(\(([A-Za-z0-9_-]+)\)\)/g;
+var DRAWING_RE3 = /\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}/;
+function paletteFill(id, depth, branchIndex) {
+  const pal = PALETTES[id];
+  if (!pal) return null;
+  if (depth === 0) return pal.root;
+  const i = Number.isFinite(branchIndex) ? branchIndex : 0;
+  return pal.branch[(i % pal.branch.length + pal.branch.length) % pal.branch.length];
+}
+function inkFor(fill) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(fill || "").trim());
+  if (!m) return "#1e1e1e";
+  const n = parseInt(m[1], 16);
+  const lin = (c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const L = 0.2126 * lin(n >> 16 & 255) + 0.7152 * lin(n >> 8 & 255) + 0.0722 * lin(n & 255);
+  return L > 0.45 ? "#1e1e1e" : "#ffffff";
+}
+function parseIndent(text, cap = PASTE_CAP) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const root = { text: "", children: [] };
+  const stack2 = [{ indent: -1, node: root }];
+  let count = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const m = /^([ \t]*)(.*)$/.exec(line);
+    const indent = m[1].replace(/\t/g, "  ").length;
+    const body = m[2].trim();
+    if (!body) continue;
+    if (DRAWING_RE3.test(body)) return { ok: false, reason: "excluded" };
+    count += 1;
+    if (count > cap) return { ok: false, reason: "cap", count };
+    while (stack2.length > 1 && indent <= stack2[stack2.length - 1].indent) stack2.pop();
+    const node = { text: body, children: [] };
+    stack2[stack2.length - 1].node.children.push(node);
+    stack2.push({ indent, node });
+  }
+  if (!count) return { ok: false, reason: "empty" };
+  return { ok: true, tree: root, count };
+}
+function crossPairs(nodes, cap = CROSS_CAP) {
+  const ids = /* @__PURE__ */ new Set();
+  const parentOf = /* @__PURE__ */ new Map();
+  for (const n of nodes || []) {
+    if (!n?.uid) continue;
+    ids.add(n.uid);
+    if (n.parent) parentOf.set(n.uid, n.parent);
+  }
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const n of nodes || []) {
+    if (!n?.uid) continue;
+    const s = String(n.string || "");
+    for (const m of s.matchAll(BLOCK_RE)) {
+      const other = m[1];
+      if (!ids.has(other) || other === n.uid) continue;
+      if (parentOf.get(n.uid) === other || parentOf.get(other) === n.uid) continue;
+      const key = n.uid < other ? `${n.uid}|${other}` : `${other}|${n.uid}`;
+      if (seen.has(key)) continue;
+      if (out.length >= cap) return out;
+      seen.add(key);
+      out.push({ from: n.uid, to: other });
+    }
+  }
+  return out;
+}
+function linkTarget(string) {
+  const s = String(string || "");
+  const block = /\(\(([A-Za-z0-9_-]+)\)\)/.exec(s);
+  if (block) return { kind: "block", uid: block[1] };
+  const page = PAGE_RE2.exec(s);
+  if (page) {
+    const title = page[1].trim();
+    if (title) return { kind: "page", title };
+  }
+  return null;
+}
+
 // src/model/mmsync.js
 var FONT_FAMILY = 5;
 var BOUNDARY_PAD = 12;
@@ -10395,9 +10696,10 @@ function buildNode({ map, uid, x, y, width, height, backgroundColor, mm: mm2, bo
     ...strokeStyle !== void 0 ? { strokeStyle } : {}
   });
 }
-function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity, frameId: frameId2 }) {
+function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity, frameId: frameId2, strokeColor }) {
   return base(textId(map, uid), "text", x, y, width, height, {
     ...opacity !== void 0 ? { opacity } : {},
+    ...strokeColor ? { strokeColor } : {},
     ...frameId2 ? { frameId: frameId2 } : {},
     text,
     originalText,
@@ -10498,6 +10800,12 @@ function edgeGeometry(p, c, layout2, start) {
   let sy;
   let ex;
   let ey;
+  if (layout2 === "both") {
+    const pc = p.x + p.width / 2;
+    const cc = c.x + c.width / 2;
+    layout2 = cc >= pc ? "right" : "left";
+  }
+  if (layout2 === "org") layout2 = "down";
   if (layout2 === "cause" || layout2 === "fishbone") layout2 = "left";
   if (layout2 === "right") {
     sx = p.x + p.width;
@@ -10609,6 +10917,7 @@ function planMap({ elements, tree, sizes, layout: layout2 = "right", textOf, roo
   const dir = rootMM.layout || layout2;
   const flow = dir === FLOW_LAYOUT;
   const family = flow ? "flow" : isCauseLayout(dir) ? "cause" : "branch";
+  const mapShape = !flow && rootMM.nodeShape === "ellipse" ? "ellipse" : "rectangle";
   const oldScheme = rootMM.scheme === "cause" ? "cause" : rootMM.scheme === "flow" ? "flow" : "branch";
   const attrEdges = rootEl ? rootMM.attrEdges === true : !!(rootDefaults && rootDefaults.attrEdges === true);
   const vtree = drawnTree(tree, { layout: dir, attrEdges });
@@ -10634,7 +10943,7 @@ function planMap({ elements, tree, sizes, layout: layout2 = "right", textOf, roo
     const wrap = flow && st.type === "decision" ? FLOW_DECISION_WRAP : void 0;
     const raw = typeof sizes === "function" ? { ...wrap ? sizes(text, fs, n.uid, wrap) : sizes(text, fs, n.uid) } : { ...sizes && sizes[n.uid] };
     const s = fullSize(raw, text, fs);
-    const shape = flow ? st.type === "decision" ? "diamond" : st.type === "root" || st.type === "end" ? "ellipse" : "rectangle" : "rectangle";
+    const shape = flow ? st.type === "decision" ? "diamond" : st.type === "root" || st.type === "end" ? "ellipse" : "rectangle" : mapShape;
     if (shape !== "rectangle") {
       s.width = containerDimension(s.textWidth + 4, shape);
       s.height = containerDimension(s.textHeight + 4, shape);
@@ -10673,7 +10982,7 @@ function planMap({ elements, tree, sizes, layout: layout2 = "right", textOf, roo
     return r;
   };
   const baseWrap = arrowLabelWrapWidth(0, LABEL_FONT2);
-  const vertical = dir === "down" || dir === "up";
+  const vertical = dir === "down" || dir === "up" || dir === "org";
   const gapOf = (uid) => {
     const lt = labels.get(uid);
     if (!lt) return LEVEL_GAP;
@@ -10708,13 +11017,19 @@ function planMap({ elements, tree, sizes, layout: layout2 = "right", textOf, roo
     spine = fb.spine;
     slotX = fb.slotX;
   } else positions = layoutTree({ tree: vtree, sizes: sizeMap, layout: dir, pinned, root: anchor, gapOf });
-  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges, flow: flowInfo };
+  const style = {
+    shape: mapShape,
+    connector: !flow && rootMM.connector === "arrow" ? "arrow" : "line",
+    palette: !flow && family === "branch" && paletteFill(rootMM.palette, 0, 0) ? rootMM.palette : "",
+    contrast: rootMM.contrast === true
+  };
+  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges, flow: flowInfo, style };
 }
 function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, rootPos, tagColors, rootDefaults }) {
   const ops = { add: [], update: [], remove: [] };
   if (!tree) return ops;
   const plan = planMap({ elements, tree, sizes, layout: layout2, textOf, rootPos, tagColors, rootDefaults });
-  const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX } = plan;
+  const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX, style } = plan;
   const flow = plan.flow;
   const fishbone2 = dir === "fishbone";
   const pre = idPrefix(root);
@@ -10819,6 +11134,7 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
           if (dashed && e.strokeStyle !== "dashed") ep.strokeStyle = "dashed";
         }
       } else if (curFlow !== void 0 && e.endArrowhead === "arrow") ep.endArrowhead = null;
+      else if (!wantEdgeMM.conn && (mmOf(e) || {}).conn === "arrow" && e.endArrowhead === "arrow") ep.endArrowhead = null;
       if (!same(mmOf(e) || null, wantEdgeMM)) ep.customData = withMM(e.customData, wantEdgeMM);
       const eb = mergeBound(e.boundElements, pre, edgeBound);
       if (!same(eb, e.boundElements || [])) ep.boundElements = eb;
@@ -10858,6 +11174,9 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
       fontSize: i.fs
     };
     const curMM = i.mm || {};
+    const palFill = style.palette ? paletteFill(style.palette, v.depth, v.branchIndex) : null;
+    const fill = i.tag || palFill || schemeFill(v, family);
+    const ink = style.contrast ? inkFor(fill) : null;
     const wantMM = isRoot ? { ...curMM, uid, map: root, root: true, layout: curMM.layout || dir, bounds } : { ...curMM, uid, map: root, ...branch !== void 0 ? { branch } : {} };
     if (flow && !isRoot) delete wantMM.branch;
     if (i.tag) wantMM.tag = i.tag;
@@ -10868,12 +11187,15 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
     else delete wantMM.dash;
     if (i.shape !== "rectangle") wantMM.shape = i.shape;
     else delete wantMM.shape;
+    delete wantMM.fillFrom;
+    delete wantMM.ink;
+    if (style.palette) wantMM.fillFrom = style.palette;
+    if (ink) wantMM.ink = ink;
     if (isRoot) {
       if (family === "cause") wantMM.scheme = "cause";
       else if (family === "flow") wantMM.scheme = "flow";
       else delete wantMM.scheme;
     }
-    const fill = i.tag || schemeFill(v, family);
     if (!i.el) {
       if (isRoot && rootDefaults) Object.assign(wantMM, { ...rootDefaults, ...wantMM });
       addBodies.push(
@@ -10892,7 +11214,7 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
           type: i.shape,
           frameId: frameWant
         }),
-        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0, frameId: frameWant })
+        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : void 0, frameId: frameWant, strokeColor: ink || void 0 })
       );
     } else {
       const el = i.el;
@@ -10905,7 +11227,9 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
         p.roundness = roundnessFor(i.shape);
       }
       if (frameWant !== void 0 && el.frameId !== frameWant) p.frameId = frameWant;
-      if (!isRoot && !flow && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = fill;
+      if (style.palette && (curMM.fillFrom || "") !== style.palette) p.backgroundColor = fill;
+      else if (!style.palette && curMM.fillFrom) p.backgroundColor = fill;
+      else if (!isRoot && !flow && curMM.branch !== void 0 && curMM.branch !== branch) p.backgroundColor = fill;
       else if (oldScheme !== family || curMM.tag !== i.tag) {
         const oldExpected = curMM.tag || schemeFill(v, oldScheme);
         if (el.backgroundColor === oldExpected && oldExpected !== fill) p.backgroundColor = fill;
@@ -10933,6 +11257,8 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
         if (frameWant !== void 0 && txtEl.frameId !== frameWant) tp.frameId = frameWant;
         if (i.done && curMM.done !== true) tp.opacity = 50;
         else if (!i.done && curMM.done === true && txtEl.opacity === 50) tp.opacity = 100;
+        if (ink && txtEl.strokeColor !== ink) tp.strokeColor = ink;
+        else if (!ink && curMM.ink && txtEl.strokeColor === curMM.ink) tp.strokeColor = "#1e1e1e";
       }
     }
     if (!isRoot && !flow) {
@@ -10941,7 +11267,9 @@ function reconcile({ elements, tree, sizes, layout: layout2 = "right", textOf, r
       const g = edgeGeometry(finalRect.get(parentUid), rect, dir, boneStart);
       const eid = edgeId(root, uid);
       desiredIds.add(eid);
-      doEdge({ eid, parentUid, childUid: uid, g, wantEdgeMM: edgeMM(root, parentUid, uid, v.node.via), via: v.node.via, boneStart, labelUid: uid });
+      const wantEdgeMM = edgeMM(root, parentUid, uid, v.node.via);
+      if (style.connector === "arrow") wantEdgeMM.conn = "arrow";
+      doEdge({ eid, parentUid, childUid: uid, g, wantEdgeMM, via: v.node.via, boneStart, labelUid: uid, arrow: style.connector === "arrow" });
     }
   }
   const addChips = [];
@@ -11123,6 +11451,140 @@ function projectionIds(elements, root) {
   return (elements || []).filter((el) => el && !el.isDeleted && typeof el.id === "string" && el.id.startsWith(pre)).map((el) => el.id);
 }
 
+// src/view/mm-chrome.js
+function plusPoint(box) {
+  const { x, y, w, h, layout: layout2, side } = box;
+  if (side === "left" || layout2 === "left") return { x, y: y + h / 2 };
+  if (layout2 === "down" || layout2 === "org") return { x: x + w / 2, y: y + h };
+  if (layout2 === "up") return { x: x + w / 2, y };
+  return { x: x + w, y: y + h / 2 };
+}
+function installMmChrome({ doc, app, containerEl, getModel, onAdd, onFold } = {}) {
+  if (!containerEl || typeof containerEl.append !== "function" || typeof doc?.createElement !== "function") {
+    return { refresh() {
+    }, dispose() {
+    } };
+  }
+  const host = doc.createElement("div");
+  host.className = "plexus-mm-chrome";
+  containerEl.append(host);
+  const svg = typeof doc.createElementNS === "function" ? doc.createElementNS("http://www.w3.org/2000/svg", "svg") : doc.createElement("svg");
+  svg.setAttribute?.("class", "plexus-mm-cross");
+  if ("className" in svg && typeof svg.className === "string") svg.className = "plexus-mm-cross";
+  containerEl.append(svg);
+  const local = (x, y) => {
+    const rect = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const v = sceneToViewport({ x, y, appState: app?.state });
+    return { x: v.x - rect.left, y: v.y - rect.top };
+  };
+  const button = (className, text, x, y, run) => {
+    const el = doc.createElement("button");
+    el.type = "button";
+    el.className = className;
+    el.textContent = text;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    const stop = (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+    };
+    el.addEventListener?.("pointerdown", stop);
+    el.addEventListener?.("click", (e) => {
+      stop(e);
+      run();
+    });
+    host.append(el);
+  };
+  const refresh = () => {
+    const kids2 = typeof host.querySelectorAll === "function" ? [...host.querySelectorAll("button")] : [...host.children || []];
+    for (const node of kids2) node.remove?.();
+    const lines = typeof svg.querySelectorAll === "function" ? [...svg.querySelectorAll("line")] : [];
+    for (const node of lines) node.remove?.();
+    const model = typeof getModel === "function" ? getModel() || {} : {};
+    for (const box of model.boxes || []) {
+      const at = plusPoint(box);
+      const p = local(at.x, at.y);
+      button("plexus-mm-plus", "+", p.x - 9, p.y - 9, () => onAdd?.(box));
+      if (box.hidden > 0) {
+        const c = local(box.x + box.w, box.y);
+        button("plexus-mm-badge", String(box.hidden), c.x - 8, c.y - 8, () => onFold?.(box));
+      }
+    }
+    const by = /* @__PURE__ */ new Map();
+    for (const n of model.nodes || []) if (n?.uid) by.set(n.uid, n);
+    for (const pair of crossPairs(model.nodes || [])) {
+      const a = by.get(pair.from);
+      const b = by.get(pair.to);
+      if (!a || !b) continue;
+      const p1 = local(a.x, a.y);
+      const p2 = local(b.x, b.y);
+      const line = typeof doc.createElementNS === "function" ? doc.createElementNS("http://www.w3.org/2000/svg", "line") : doc.createElement("line");
+      line.setAttribute?.("x1", String(p1.x));
+      line.setAttribute?.("y1", String(p1.y));
+      line.setAttribute?.("x2", String(p2.x));
+      line.setAttribute?.("y2", String(p2.y));
+      svg.append?.(line);
+    }
+  };
+  return {
+    refresh,
+    dispose() {
+      try {
+        host.remove?.();
+      } catch {
+      }
+      try {
+        svg.remove?.();
+      } catch {
+      }
+    }
+  };
+}
+
+// src/view/outline-prompt.js
+var current = null;
+function openOutlinePrompt({ doc, zIndex = 100002 } = {}) {
+  if (current) current.cancel();
+  let resolveOuter;
+  const promise = new Promise((resolve) => {
+    resolveOuter = resolve;
+  });
+  const el = doc.createElement("textarea");
+  el.className = "plexus-portal plexus-mm-input plexus-outline-prompt";
+  el.style.zIndex = String(zIndex);
+  const finish = (value) => {
+    if (!current || current.el !== el) return;
+    current = null;
+    try {
+      el.remove?.();
+    } catch {
+    }
+    resolveOuter(value);
+  };
+  current = { el, cancel: () => finish(null) };
+  promise.cancel = () => finish(null);
+  el.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      finish(null);
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      finish(String(el.value ?? ""));
+    }
+  });
+  for (const type of ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"]) {
+    el.addEventListener(type, (e) => e.stopPropagation());
+  }
+  doc.body?.append?.(el);
+  try {
+    el.focus?.();
+  } catch {
+  }
+  return promise;
+}
+
 // src/view/mindmap.js
 var NODE_CAP = 500;
 var DELETE_WINDOW_MS = 3e3;
@@ -11157,8 +11619,8 @@ var ARROWS = { ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowU
 var LETTERS = /* @__PURE__ */ new Set(["KeyF", "KeyL", "KeyP", "KeyB", "KeyX", "KeyC", "KeyV"]);
 var defaultRaf = (fn) => typeof globalThis.requestAnimationFrame === "function" ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16);
 var defaultGuardedWrite = (app, { next, captureUpdate } = {}) => {
-  const current6 = app.getSceneElementsIncludingDeleted?.() ?? [];
-  app.updateScene({ elements: typeof next === "function" ? next(current6) : next, ...captureUpdate ? { captureUpdate } : {} });
+  const current7 = app.getSceneElementsIncludingDeleted?.() ?? [];
+  app.updateScene({ elements: typeof next === "function" ? next(current7) : next, ...captureUpdate ? { captureUpdate } : {} });
   return true;
 };
 var defaultCaf = (id) => typeof globalThis.cancelAnimationFrame === "function" ? globalThis.cancelAnimationFrame(id) : clearTimeout(id);
@@ -11279,6 +11741,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let dragCancelled = false;
     let labelToasted = false;
     let flowLabelToasted = false;
+    let chrome = { refresh() {
+    }, dispose() {
+    } };
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard2 = () => alive && !disposed && native.activeEditor(doc)?.app === app;
     const state = () => app.state || {};
@@ -11717,6 +12182,11 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function pass(force = false) {
       scheduled = null;
       if (!alive) return;
+      try {
+        chrome.refresh();
+      } catch (error) {
+        warn7("chrome", error);
+      }
       force = force === true || deferredSince != null && now() - deferredSince > MAX_WAIT_MS;
       const st = state();
       const editingId = st.editingTextElement?.id ?? null;
@@ -12238,7 +12708,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function setLayout(layout2) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout2)) return false;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT, "both", "org"].includes(layout2)) return false;
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: layout2 }) : e), [sel.root]);
       if (done2) toast(`Layout: ${layout2} (${CHANGE_BACK})`);
       return done2;
@@ -12254,6 +12724,161 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { attrEdges: on ? true : void 0 }) : e), [sel.root]);
       if (done2) toast(`Attribute blocks as edges: ${on ? "on" : "off"} (${CHANGE_BACK})`);
       return done2;
+    }
+    function cycleStyle(kind) {
+      const sel = selectedNode();
+      const rootEl = sel ? rootElement(sel.root) : null;
+      if (!rootEl) return false;
+      const mm2 = mmOf(rootEl) || {};
+      if (kind !== "contrast" && mm2.layout === FLOW_LAYOUT) {
+        toast(FLOW_LAYOUT_HINT);
+        return false;
+      }
+      let patch = null;
+      if (kind === "shape") patch = { nodeShape: mm2.nodeShape === "ellipse" ? void 0 : "ellipse" };
+      else if (kind === "connector") patch = { connector: mm2.connector === "arrow" ? void 0 : "arrow" };
+      else if (kind === "palette") {
+        const order = [void 0, "ink", "leaf"];
+        const cur = order.includes(mm2.palette) ? mm2.palette : void 0;
+        patch = { palette: order[(order.indexOf(cur) + 1) % order.length] };
+      } else if (kind === "contrast") patch = { contrast: mm2.contrast === true ? void 0 : true };
+      else return false;
+      return commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, patch) : e), [sel.root]);
+    }
+    function applyOutline(text) {
+      const sel = selectedNode();
+      if (!sel) {
+        toast("Select a mind-map node first");
+        return false;
+      }
+      const parsed = parseIndent(text);
+      if (!parsed.ok) {
+        if (parsed.reason === "excluded") toast("Drawings cannot be pasted here");
+        else if (parsed.reason === "cap") toast("At most 40 blocks");
+        else toast("Nothing to paste");
+        return false;
+      }
+      const found = findNode(trees.get(sel.root), sel.uid);
+      if (!found) return false;
+      found.node.open = true;
+      const jobs = [];
+      const walk2 = (parentNode, parentUid, branch) => {
+        for (const child of branch.children || []) {
+          const uid = api.util.generateUID();
+          const node = { uid, string: child.text, open: true, children: [] };
+          parentNode.children.push(node);
+          jobs.push(writer.createChild(sel.root, parentUid, { uid, string: child.text }));
+          walk2(node, uid, child);
+        }
+      };
+      walk2(found.node, sel.uid, parsed.tree);
+      commit(null, [sel.root], { force: true });
+      toast(`Added ${parsed.count}`);
+      Promise.all(jobs).catch((error) => {
+        warn7("paste outline", error);
+        failToast();
+        refreshRoot(sel.root);
+      });
+      return true;
+    }
+    async function pasteOutline() {
+      const sel = selectedNode();
+      if (!sel) {
+        toast("Select a mind-map node first");
+        return false;
+      }
+      let text = null;
+      try {
+        text = await openOutlinePrompt({ doc, zIndex: (zIndex ?? 1e3) + 2 });
+      } catch (error) {
+        warn7("outline prompt", error);
+        return false;
+      }
+      if (text == null) return false;
+      return applyOutline(text);
+    }
+    function onPasteOutline(event) {
+      let text = "";
+      try {
+        text = event.clipboardData?.getData?.("text/plain") ?? "";
+      } catch {
+        text = "";
+      }
+      if (!text.includes("\n") || state().editingTextElement || !selectedNode()) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      applyOutline(text);
+    }
+    async function openLinked() {
+      const sel = selectedNode();
+      if (!sel) {
+        toast("Select a mind-map node first");
+        return false;
+      }
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      const target = linkTarget(node?.string || "");
+      if (!target) {
+        toast("This node has no page link or block ref");
+        return false;
+      }
+      let uid = target.kind === "block" ? target.uid : null;
+      if (target.kind === "page") {
+        try {
+          const raw = api.data.pull("[:block/uid]", [":node/title", target.title]);
+          uid = raw?.[":block/uid"] || null;
+        } catch (error) {
+          warn7("page link", error);
+          uid = null;
+        }
+      }
+      if (!uid) {
+        toast(target.kind === "page" ? "That page is missing" : "That block is missing");
+        return false;
+      }
+      if (trees.has(uid)) {
+        toast("That outline is already on this canvas");
+        select(uid, uid);
+        return true;
+      }
+      const at = { x: (sel.el.x || 0) + (sel.el.width || 0) + 120, y: sel.el.y || 0 };
+      const ok = showOutline(uid, at);
+      if (!ok) toast("That outline is missing");
+      return ok;
+    }
+    function chromeModel() {
+      const boxes = [];
+      const nodes = [];
+      for (const root of trees.keys()) {
+        const tree = trees.get(root);
+        if (!tree || isFlow(root)) continue;
+        const rootEl = rootElement(root);
+        const layout2 = mmOf(rootEl)?.layout || "right";
+        const rootCenter = rootEl ? rootEl.x + (rootEl.width || 0) / 2 : 0;
+        for (const v of visibleNodes(tree)) {
+          const el = els().find((e) => e.id === nodeId(root, v.node.uid));
+          if (!el || el.isDeleted) continue;
+          const cx = el.x + (el.width || 0) / 2;
+          boxes.push({
+            uid: v.node.uid,
+            root,
+            x: el.x,
+            y: el.y,
+            w: el.width || 0,
+            h: el.height || 0,
+            layout: layout2,
+            side: layout2 === "both" ? cx < rootCenter ? "left" : "right" : null,
+            hidden: countHidden(v.node)
+          });
+          nodes.push({
+            uid: v.node.uid,
+            parent: v.parent?.uid || null,
+            string: v.node.string || "",
+            x: cx,
+            y: el.y + (el.height || 0) / 2
+          });
+        }
+      }
+      return { boxes, nodes };
     }
     function togglePin(sel) {
       if (sel.isRoot) return null;
@@ -12387,8 +13012,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       });
       return root;
     }
-    function showOutline(root) {
-      rootPos.set(root, { x: 0, y: 0 });
+    function showOutline(root, at) {
+      const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : { x: 0, y: 0 };
+      rootPos.set(root, pos);
       rootDefaults.set(root, { attrEdges: true });
       trees.set(root, null);
       ensureRoot(root);
@@ -12457,7 +13083,27 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       target.addEventListener(type, fn, opts);
       offs.push(() => target.removeEventListener(type, fn, opts));
     };
+    chrome = installMmChrome({
+      doc,
+      app,
+      containerEl,
+      getModel: chromeModel,
+      onAdd: (box) => {
+        if (alive) newNode(box.root, box.uid, "child");
+      },
+      onFold: (box) => {
+        if (alive) toggleFold({ root: box.root, uid: box.uid });
+      }
+    });
+    offs.push(() => {
+      try {
+        chrome.dispose();
+      } catch (error) {
+        warn7("chrome", error);
+      }
+    });
     listen(containerEl, "keydown", onKeyDown, true);
+    listen(containerEl, "paste", onPasteOutline, true);
     for (const name of ["onChangeEmitter", "onScrollChangeEmitter"]) {
       try {
         const off = app[name]?.on?.(() => onChange());
@@ -12493,6 +13139,9 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
       mapOptions,
       setLayout,
       setAttrEdges,
+      cycleStyle,
+      pasteOutline,
+      openLinked,
       flush,
       dispose() {
         flush();
@@ -12548,13 +13197,16 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     mount,
     selectedNode: (app) => sessionFor(app)?.selectedNode() ?? null,
     startRoot: ({ app, drawingUid }) => sessionFor(app)?.startRoot({ drawingUid }) ?? null,
-    async showOutline({ app, rootUid }) {
+    async showOutline({ app, rootUid, at }) {
       const s = await waitForSession(app);
-      return s ? s.showOutline(rootUid) : false;
+      return s ? s.showOutline(rootUid, at) : false;
     },
     mapOptions: (app) => sessionFor(app)?.mapOptions() ?? null,
     setLayout: (app, layout2) => sessionFor(app)?.setLayout(layout2) ?? false,
     setAttrEdges: (app, on) => sessionFor(app)?.setAttrEdges(on) ?? false,
+    cycleStyle: (app, kind) => sessionFor(app)?.cycleStyle(kind) ?? false,
+    pasteOutline: (app) => sessionFor(app)?.pasteOutline() ?? Promise.resolve(false),
+    openLinked: (app) => sessionFor(app)?.openLinked() ?? Promise.resolve(false),
     outlineInfo,
     NODE_CAP,
     hasSession: (app) => sessions.has(app),
@@ -12697,15 +13349,15 @@ function createMmWriter({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       if (!pullRaw("[:block/uid]", parentUid)) return { ok: false, reason: "missing-target" };
       if (neighbour === uid) return { ok: false, reason: "self" };
       if (await insideBranch(uid, parentUid)) return { ok: false, reason: "inside-source" };
-      const current6 = childUids(pullRaw(CHILDREN, parentUid));
-      if (neighbour != null && !current6.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
+      const current7 = childUids(pullRaw(CHILDREN, parentUid));
+      if (neighbour != null && !current7.includes(neighbour)) return { ok: false, reason: "missing-neighbour" };
       await unfold(parentUid);
-      const same3 = current6.includes(uid);
-      const rest = current6.filter((u) => u !== uid);
+      const same3 = current7.includes(uid);
+      const rest = current7.filter((u) => u !== uid);
       const at = neighbour == null ? rest.length : rest.indexOf(neighbour) + (afterUid != null && beforeUid == null ? 1 : 0);
       if (same3) {
         const blocks = [...rest.slice(0, at), uid, ...rest.slice(at)];
-        if (blocks.every((u, i) => u === current6[i])) return { ok: true, written: false };
+        if (blocks.every((u, i) => u === current7[i])) return { ok: true, written: false };
         if (typeof api.data.block.reorderBlocks === "function") {
           await api.data.block.reorderBlocks({ location: { "parent-uid": parentUid }, blocks });
           return { ok: true, written: true };
@@ -13267,10 +13919,10 @@ function createSnapshotScheduler({
   }
   return { snapshotNow, dispose };
 }
-function planRestore({ current: current6 = [], snapshot = [], files, now = () => Date.now() } = {}) {
+function planRestore({ current: current7 = [], snapshot = [], files, now = () => Date.now() } = {}) {
   const stamp = now();
   const byId = /* @__PURE__ */ new Map();
-  for (const el of current6) if (el) byId.set(el.id, el);
+  for (const el of current7) if (el) byId.set(el.id, el);
   const owned = (el) => typeof el?.id === "string" && el.id.startsWith("pmm-");
   const bump4 = (el, from, extra) => ({
     ...el,
@@ -13290,7 +13942,7 @@ function planRestore({ current: current6 = [], snapshot = [], files, now = () =>
   }
   const restored = next.length;
   let deleted = 0;
-  for (const el of current6) {
+  for (const el of current7) {
     if (!el || kept.has(el.id)) continue;
     if (owned(el) || el.isDeleted) {
       next.push(el);
@@ -13435,11 +14087,11 @@ function openRestoreDialog({ doc, zIndex = 1e5, session = [], loadSaved, onResto
 // src/view/chart-dialog.js
 var ISOLATED = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
 var LAYOUT_LABELS = { tree: "Tree", fishbone: "Fishbone", pentagon: "Pentagon" };
-var current = null;
+var current2 = null;
 function openChartDialog({ doc, zIndex = 1e5, onInsert = () => {
 }, onClose = () => {
 }, FileReaderCtor = globalThis.FileReader } = {}) {
-  if (current) current.close();
+  if (current2) current2.close();
   const handle = { done: false, root: null, listeners: [] };
   const mk = (tag, className, text) => {
     const n = doc.createElement(tag);
@@ -13489,7 +14141,7 @@ function openChartDialog({ doc, zIndex = 1e5, onInsert = () => {
     } catch (e) {
       console.warn("[plexus] chart dialog remove failed", e);
     }
-    if (current === handle) current = null;
+    if (current2 === handle) current2 = null;
     try {
       onClose();
     } catch (e) {
@@ -13558,7 +14210,7 @@ function openChartDialog({ doc, zIndex = 1e5, onInsert = () => {
     close2();
     return null;
   }
-  current = handle;
+  current2 = handle;
   return { el: root, close: close2, isOpen: () => !handle.done };
 }
 
@@ -13772,11 +14424,11 @@ function outlineToMarkdown(tree, { multiline = true } = {}) {
 
 // src/view/outline-preview.js
 var ISOLATED2 = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
-var current2 = null;
+var current3 = null;
 function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, replacing = 0, onWrite = () => {
 }, onClose = () => {
 } } = {}) {
-  if (current2) current2.close();
+  if (current3) current3.close();
   const el = (tag, className, text) => {
     const n = doc.createElement(tag);
     if (className) n.className = className;
@@ -13794,7 +14446,7 @@ function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, repla
   const close2 = () => {
     if (closed) return;
     closed = true;
-    if (current2 === handle) current2 = null;
+    if (current3 === handle) current3 = null;
     for (const type of ISOLATED2) root.removeEventListener?.(type, stop);
     root.removeEventListener?.("keydown", onKey);
     root.remove?.();
@@ -13852,7 +14504,7 @@ function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, repla
   } catch {
   }
   const handle = { el: root, close: close2 };
-  current2 = handle;
+  current3 = handle;
   return handle;
 }
 
@@ -14373,13 +15025,13 @@ function remapForInsert(elements, { centre = null, newId = rid2, now = Date.now(
   }
   return out;
 }
-function withTemplateFrames(current6, added) {
+function withTemplateFrames(current7, added) {
   const frames = added.filter(isFrameLike2);
-  if (!frames.length) return [...current6, ...added];
-  const { rewrite: rewrite2, orders } = planOrders(current6, frames.length);
+  if (!frames.length) return [...current7, ...added];
+  const { rewrite: rewrite2, orders } = planOrders(current7, frames.length);
   let k = 0;
   const ordered = added.map((el) => isFrameLike2(el) ? withOrder(el, orders[k++]) : el);
-  return [...applyOrderRewrite(current6, rewrite2), ...ordered];
+  return [...applyOrderRewrite(current7, rewrite2), ...ordered];
 }
 var isImage = (el) => el.type === "image";
 function selectionToTemplate(elements, selectedIds) {
@@ -14446,11 +15098,11 @@ function pickCurrentItem(appState) {
 
 // src/view/name-prompt.js
 var ISOLATED3 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
-var current3 = null;
+var current4 = null;
 function openNamePrompt({ doc, zIndex = 1e3, title = "Name", initial = "", maxLength = 60, submitLabel = "Save", onSubmit = () => {
 }, onClose = () => {
 } } = {}) {
-  if (current3) current3.close();
+  if (current4) current4.close();
   const handle = { done: false, root: null, listeners: [], busy: false };
   const mk = (tag, className, text) => {
     const n = doc.createElement(tag);
@@ -14487,7 +15139,7 @@ function openNamePrompt({ doc, zIndex = 1e3, title = "Name", initial = "", maxLe
     } catch (e) {
       console.warn("[plexus] name prompt remove failed", e);
     }
-    if (current3 === handle) current3 = null;
+    if (current4 === handle) current4 = null;
     try {
       onClose();
     } catch (e) {
@@ -14541,7 +15193,7 @@ function openNamePrompt({ doc, zIndex = 1e3, title = "Name", initial = "", maxLe
     close2();
     return null;
   }
-  current3 = handle;
+  current4 = handle;
   return { el: root, close: close2, isOpen: () => !handle.done };
 }
 
@@ -14549,7 +15201,7 @@ function openNamePrompt({ doc, zIndex = 1e3, title = "Name", initial = "", maxLe
 var ISOLATED4 = ["keydown", "keyup", "keypress", "paste", "copy", "cut"];
 var MAX_RENDERS = 6;
 var THUMB_WIDTH = 160;
-var current4 = null;
+var current5 = null;
 function openTemplatePicker({
   doc,
   zIndex = 1e3,
@@ -14573,7 +15225,7 @@ function openTemplatePicker({
   },
   maxRenders = MAX_RENDERS
 } = {}) {
-  if (current4) current4.close();
+  if (current5) current5.close();
   const handle = { done: false, root: null, listeners: [], objectUrls: [], timer: null };
   const mk = (tag, className, text) => {
     const n = doc.createElement(tag);
@@ -14614,7 +15266,7 @@ function openTemplatePicker({
     } catch (error) {
       console.warn("[plexus] template picker remove failed", error);
     }
-    if (current4 === handle) current4 = null;
+    if (current5 === handle) current5 = null;
     try {
       onClose();
     } catch (error) {
@@ -14723,7 +15375,7 @@ function openTemplatePicker({
     close2();
     return null;
   }
-  current4 = handle;
+  current5 = handle;
   if (users.length) handle.timer = defer(() => {
     loadThumbs().catch((error) => console.warn("[plexus] template thumbnails failed", error));
   });
@@ -14734,7 +15386,7 @@ function openTemplatePicker({
 var TEMPLATES_PAGE = "Plexus/Templates";
 var TEMPLATE_CAP = 50;
 var NAME_MAX = 60;
-var DRAWING_RE3 = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
+var DRAWING_RE4 = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 var CLOSE_WAIT_MS = 3e3;
 var VERIFY_POLL_MS = 40;
 var VERIFY_TIMEOUT_MS = 8e3;
@@ -14822,7 +15474,7 @@ function createTemplateActions({
       if (out.length >= TEMPLATE_CAP) break;
       let drawingUid = null;
       try {
-        drawingUid = host.pullBlock(row.uid)?.children.find((k) => DRAWING_RE3.test(k.string))?.uid ?? null;
+        drawingUid = host.pullBlock(row.uid)?.children.find((k) => DRAWING_RE4.test(k.string))?.uid ?? null;
       } catch {
         drawingUid = null;
       }
@@ -14894,7 +15546,7 @@ function createTemplateActions({
       drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => withTemplateFrames(current6, elements),
+      next: (current7) => withTemplateFrames(current7, elements),
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
     if (!ok) return null;
@@ -16714,12 +17366,12 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
     else setTimeout(resolve, 16);
   });
   const settled = async (uid) => {
-    const current6 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
-    if (typeof current6 !== "function") return true;
+    const current7 = api?.ui?.mainWindow?.getOpenPageOrBlockUid;
+    if (typeof current7 !== "function") return true;
     for (let i = 0; i < SETTLE_TRIES; i++) {
       let open6 = null;
       try {
-        open6 = await current6.call(api.ui.mainWindow);
+        open6 = await current7.call(api.ui.mainWindow);
       } catch {
         open6 = null;
       }
@@ -16820,7 +17472,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
 }, onClose = () => {
 }, dark = false } = {}) {
   const statuses = /* @__PURE__ */ new Map();
-  let current6 = Array.isArray(rows) ? rows : [];
+  let current7 = Array.isArray(rows) ? rows : [];
   let closed = false;
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
@@ -16895,9 +17547,9 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     return node;
   };
   const render = () => {
-    const shown = current6.slice(0, MAX_ROWS);
-    summary.textContent = current6.length ? `${current6.length} problem${current6.length === 1 ? "" : "s"}` : "No problems found";
-    if (current6.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
+    const shown = current7.slice(0, MAX_ROWS);
+    summary.textContent = current7.length ? `${current7.length} problem${current7.length === 1 ? "" : "s"}` : "No problems found";
+    if (current7.truncated) summary.textContent += " (scan stopped at 2000 rows; some regions were not checked)";
     const nodes = [];
     const pages = /* @__PURE__ */ new Map();
     for (const row of shown) {
@@ -16915,7 +17567,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
         for (const row of group) nodes.push(rowNode(row));
       }
     }
-    if (current6.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current6.length - MAX_ROWS} more`));
+    if (current7.length > MAX_ROWS) nodes.push(el("div", "plexus-legacy-uid", `+${current7.length - MAX_ROWS} more`));
     if (typeof list.replaceChildren === "function") list.replaceChildren(...nodes);
     else {
       list.textContent = "";
@@ -16925,7 +17577,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
   const actions = el("div", "plexus-legacy-actions");
   actions.append(
     button("Copy report", () => {
-      const json = JSON.stringify(current6, null, 2);
+      const json = JSON.stringify(current7, null, 2);
       const clipboard = doc.defaultView?.navigator?.clipboard;
       return withClipboard(() => clipboard.writeText(json));
     }),
@@ -16942,7 +17594,7 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
     close: close2,
     update(next) {
       if (closed) return;
-      current6 = Array.isArray(next) ? next : [];
+      current7 = Array.isArray(next) ? next : [];
       render();
     }
   };
@@ -18505,12 +19157,12 @@ function drawingName(children) {
   return null;
 }
 function namePlan(children, value) {
-  const current6 = drawingName(children);
+  const current7 = drawingName(children);
   const next = String(value ?? "").trim();
-  if (!next) return current6 ? { action: "delete", uid: current6.uid } : { action: "none" };
+  if (!next) return current7 ? { action: "delete", uid: current7.uid } : { action: "none" };
   const string = `Name:: ${next}`;
-  if (current6 && current6.value === next) return { action: "none" };
-  if (current6) return { action: "update", uid: current6.uid, string };
+  if (current7 && current7.value === next) return { action: "none" };
+  if (current7) return { action: "update", uid: current7.uid, string };
   return { action: "create", string };
 }
 
@@ -19407,7 +20059,7 @@ function createActions({
       drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => [...current6, ...elements],
+      next: (current7) => [...current7, ...elements],
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
   }
@@ -19851,9 +20503,9 @@ function createActions({
       const editor = native.activeEditor(doc);
       if (editor && editor.app === card.app) {
         try {
-          const current6 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
+          const current7 = editor.app.getSceneElementsIncludingDeleted?.() ?? [];
           const ids = /* @__PURE__ */ new Set([card.anchorId]);
-          for (const el of current6) if (el?.containerId === card.anchorId) ids.add(el.id);
+          for (const el of current7) if (el?.containerId === card.anchorId) ids.add(el.id);
           guard2.guardedWrite(editor.app, {
             drawingUid: card.drawingUid,
             label: "Discard note",
@@ -19887,9 +20539,9 @@ function createActions({
       drawingUid: editor.drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => current6.map((el) => {
+      next: (current7) => current7.map((el) => {
         if (!el || el.isDeleted || !ids.has(el.id)) return el;
-        const patch = patchFor(el, current6);
+        const patch = patchFor(el, current7);
         if (!patch) return el;
         wrote = true;
         return patchPlexus(el, patch);
@@ -20180,7 +20832,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Tag elements",
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => current6.map((el) => {
+      next: (current7) => current7.map((el) => {
         if (!el || !ids.has(el.id)) return el;
         const prev = typeof el.originalText === "string" ? el.originalText : typeof el.text === "string" ? el.text : "";
         const nextText = appendTagText(prev, name);
@@ -20230,9 +20882,9 @@ function createActions({
       drawingUid: editor.drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => {
-        produced = apply(current6);
-        return Array.isArray(produced) ? produced : current6;
+      next: (current7) => {
+        produced = apply(current7);
+        return Array.isArray(produced) ? produced : current7;
       }
     });
     return ok && Array.isArray(produced) ? produced : null;
@@ -20288,7 +20940,7 @@ function createActions({
       toaster2.show("Could not create the page", { kind: "error" });
       return null;
     }
-    const written = applyWrite(editor, "Turn into page", (current6) => embed ? turnIntoEmbed(current6, el.id, { ref, label: title }) : turnIntoLink(current6, el.id, ref));
+    const written = applyWrite(editor, "Turn into page", (current7) => embed ? turnIntoEmbed(current7, el.id, { ref, label: title }) : turnIntoLink(current7, el.id, ref));
     if (!written) {
       await dropCreatedPage(existed, pageUid);
       return null;
@@ -20324,7 +20976,7 @@ function createActions({
       toaster2.show("Could not add the block", { kind: "error" });
       return null;
     }
-    const written = applyWrite(editor, "Turn into block", (current6) => embed ? turnIntoEmbed(current6, el.id, { ref, label: embedLabel(text) }) : turnIntoLink(current6, el.id, ref));
+    const written = applyWrite(editor, "Turn into block", (current7) => embed ? turnIntoEmbed(current7, el.id, { ref, label: embedLabel(text) }) : turnIntoLink(current7, el.id, ref));
     if (!written) {
       await dropCreatedBlock(childUid2);
       return null;
@@ -20350,7 +21002,7 @@ function createActions({
       toaster2.show("Could not add the block", { kind: "error" });
       return null;
     }
-    const written = applyWrite(editor, "Move image to block", (current6) => dropElement(current6, el.id));
+    const written = applyWrite(editor, "Move image to block", (current7) => dropElement(current7, el.id));
     if (!written) {
       await dropCreatedBlock(childUid2);
       return null;
@@ -20360,7 +21012,7 @@ function createActions({
   }
   async function turnBack(editor, el) {
     const value = turnBackValue(editor.app.getSceneElementsIncludingDeleted?.() ?? liveScene(editor.app), el);
-    const written = applyWrite(editor, "Turn back to text", (current6) => turnBackToText(current6, el.id, value));
+    const written = applyWrite(editor, "Turn back to text", (current7) => turnBackToText(current7, el.id, value));
     if (!written) return null;
     toaster2.show("Turned back to text");
     return true;
@@ -20606,13 +21258,13 @@ function createActions({
         return null;
       }
       const children = safe2(() => host.pullBlock(drawingUid)?.children) || [];
-      const current6 = drawingName(children);
-      const value = await askCaption({ initial: current6?.value || "", select: true, escape: "cancel", rect: null, drawing: true });
+      const current7 = drawingName(children);
+      const value = await askCaption({ initial: current7?.value || "", select: true, escape: "cancel", rect: null, drawing: true });
       if (value == null) return null;
       const plan = namePlan(children, value);
       if (plan.action === "none") {
         try {
-          onDrawingName(drawingUid, current6?.value || "");
+          onDrawingName(drawingUid, current7?.value || "");
         } catch (error) {
           console.warn("[plexus] drawing name paint failed", error);
         }
@@ -20756,8 +21408,8 @@ function createActions({
     const plan = attrWrite(name, value);
     if (plan.action === "none") return "locked";
     if (isId(uid)) {
-      const current6 = safe2(() => host.pullBlock(uid));
-      if (parseAttr(current6?.string)?.bt) return "locked";
+      const current7 = safe2(() => host.pullBlock(uid));
+      if (parseAttr(current7?.string)?.bt) return "locked";
       try {
         if (plan.action === "delete") await host.deleteBlock(uid);
         else await api.data.block.update({ block: { uid, string: plan.string } });
@@ -21312,7 +21964,7 @@ function createActions({
       show.start(rememberIndex(liveAt, drawingUid, frames.length));
       return drawingUid;
     },
-    setRevealStep: () => stampSelection("Reveal step", (el, current6) => el.frameId ? { step: nextStep(current6, el.frameId) } : null, "Select elements inside a frame"),
+    setRevealStep: () => stampSelection("Reveal step", (el, current7) => el.frameId ? { step: nextStep(current7, el.frameId) } : null, "Select elements inside a frame"),
     clearRevealStep: () => stampSelection("Clear reveal step", (el) => stepOfEl(el) === null ? null : { step: null }, "Select a stepped element"),
     addOcclusion: () => {
       const editor = native.activeEditor(doc);
@@ -21336,7 +21988,7 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Add occlusion",
         captureUpdate: "IMMEDIATELY",
-        next: (current6) => current6.map((el) => el && ids.has(el.id) && !el.isDeleted ? patchPlexus(el, { occlude: hit.uid }) : el)
+        next: (current7) => current7.map((el) => el && ids.has(el.id) && !el.isDeleted ? patchPlexus(el, { occlude: hit.uid }) : el)
       });
       if (!ok) return null;
       Promise.resolve(revealRegion(hit.uid)).catch((error) => console.warn("[plexus] reveal capture failed", error));
@@ -21944,7 +22596,7 @@ function createActions({
         drawingUid,
         label: "Remove link",
         captureUpdate: "IMMEDIATELY",
-        next: (current6) => current6.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
+        next: (current7) => current7.map((e) => hit.has(e.id) ? { ...e, link: null, version: (e.version || 0) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } : e)
       });
     } catch (error) {
       console.warn("[plexus] remove link failed", error);
@@ -22754,7 +23406,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Embed labels",
       captureUpdate: "NEVER",
-      next: (current6) => current6.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
+      next: (current7) => current7.map((el) => el && patches.has(el.id) ? bumped(el, patches.get(el.id)) : el)
     });
     return ok ? patches.size : 0;
   }
@@ -22768,9 +23420,9 @@ function createActions({
         void flush();
       }, ms);
     };
-    const current6 = () => !disposed && gen === labelGen;
+    const current7 = () => !disposed && gen === labelGen;
     const flush = async () => {
-      if (!current6()) return;
+      if (!current7()) return;
       const editor = native.activeEditor(doc);
       if (editor?.app !== app || !isId(editor.drawingUid)) return;
       if (editorBusy(app)) {
@@ -22781,7 +23433,7 @@ function createActions({
         await native.waitNotLoading?.(app, 5e3, { doc });
         await frame();
         await frame();
-        if (!current6() || native.activeEditor(doc)?.app !== app) return;
+        if (!current7() || native.activeEditor(doc)?.app !== app) return;
         labelReady.add(app);
         if (editorBusy(app)) {
           arm(LABEL_RETRY_MS);
@@ -22832,10 +23484,10 @@ function createActions({
       drawingUid: editor.drawingUid,
       label,
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => {
-        const plan = planOrders(current6, rects.length);
+      next: (current7) => {
+        const plan = planOrders(current7, rects.length);
         created = rects.map((r, i) => ({ ...presetFrame({ id: ids[i], preset, x: r.x, y: r.y, order: plan.orders[i] }), width: r.width, height: r.height }));
-        return [...applyOrderRewrite(current6, plan.rewrite), ...created];
+        return [...applyOrderRewrite(current7, plan.rewrite), ...created];
       },
       appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
     });
@@ -22896,7 +23548,7 @@ function createActions({
       drawingUid: editor.drawingUid,
       label: "Reformat frame",
       captureUpdate: "IMMEDIATELY",
-      next: (current6) => current6.map((el) => {
+      next: (current7) => current7.map((el) => {
         if (!el) return el;
         if (el.id === id) return bumped(el, rect);
         if (released.has(el.id)) return bumped(el, { frameId: null });
@@ -22944,12 +23596,12 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current6) => {
-          const frameEl = current6.find((el) => el?.id === newFrameId);
-          const rest = current6.filter((el) => el?.id !== newFrameId);
+        next: (current7) => {
+          const frameEl = current7.find((el) => el?.id === newFrameId);
+          const rest = current7.filter((el) => el?.id !== newFrameId);
           const plan = planOrders(rest, 1);
           const named = { ...withOrder(frameEl, plan.orders[0]), name: `Slide ${plan.orders[0]}` };
-          return applyOrderRewrite(current6, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
+          return applyOrderRewrite(current7, plan.rewrite).map((el) => el?.id === newFrameId ? named : el);
         },
         appState: { selectedElementIds: { [newFrameId]: true }, selectedGroupIds: {} }
       });
@@ -22965,11 +23617,11 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Make slide",
         captureUpdate: "IMMEDIATELY",
-        next: (current6) => {
-          const plan = planOrders(current6, 1);
+        next: (current7) => {
+          const plan = planOrders(current7, 1);
           const order = plan.orders[0];
           const frameEl = { ...presetFrame({ id: fallbackId, preset: DEFAULT_PRESET2, x: box[0] - pad2, y: box[1] - pad2, order }), width: box[2] - box[0] + 2 * pad2, height: box[3] - box[1] + 2 * pad2, name: `Slide ${order}` };
-          const adopted = applyOrderRewrite(current6, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
+          const adopted = applyOrderRewrite(current7, plan.rewrite).map((el) => el && members.has(el.id) && !isFrameEl(el) ? bumped(el, { frameId: frameEl.id }) : el);
           return [...adopted, frameEl];
         },
         appState: { selectedElementIds: { [fallbackId]: true }, selectedGroupIds: {} }
@@ -23559,9 +24211,9 @@ function createActions({
     const editor = native.activeEditor(doc);
     const anchor = editor?.app ? selectedAnchor(editor.app) : null;
     if (!anchor) return false;
-    const current6 = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
+    const current7 = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
     const ids = /* @__PURE__ */ new Set([anchor.id]);
-    for (const el of current6) if (el && el.containerId === anchor.id) ids.add(el.id);
+    for (const el of current7) if (el && el.containerId === anchor.id) ids.add(el.id);
     for (const id of ids) leaveSilenced.add(id);
     let ok = false;
     try {
@@ -24998,7 +25650,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
   };
 }
 function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
-  let current6 = null;
+  let current7 = null;
   let currentEl = null;
   let offBlur = null;
   let pending = null;
@@ -25009,8 +25661,8 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
     }
     offBlur?.();
     offBlur = null;
-    current6?.();
-    current6 = null;
+    current7?.();
+    current7 = null;
     currentEl = null;
   };
   const onFocusIn = (e) => {
@@ -25020,7 +25672,7 @@ function installSuggestAutoAttach({ doc, suggest, setTimeout: setT = (...a) => g
       if (!t.closest?.(".excalidraw-outer-container") && !t.classList?.contains("plexus-portal")) return;
       release();
       currentEl = t;
-      current6 = suggest.attach(t);
+      current7 = suggest.attach(t);
       const onOut = () => {
         if (pending != null) clearT(pending);
         pending = setT(() => {
@@ -25802,9 +26454,9 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
 var ISOLATED5 = ["keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut"];
 var BLUR_GRACE_MS = 200;
 var MIN_WIDTH = 200;
-var current5 = null;
+var current6 = null;
 function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "empty", zIndex = 100002, raf, now = () => Date.now() } = {}) {
-  if (current5) current5.commit();
+  if (current6) current6.commit();
   let resolveOuter;
   const promise = new Promise((resolve) => {
     resolveOuter = resolve;
@@ -25831,7 +26483,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
         console.warn("[plexus] caption prompt remove failed", error);
       }
     }
-    if (current5 === handle) current5 = null;
+    if (current6 === handle) current6 = null;
     resolveOuter(value);
   };
   handle.commit = () => finish(handle.el ? String(handle.el.value ?? "") : String(initial ?? ""));
@@ -25903,7 +26555,7 @@ function openCaptionPrompt({ doc, rect, initial = "", select = false, escape = "
       finish(null);
     }
   };
-  current5 = handle;
+  current6 = handle;
   handle.frame = schedule(open6);
   return promise;
 }
@@ -25986,7 +26638,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     if (f.type === "color") return laserColorOf(v);
     return v == null ? f.fallback : !!v;
   };
-  const current6 = (f, input) => {
+  const current7 = (f, input) => {
     if (f.type === "number") return String(clampInt(input.value, f.fallback, f.min, f.max));
     if (f.type === "select") return selectValue(f, input.value);
     if (f.type === "text") return drawingNameOf(input.value);
@@ -26046,7 +26698,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     for (const [f, input] of inputs) {
       if (only && only !== input) continue;
       try {
-        const value = current6(f, input);
+        const value = current7(f, input);
         if (value === stored(f)) continue;
         writes.push(Promise.resolve(set(f.id, value)).catch((error) => console.warn("[plexus] settings write failed", f.id, error)));
       } catch (error) {
@@ -26063,7 +26715,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     });
   };
   for (const [f, input] of inputs) if (f.type !== "text" && f.type !== "freetext") input.addEventListener("change", () => {
-    if (f.type === "number") input.value = current6(f, input);
+    if (f.type === "number") input.value = current7(f, input);
     commit(input);
   });
   let closed = false;
@@ -29257,7 +29909,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           drawingUid,
           label,
           captureUpdate: "IMMEDIATELY",
-          next: (current6) => [...Array.isArray(current6) ? current6 : [], ...cards]
+          next: (current7) => [...Array.isArray(current7) ? current7 : [], ...cards]
         });
         if (!ok) toaster2.show("Could not place the cards", { kind: "error" });
       };
@@ -29367,29 +30019,29 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         later(() => toolbar.place(), DOCK_SETTLE_MS);
       };
       const openDock = () => {
-        const current6 = mounted;
-        if (!current6?.uid || !current6.outer || current6.dock?.isOpen()) return null;
+        const current7 = mounted;
+        if (!current7?.uid || !current7.outer || current7.dock?.isOpen()) return null;
         const dock = createDock({
           doc,
           api,
-          app: current6.app,
-          containerEl: current6.el,
-          outerEl: current6.outer,
-          drawingUid: current6.uid,
-          zIndex: current6.z,
+          app: current7.app,
+          containerEl: current7.el,
+          outerEl: current7.outer,
+          drawingUid: current7.uid,
+          zIndex: current7.z,
           width: getSettings().dockWidth,
           onWidth: (w) => {
             writeSetting(extensionAPI, SETTING_IDS.dockWidth, String(w));
             placeToolbar();
           },
           onClose: () => {
-            if (current6.dock === dock) current6.dock = null;
+            if (current7.dock === dock) current7.dock = null;
             dockOn = false;
             placeToolbar();
           },
           parentOf: (uid) => host.parentOf(uid),
           onNavigate: ({ target, sidebar } = {}) => {
-            if (!navigateToTarget({ api, containerEl: current6.el, target, sidebar: !!sidebar })) return;
+            if (!navigateToTarget({ api, containerEl: current7.el, target, sidebar: !!sidebar })) return;
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
             if (sidebar) toaster2.show("Opened in sidebar");
@@ -29397,7 +30049,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
           toast: (message) => toaster2.show(message, { kind: "error" })
         });
-        current6.dock = dock;
+        current7.dock = dock;
         dockOn = true;
         placeToolbar();
         return dock;
@@ -29411,9 +30063,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         return !!openDock();
       };
       const goBack = async () => {
-        const current6 = mounted;
-        if (!current6?.history) return false;
-        return current6.history.back(current6.app, { animate: motionOk(doc, getSettings().animation), doc });
+        const current7 = mounted;
+        if (!current7?.history) return false;
+        return current7.history.back(current7.app, { animate: motionOk(doc, getSettings().animation), doc });
       };
       let regionref = null;
       const zIndexFor = (el) => {
@@ -29727,6 +30379,18 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         setLayout: (layout2) => {
           const editor = mmEditor();
           return editor ? mindmap.setLayout(editor.app, layout2) : false;
+        },
+        cycleStyle: (kind) => {
+          const editor = mmEditor();
+          return editor ? mindmap.cycleStyle(editor.app, kind) : false;
+        },
+        pasteOutline: () => {
+          const editor = mmEditor();
+          return editor ? mindmap.pasteOutline(editor.app) : false;
+        },
+        openLinked: () => {
+          const editor = mmEditor();
+          return editor ? mindmap.openLinked(editor.app) : false;
         },
         toggleAttrEdges: () => {
           const editor = mmEditor();
@@ -30174,10 +30838,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         } catch (error) {
           console.warn("[plexus] todo veil failed", error);
         }
-        const current6 = mounted;
+        const current7 = mounted;
         mounted = null;
         closeDialogs();
-        if (!current6) return Promise.resolve();
+        if (!current7) return Promise.resolve();
         try {
           actions.cancelDrawingTool();
         } catch (error) {
@@ -30185,7 +30849,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         }
         if (Date.now() - navigatedAt <= 2e3) clearLinkTooltip(doc);
         const pending = [];
-        for (const dispose of current6.disposers) {
+        for (const dispose of current7.disposers) {
           try {
             const out = dispose();
             if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
@@ -30194,22 +30858,22 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           }
         }
         const finish = () => {
-          if (current6.app && mounted?.app !== current6.app) scenes.release(current6.app);
-          if (current6.uid) {
-            emitter.emit({ uid: current6.uid, kind: "drawing" });
-            warmThumbnails(current6.uid);
+          if (current7.app && mounted?.app !== current7.app) scenes.release(current7.app);
+          if (current7.uid) {
+            emitter.emit({ uid: current7.uid, kind: "drawing" });
+            warmThumbnails(current7.uid);
             if (!unloading) {
-              Promise.resolve(actions.refreshAfterClose(current6.uid, current6.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+              Promise.resolve(actions.refreshAfterClose(current7.uid, current7.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
             }
           }
           return Promise.all(pending).then(() => void 0);
         };
-        if (!unloading && current6.app && current6.uid && typeof actions.syncOnClose === "function") {
+        if (!unloading && current7.app && current7.uid && typeof actions.syncOnClose === "function") {
           let timer;
           const cap = new Promise((resolve) => {
             timer = setTimeout(resolve, 8e3);
           });
-          const job = current6.closeOnce || actions.syncOnClose(current6.app, current6.uid);
+          const job = current7.closeOnce || actions.syncOnClose(current7.app, current7.uid);
           const sync = Promise.resolve(job).catch((error) => {
             console.warn("[plexus] close sync failed", error);
           });
@@ -30327,6 +30991,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const cardText = /* @__PURE__ */ new Map();
           mounted.disposers.push(installRefLines({ doc, app, containerEl: el, texts: cardText }));
+          mounted.disposers.push(installRegionSync({
+            app,
+            api,
+            drawingUid: mountUid,
+            regionsOf: (uid) => host.regionsOf(uid),
+            nameRegion: (uid, text) => actions.nameRegion(uid, text)
+          }));
           const overlay = createEmbedOverlay({
             doc,
             api,
@@ -30765,10 +31436,18 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => tools ? tools.setLayout("cause") : unavailable("mmLayout") },
       { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => tools ? tools.setLayout("fishbone") : unavailable("mmLayout") },
       { id: "mmLayoutFlow", label: "Mind map layout: Flow", run: () => tools ? tools.setLayout("flow") : unavailable("mmLayout") },
+      { id: "mmLayoutBoth", label: "Mind map layout: Both sides", run: () => tools ? tools.setLayout("both") : unavailable("mmLayout") },
+      { id: "mmLayoutOrg", label: "Mind map layout: Org chart", run: () => tools ? tools.setLayout("org") : unavailable("mmLayout") },
       { id: "insertTemplate", label: "Insert template…", run: () => tools ? tools.insertTemplate() : unavailable("insertTemplate") },
       { id: "newFromTemplate", label: "New drawing from template…", run: (ctx) => tools ? tools.newFromTemplate(ctx) : unavailable("newFromTemplate") },
       { id: "saveTemplate", label: "Save selection as template…", run: () => tools ? tools.saveTemplate() : unavailable("saveTemplate") },
       { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges") },
+      { id: "mmPasteOutline", label: "Paste outline as branch…", run: () => tools ? tools.pasteOutline() : unavailable("mmPasteOutline") },
+      { id: "mmSubmap", label: "Submap from link", run: () => tools ? tools.openLinked() : unavailable("mmSubmap") },
+      { id: "mmShape", label: "Mind map shape", run: () => tools ? tools.cycleStyle("shape") : unavailable("mmShape") },
+      { id: "mmConnector", label: "Mind map connector", run: () => tools ? tools.cycleStyle("connector") : unavailable("mmConnector") },
+      { id: "mmPalette", label: "Mind map palette", run: () => tools ? tools.cycleStyle("palette") : unavailable("mmPalette") },
+      { id: "mmContrast", label: "Mind map contrast", run: () => tools ? tools.cycleStyle("contrast") : unavailable("mmContrast") },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },

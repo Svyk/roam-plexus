@@ -1775,3 +1775,67 @@ svg.plexus-ref-lines line {
 body.bt-theme-dark .plexus-ref-lines line {
   stroke: #8abbff;
 }
+
+button.plexus-mm-plus,
+button.plexus-mm-badge {
+  position: absolute;
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #868e96;
+  border-radius: 9px;
+  background: #fff;
+  color: #1e1e1e;
+  font: 12px/16px sans-serif;
+  cursor: pointer;
+}
+
+button.plexus-mm-badge {
+  width: auto;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.excalidraw.theme--dark button.plexus-mm-plus,
+.excalidraw.theme--dark button.plexus-mm-badge {
+  background: #1e1e1e;
+  color: #f8f9fa;
+  border-color: #495057;
+}
+
+svg.plexus-mm-cross {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+svg.plexus-mm-cross line {
+  stroke: #ae3ec9;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+textarea.plexus-portal.plexus-outline-prompt {
+  position: fixed;
+  left: 50%;
+  top: 18%;
+  width: 360px;
+  height: 180px;
+  margin: 0;
+  padding: 8px;
+  transform: translateX(-50%);
+  border: 2px solid #2d72d2;
+  border-radius: 8px;
+  font: 14px/1.4 sans-serif;
+  text-align: left;
+  color: #1c2127;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(16, 22, 26, 0.3);
+}

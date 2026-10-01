@@ -5,6 +5,7 @@ export const PAD_X = 14;
 export const PAD_Y = 10;
 export const LINE_HEIGHT = 1.25;
 export const SIBLING_GAP = 18;
+export const ORG_SIBLING_GAP = 36;
 export const LEVEL_GAP = 70;
 export const RADIAL_RADIUS = 220;
 export const RADIAL_STEP = 180;
@@ -356,13 +357,15 @@ export function nodeSize(text, fontSize, measure, maxWidth = MAX_TEXT_WIDTH) {
  * Pure O(n) layout. sizes: uid -> {width, height}; pinned: uid -> {x, y} (subtrees lay out relative to them);
  * root: top-left the root keeps. Returns uid -> {x, y} (top-left, scene coordinates) for visible nodes only.
  */
-export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP, siblingGap = SIBLING_GAP }) {
   const pos = {};
   if (!tree) return pos;
   const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
   const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
   if (layout === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
   if (layout === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
+  if (layout === "org") return layoutTree({ tree, sizes, layout: "down", pinned, root, gapOf, siblingGap: ORG_SIBLING_GAP });
+  if (layout === "both") return layoutBoth(tree, sizes, pinned, root, gapOf);
   const dirL = layout === "cause" ? "left" : layout;
 
   const horizontal = dirL === "right" || dirL === "left";
@@ -372,7 +375,7 @@ export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = 
   function extent(n) {
     let span = 0;
     const kids = free(n);
-    for (let i = 0; i < kids.length; i++) span += extent(kids[i]) + (i ? SIBLING_GAP : 0);
+    for (let i = 0; i < kids.length; i++) span += extent(kids[i]) + (i ? siblingGap : 0);
     for (const k of visibleChildren(n)) if (isPinned(k)) extent(k);
     const e = Math.max(cross(n), span);
     ext.set(n, { e, span });
@@ -396,12 +399,30 @@ export function layoutTree({ tree, sizes, layout = "right", pinned = {}, root = 
       else if (dirL === "down") { kx = c; ky = y + s.height + gap; }
       else { kx = c; ky = y - gap - ks.height; }
       place(k, kx, ky);
-      cursor += e + SIBLING_GAP;
+      cursor += e + siblingGap;
     }
     for (const k of visibleChildren(n)) if (isPinned(k)) place(k, pinned[k.uid].x, pinned[k.uid].y);
   }
   extent(tree);
   place(tree, root.x, root.y);
+  return pos;
+}
+
+/** Even children go right, odd children go left. Deeper nodes follow that side. */
+function layoutBoth(tree, sizes, pinned, rootPos, gapOf) {
+  const pos = {};
+  if (!tree) return pos;
+  const right = [];
+  const left = [];
+  visibleChildren(tree).forEach((k, i) => (i % 2 === 0 ? right : left).push(k));
+  const merge = (list, side) => {
+    if (!list.length) return;
+    const rel = layoutTree({ tree: { ...tree, children: list }, sizes, layout: side, pinned, root: rootPos, gapOf });
+    Object.assign(pos, rel);
+  };
+  merge(right, "right");
+  merge(left, "left");
+  pos[tree.uid] = { x: rootPos.x, y: rootPos.y };
   return pos;
 }
 

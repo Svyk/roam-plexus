@@ -8,6 +8,7 @@ import {
 } from "./flow.js";
 import { arrowLabelRect, arrowLabelWrapWidth } from "./arrowlabel.js";
 import { fnv1a } from "./hash.js";
+import { inkFor, paletteFill } from "./mmextra.js";
 
 export const FONT_FAMILY = 5;
 export const BOUNDARY_PAD = 12;
@@ -105,9 +106,10 @@ export function buildNode({ map, uid, x, y, width, height, backgroundColor, mm, 
   });
 }
 
-export function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity, frameId }) {
+export function buildText({ map, uid, x, y, width, height, text, originalText, fontSize, opacity, frameId, strokeColor }) {
   return base(textId(map, uid), "text", x, y, width, height, {
     ...(opacity !== undefined ? { opacity } : {}),
+    ...(strokeColor ? { strokeColor } : {}),
     ...(frameId ? { frameId } : {}),
     text, originalText, fontSize,
     fontFamily: 5,
@@ -215,6 +217,12 @@ export function buildBoundary({ map, uid, x, y, width, height }) {
 /** Edge start point and 2-point polyline from parent and child rects {x,y,width,height}. */
 export function edgeGeometry(p, c, layout, start) {
   let sx; let sy; let ex; let ey;
+  if (layout === "both") {
+    const pc = p.x + p.width / 2;
+    const cc = c.x + c.width / 2;
+    layout = cc >= pc ? "right" : "left";
+  }
+  if (layout === "org") layout = "down";
   if (layout === "cause" || layout === "fishbone") layout = "left";
   if (layout === "right") { sx = p.x + p.width; sy = p.y + p.height / 2; ex = c.x; ey = c.y + c.height / 2; }
   else if (layout === "left") { sx = p.x; sy = p.y + p.height / 2; ex = c.x + c.width; ey = c.y + c.height / 2; }
@@ -316,6 +324,7 @@ export function planMap({ elements, tree, sizes, layout = "right", textOf, rootP
   const dir = rootMM.layout || layout;
   const flow = dir === FLOW_LAYOUT;
   const family = flow ? "flow" : isCauseLayout(dir) ? "cause" : "branch";
+  const mapShape = !flow && rootMM.nodeShape === "ellipse" ? "ellipse" : "rectangle";
   const oldScheme = rootMM.scheme === "cause" ? "cause" : rootMM.scheme === "flow" ? "flow" : "branch";
   const attrEdges = rootEl ? rootMM.attrEdges === true : !!(rootDefaults && rootDefaults.attrEdges === true);
   const vtree = drawnTree(tree, { layout: dir, attrEdges });
@@ -341,7 +350,7 @@ export function planMap({ elements, tree, sizes, layout = "right", textOf, rootP
     const wrap = flow && st.type === "decision" ? FLOW_DECISION_WRAP : undefined;
     const raw = typeof sizes === "function" ? { ...(wrap ? sizes(text, fs, n.uid, wrap) : sizes(text, fs, n.uid)) } : { ...(sizes && sizes[n.uid]) };
     const s = fullSize(raw, text, fs);
-    const shape = flow ? (st.type === "decision" ? "diamond" : st.type === "root" || st.type === "end" ? "ellipse" : "rectangle") : "rectangle";
+    const shape = flow ? (st.type === "decision" ? "diamond" : st.type === "root" || st.type === "end" ? "ellipse" : "rectangle") : mapShape;
     if (shape !== "rectangle") {
       s.width = containerDimension(s.textWidth + 4, shape);
       s.height = containerDimension(s.textHeight + 4, shape);
@@ -376,7 +385,7 @@ export function planMap({ elements, tree, sizes, layout = "right", textOf, rootP
     return r;
   };
   const baseWrap = arrowLabelWrapWidth(0, LABEL_FONT);
-  const vertical = dir === "down" || dir === "up";
+  const vertical = dir === "down" || dir === "up" || dir === "org";
   const gapOf = (uid) => {
     const lt = labels.get(uid);
     if (!lt) return LEVEL_GAP;
@@ -406,14 +415,20 @@ export function planMap({ elements, tree, sizes, layout = "right", textOf, rootP
     const fb = fishboneLayout({ tree: vtree, sizes: sizeMap, pinned, root: anchor, gapOf });
     positions = fb.positions; spine = fb.spine; slotX = fb.slotX;
   } else positions = layoutTree({ tree: vtree, sizes: sizeMap, layout: dir, pinned, root: anchor, gapOf });
-  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges, flow: flowInfo };
+  const style = {
+    shape: mapShape,
+    connector: !flow && rootMM.connector === "arrow" ? "arrow" : "line",
+    palette: !flow && family === "branch" && paletteFill(rootMM.palette, 0, 0) ? rootMM.palette : "",
+    contrast: rootMM.contrast === true,
+  };
+  return { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, vtree, labels, labelSize, spine, slotX, attrEdges, flow: flowInfo, style };
 }
 
 export function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, tagColors, rootDefaults }) {
   const ops = { add: [], update: [], remove: [] };
   if (!tree) return ops;
   const plan = planMap({ elements, tree, sizes, layout, textOf, rootPos, tagColors, rootDefaults });
-  const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX } = plan;
+  const { root, dir, family, oldScheme, bounds, nodes, info, positions, byId, textByContainer, labels, labelSize, spine, slotX, style } = plan;
   const flow = plan.flow;
   const fishbone = dir === "fishbone";
   const pre = idPrefix(root);
@@ -525,6 +540,7 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
           if (dashed && e.strokeStyle !== "dashed") ep.strokeStyle = "dashed";
         }
       } else if (curFlow !== undefined && e.endArrowhead === "arrow") ep.endArrowhead = null;
+      else if (!wantEdgeMM.conn && (mmOf(e) || {}).conn === "arrow" && e.endArrowhead === "arrow") ep.endArrowhead = null;
       if (!same(mmOf(e) || null, wantEdgeMM)) ep.customData = withMM(e.customData, wantEdgeMM);
       const eb = mergeBound(e.boundElements, pre, edgeBound);
       if (!same(eb, e.boundElements || [])) ep.boundElements = eb;
@@ -557,6 +573,9 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
       text: i.size.text, originalText: i.text, fontSize: i.fs,
     };
     const curMM = i.mm || {};
+    const palFill = style.palette ? paletteFill(style.palette, v.depth, v.branchIndex) : null;
+    const fill = i.tag || palFill || schemeFill(v, family);
+    const ink = style.contrast ? inkFor(fill) : null;
     const wantMM = isRoot
       ? { ...curMM, uid, map: root, root: true, layout: curMM.layout || dir, bounds }
       : { ...curMM, uid, map: root, ...(branch !== undefined ? { branch } : {}) };
@@ -565,10 +584,13 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
     if (i.done) wantMM.done = true; else delete wantMM.done;
     if (i.dash) wantMM.dash = true; else delete wantMM.dash;
     if (i.shape !== "rectangle") wantMM.shape = i.shape; else delete wantMM.shape;
+    delete wantMM.fillFrom;
+    delete wantMM.ink;
+    if (style.palette) wantMM.fillFrom = style.palette;
+    if (ink) wantMM.ink = ink;
     if (isRoot) {
       if (family === "cause") wantMM.scheme = "cause"; else if (family === "flow") wantMM.scheme = "flow"; else delete wantMM.scheme;
     }
-    const fill = i.tag || schemeFill(v, family);
 
     if (!i.el) {
       if (isRoot && rootDefaults) Object.assign(wantMM, { ...rootDefaults, ...wantMM });
@@ -577,7 +599,7 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
           map: root, uid, x: rect.x, y: rect.y, width: rect.width, height: rect.height, backgroundColor: fill, mm: wantMM, boundElements: ownBound,
           opacity: i.done ? 50 : undefined, strokeStyle: i.dash ? "dashed" : undefined, type: i.shape, frameId: frameWant,
         }),
-        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : undefined, frameId: frameWant }),
+        buildText({ map: root, uid, ...want, opacity: i.done ? 50 : undefined, frameId: frameWant, strokeColor: ink || undefined }),
       );
     } else {
       const el = i.el;
@@ -589,7 +611,9 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
       if ((curMM.shape || "rectangle") !== i.shape && el.type !== i.shape) { p.type = i.shape; p.roundness = roundnessFor(i.shape); }
       if (frameWant !== undefined && el.frameId !== frameWant) p.frameId = frameWant;
       // Fill ownership (P4 amendment 10, P12 amendment 20): repaint only on an event, and only a fill Plexus set.
-      if (!isRoot && !flow && curMM.branch !== undefined && curMM.branch !== branch) p.backgroundColor = fill;
+      if (style.palette && (curMM.fillFrom || "") !== style.palette) p.backgroundColor = fill;
+      else if (!style.palette && curMM.fillFrom) p.backgroundColor = fill;
+      else if (!isRoot && !flow && curMM.branch !== undefined && curMM.branch !== branch) p.backgroundColor = fill;
       else if (oldScheme !== family || curMM.tag !== i.tag) {
         const oldExpected = curMM.tag || schemeFill(v, oldScheme);
         if (el.backgroundColor === oldExpected && oldExpected !== fill) p.backgroundColor = fill;
@@ -617,6 +641,8 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
         if (frameWant !== undefined && txtEl.frameId !== frameWant) tp.frameId = frameWant;
         if (i.done && curMM.done !== true) tp.opacity = 50;
         else if (!i.done && curMM.done === true && txtEl.opacity === 50) tp.opacity = 100;
+        if (ink && txtEl.strokeColor !== ink) tp.strokeColor = ink;
+        else if (!ink && curMM.ink && txtEl.strokeColor === curMM.ink) tp.strokeColor = "#1e1e1e";
       }
     }
 
@@ -626,7 +652,9 @@ export function reconcile({ elements, tree, sizes, layout = "right", textOf, roo
       const g = edgeGeometry(finalRect.get(parentUid), rect, dir, boneStart);
       const eid = edgeId(root, uid);
       desiredIds.add(eid);
-      doEdge({ eid, parentUid, childUid: uid, g, wantEdgeMM: edgeMM(root, parentUid, uid, v.node.via), via: v.node.via, boneStart, labelUid: uid });
+      const wantEdgeMM = edgeMM(root, parentUid, uid, v.node.via);
+      if (style.connector === "arrow") wantEdgeMM.conn = "arrow";
+      doEdge({ eid, parentUid, childUid: uid, g, wantEdgeMM, via: v.node.via, boneStart, labelUid: uid, arrow: style.connector === "arrow" });
     }
   }
 

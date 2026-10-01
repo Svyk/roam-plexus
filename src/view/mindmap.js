@@ -2,7 +2,10 @@ import { CAUSE_LAYOUTS, FLOW_LAYOUT, LAYOUTS, allUids, drawnTree, editableText, 
 import { flowStructure } from "../model/flow.js";
 import { resolveDrop } from "../model/mmdrop.js";
 import { viewportToScene } from "../model/scene.js";
+import { linkTarget, parseIndent } from "../model/mmextra.js";
 import { applyOps, boundaryId, bump, edgeId, isEmptyOps, makeSizer, mmOf, nodeId, patchMarker, planMap, projectionIds, reconcile, textId } from "../model/mmsync.js";
+import { installMmChrome } from "./mm-chrome.js";
+import { openOutlinePrompt } from "./outline-prompt.js";
 
 const NODE_CAP = 500;
 const DELETE_WINDOW_MS = 3000;
@@ -145,6 +148,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     let dragCancelled = false;
     let labelToasted = false;
     let flowLabelToasted = false;
+    let chrome = { refresh() {}, dispose() {} };
 
     const els = () => app.getSceneElementsIncludingDeleted?.() ?? [];
     const guard = () => alive && !disposed && native.activeEditor(doc)?.app === app;
@@ -538,6 +542,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     function pass(force = false) {
       scheduled = null;
       if (!alive) return;
+      try { chrome.refresh(); } catch (error) { warn("chrome", error); }
       force = force === true || (deferredSince != null && now() - deferredSince > MAX_WAIT_MS);
       const st = state();
       const editingId = st.editingTextElement?.id ?? null;
@@ -975,7 +980,7 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     function setLayout(layout) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout)) return false;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT, "both", "org"].includes(layout)) return false;
       const done = commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, { layout }) : e)), [sel.root]);
       if (done) toast(`Layout: ${layout} (${CHANGE_BACK})`);
       return done;
@@ -989,6 +994,133 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       const done = commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, { attrEdges: on ? true : undefined }) : e)), [sel.root]);
       if (done) toast(`Attribute blocks as edges: ${on ? "on" : "off"} (${CHANGE_BACK})`);
       return done;
+    }
+
+    function cycleStyle(kind) {
+      const sel = selectedNode();
+      const rootEl = sel ? rootElement(sel.root) : null;
+      if (!rootEl) return false;
+      const mm = mmOf(rootEl) || {};
+      if (kind !== "contrast" && mm.layout === FLOW_LAYOUT) { toast(FLOW_LAYOUT_HINT); return false; }
+      let patch = null;
+      if (kind === "shape") patch = { nodeShape: mm.nodeShape === "ellipse" ? undefined : "ellipse" };
+      else if (kind === "connector") patch = { connector: mm.connector === "arrow" ? undefined : "arrow" };
+      else if (kind === "palette") {
+        const order = [undefined, "ink", "leaf"];
+        const cur = order.includes(mm.palette) ? mm.palette : undefined;
+        patch = { palette: order[(order.indexOf(cur) + 1) % order.length] };
+      } else if (kind === "contrast") patch = { contrast: mm.contrast === true ? undefined : true };
+      else return false;
+      return commit((list) => list.map((e) => (e.id === rootEl.id ? patchMarker(e, patch) : e)), [sel.root]);
+    }
+
+    function applyOutline(text) {
+      const sel = selectedNode();
+      if (!sel) { toast("Select a mind-map node first"); return false; }
+      const parsed = parseIndent(text);
+      if (!parsed.ok) {
+        if (parsed.reason === "excluded") toast("Drawings cannot be pasted here");
+        else if (parsed.reason === "cap") toast("At most 40 blocks");
+        else toast("Nothing to paste");
+        return false;
+      }
+      const found = findNode(trees.get(sel.root), sel.uid);
+      if (!found) return false;
+      found.node.open = true;
+      const jobs = [];
+      const walk = (parentNode, parentUid, branch) => {
+        for (const child of branch.children || []) {
+          const uid = api.util.generateUID();
+          const node = { uid, string: child.text, open: true, children: [] };
+          parentNode.children.push(node);
+          jobs.push(writer.createChild(sel.root, parentUid, { uid, string: child.text }));
+          walk(node, uid, child);
+        }
+      };
+      walk(found.node, sel.uid, parsed.tree);
+      commit(null, [sel.root], { force: true });
+      toast(`Added ${parsed.count}`);
+      Promise.all(jobs).catch((error) => { warn("paste outline", error); failToast(); refreshRoot(sel.root); });
+      return true;
+    }
+
+    async function pasteOutline() {
+      const sel = selectedNode();
+      if (!sel) { toast("Select a mind-map node first"); return false; }
+      let text = null;
+      try { text = await openOutlinePrompt({ doc, zIndex: (zIndex ?? 1000) + 2 }); } catch (error) { warn("outline prompt", error); return false; }
+      if (text == null) return false;
+      return applyOutline(text);
+    }
+
+    function onPasteOutline(event) {
+      let text = "";
+      try { text = event.clipboardData?.getData?.("text/plain") ?? ""; } catch { text = ""; }
+      if (!text.includes("\n") || state().editingTextElement || !selectedNode()) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      applyOutline(text);
+    }
+
+    async function openLinked() {
+      const sel = selectedNode();
+      if (!sel) { toast("Select a mind-map node first"); return false; }
+      const node = findNode(trees.get(sel.root), sel.uid)?.node;
+      const target = linkTarget(node?.string || "");
+      if (!target) { toast("This node has no page link or block ref"); return false; }
+      let uid = target.kind === "block" ? target.uid : null;
+      if (target.kind === "page") {
+        try {
+          const raw = api.data.pull("[:block/uid]", [":node/title", target.title]);
+          uid = raw?.[":block/uid"] || null;
+        } catch (error) { warn("page link", error); uid = null; }
+      }
+      if (!uid) { toast(target.kind === "page" ? "That page is missing" : "That block is missing"); return false; }
+      if (trees.has(uid)) {
+        toast("That outline is already on this canvas");
+        select(uid, uid);
+        return true;
+      }
+      const at = { x: (sel.el.x || 0) + (sel.el.width || 0) + 120, y: sel.el.y || 0 };
+      const ok = showOutline(uid, at);
+      if (!ok) toast("That outline is missing");
+      return ok;
+    }
+
+    function chromeModel() {
+      const boxes = [];
+      const nodes = [];
+      for (const root of trees.keys()) {
+        const tree = trees.get(root);
+        if (!tree || isFlow(root)) continue;
+        const rootEl = rootElement(root);
+        const layout = mmOf(rootEl)?.layout || "right";
+        const rootCenter = rootEl ? rootEl.x + (rootEl.width || 0) / 2 : 0;
+        for (const v of visibleNodes(tree)) {
+          const el = els().find((e) => e.id === nodeId(root, v.node.uid));
+          if (!el || el.isDeleted) continue;
+          const cx = el.x + (el.width || 0) / 2;
+          boxes.push({
+            uid: v.node.uid,
+            root,
+            x: el.x,
+            y: el.y,
+            w: el.width || 0,
+            h: el.height || 0,
+            layout,
+            side: layout === "both" ? (cx < rootCenter ? "left" : "right") : null,
+            hidden: countHidden(v.node),
+          });
+          nodes.push({
+            uid: v.node.uid,
+            parent: v.parent?.uid || null,
+            string: v.node.string || "",
+            x: cx,
+            y: el.y + (el.height || 0) / 2,
+          });
+        }
+      }
+      return { boxes, nodes };
     }
 
     function togglePin(sel) {
@@ -1106,8 +1238,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       return root;
     }
 
-    function showOutline(root) {
-      rootPos.set(root, { x: 0, y: 0 });
+    function showOutline(root, at) {
+      const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : { x: 0, y: 0 };
+      rootPos.set(root, pos);
       rootDefaults.set(root, { attrEdges: true });
       trees.set(root, null);
       ensureRoot(root);
@@ -1174,7 +1307,17 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       target.addEventListener(type, fn, opts);
       offs.push(() => target.removeEventListener(type, fn, opts));
     };
+    chrome = installMmChrome({
+      doc,
+      app,
+      containerEl,
+      getModel: chromeModel,
+      onAdd: (box) => { if (alive) newNode(box.root, box.uid, "child"); },
+      onFold: (box) => { if (alive) toggleFold({ root: box.root, uid: box.uid }); },
+    });
+    offs.push(() => { try { chrome.dispose(); } catch (error) { warn("chrome", error); } });
     listen(containerEl, "keydown", onKeyDown, true);
+    listen(containerEl, "paste", onPasteOutline, true);
     for (const name of ["onChangeEmitter", "onScrollChangeEmitter"]) {
       try {
         const off = app[name]?.on?.(() => onChange());
@@ -1203,6 +1346,9 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
       mapOptions,
       setLayout,
       setAttrEdges,
+      cycleStyle,
+      pasteOutline,
+      openLinked,
       flush,
       dispose() {
         flush();
@@ -1250,13 +1396,16 @@ export function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, meas
     mount,
     selectedNode: (app) => sessionFor(app)?.selectedNode() ?? null,
     startRoot: ({ app, drawingUid }) => sessionFor(app)?.startRoot({ drawingUid }) ?? null,
-    async showOutline({ app, rootUid }) {
+    async showOutline({ app, rootUid, at }) {
       const s = await waitForSession(app);
-      return s ? s.showOutline(rootUid) : false;
+      return s ? s.showOutline(rootUid, at) : false;
     },
     mapOptions: (app) => sessionFor(app)?.mapOptions() ?? null,
     setLayout: (app, layout) => sessionFor(app)?.setLayout(layout) ?? false,
     setAttrEdges: (app, on) => sessionFor(app)?.setAttrEdges(on) ?? false,
+    cycleStyle: (app, kind) => sessionFor(app)?.cycleStyle(kind) ?? false,
+    pasteOutline: (app) => sessionFor(app)?.pasteOutline() ?? Promise.resolve(false),
+    openLinked: (app) => sessionFor(app)?.openLinked() ?? Promise.resolve(false),
     outlineInfo,
     NODE_CAP,
     hasSession: (app) => sessions.has(app),

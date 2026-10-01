@@ -8,6 +8,7 @@ import { createToaster } from "./view/toast.js";
 import { baseZIndex, createEditorToolbar, installBackKey } from "./view/toolbar.js";
 import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
 import { installRefLines } from "./view/ref-lines.js";
+import { installRegionSync } from "./view/region-sync.js";
 import { cardTexts } from "./model/ref-lines.js";
 import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
@@ -634,6 +635,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         newFromTemplate: (ctx) => templates.newFromTemplate(ctx),
         saveTemplate: () => templates.saveSelectionAsTemplate(),
         setLayout: (layout) => { const editor = mmEditor(); return editor ? mindmap.setLayout(editor.app, layout) : false; },
+        cycleStyle: (kind) => { const editor = mmEditor(); return editor ? mindmap.cycleStyle(editor.app, kind) : false; },
+        pasteOutline: () => { const editor = mmEditor(); return editor ? mindmap.pasteOutline(editor.app) : false; },
+        openLinked: () => { const editor = mmEditor(); return editor ? mindmap.openLinked(editor.app) : false; },
         toggleAttrEdges: () => {
           const editor = mmEditor();
           if (!editor) return false;
@@ -1259,6 +1263,13 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const cardText = new Map();
           mounted.disposers.push(installRefLines({ doc, app, containerEl: el, texts: cardText }));
+          mounted.disposers.push(installRegionSync({
+            app,
+            api,
+            drawingUid: mountUid,
+            regionsOf: (uid) => host.regionsOf(uid),
+            nameRegion: (uid, text) => actions.nameRegion(uid, text),
+          }));
           const overlay = createEmbedOverlay({
             doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000,
             toast: (message) => toaster.show(message, { kind: "error" }),
@@ -1619,10 +1630,18 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "mmLayoutCause", label: "Mind map layout: Cause", run: () => (tools ? tools.setLayout("cause") : unavailable("mmLayout")) },
       { id: "mmLayoutFishbone", label: "Mind map layout: Fishbone", run: () => (tools ? tools.setLayout("fishbone") : unavailable("mmLayout")) },
       { id: "mmLayoutFlow", label: "Mind map layout: Flow", run: () => (tools ? tools.setLayout("flow") : unavailable("mmLayout")) },
+      { id: "mmLayoutBoth", label: "Mind map layout: Both sides", run: () => (tools ? tools.setLayout("both") : unavailable("mmLayout")) },
+      { id: "mmLayoutOrg", label: "Mind map layout: Org chart", run: () => (tools ? tools.setLayout("org") : unavailable("mmLayout")) },
       { id: "insertTemplate", label: "Insert template\u2026", run: () => (tools ? tools.insertTemplate() : unavailable("insertTemplate")) },
       { id: "newFromTemplate", label: "New drawing from template\u2026", run: (ctx) => (tools ? tools.newFromTemplate(ctx) : unavailable("newFromTemplate")) },
       { id: "saveTemplate", label: "Save selection as template\u2026", run: () => (tools ? tools.saveTemplate() : unavailable("saveTemplate")) },
       { id: "mmAttrEdges", label: "Mind map: attribute blocks as edges", run: () => (tools ? tools.toggleAttrEdges() : unavailable("mmAttrEdges")) },
+      { id: "mmPasteOutline", label: "Paste outline as branch\u2026", run: () => (tools ? tools.pasteOutline() : unavailable("mmPasteOutline")) },
+      { id: "mmSubmap", label: "Submap from link", run: () => (tools ? tools.openLinked() : unavailable("mmSubmap")) },
+      { id: "mmShape", label: "Mind map shape", run: () => (tools ? tools.cycleStyle("shape") : unavailable("mmShape")) },
+      { id: "mmConnector", label: "Mind map connector", run: () => (tools ? tools.cycleStyle("connector") : unavailable("mmConnector")) },
+      { id: "mmPalette", label: "Mind map palette", run: () => (tools ? tools.cycleStyle("palette") : unavailable("mmPalette")) },
+      { id: "mmContrast", label: "Mind map contrast", run: () => (tools ? tools.cycleStyle("contrast") : unavailable("mmContrast")) },
       { id: "captionCleanupDryRun", label: "Clear placeholder captions (dry run)", run: run("captionCleanupDryRun") },
       { id: "undoCaptionCleanup", label: "Undo caption cleanup", run: run("undoCaptionCleanup") },
       { id: "legacyDryRun", label: "Legacy drawings (dry run)", run: run("legacyDryRun") },

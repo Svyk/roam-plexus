@@ -4,6 +4,18 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.28.0]
+- A mind map node is a rectangle or an ellipse, its edge a line or an arrow, and its palette default, ink, or leaf.
+- An indented paste becomes child blocks. A drawing is refused. At most forty.
+- A block ref draws a dashed line. At most twelve.
+- A plus adds a child. A badge shows the folded count. Tab and fold stay.
+- Both sides alternates left and right. Org chart widens the sibling gap. Alt+L keeps five.
+- A link opens that outline beside this map.
+- Contrast picks black or white ink from the fill.
+- One plain text follows the region caption. Markup and conflict write nothing.
+- Native keys already add the next shape. No command.
+- The palette stays two entries. The command list is 75.
+
 ## [0.27.0]
 - A task card embeds a to-do or done block. A checkbox swaps the Roam macro. The rest of the text stays. Better Tasks attribute blocks are shown and not written.
 - A live query node renders the query. A pull watch on each named page, at most four, repaints. A query with no page stays a snapshot.

@@ -347,7 +347,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 67 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 75 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -371,7 +371,9 @@ test("the command list carries all 67 labels and hotkeys, and captures the focus
       "Restore before last Plexus change",
       "Restore an earlier version\u2026", "Cause-and-effect from JSON\u2026", "Drawing to outline\u2026", "Copy as Roam markdown",
       "Mind map layout: Right", "Mind map layout: Cause", "Mind map layout: Fishbone", "Mind map layout: Flow",
+      "Mind map layout: Both sides", "Mind map layout: Org chart",
       "Insert template\u2026", "New drawing from template\u2026", "Save selection as template\u2026", "Mind map: attribute blocks as edges",
+      "Paste outline as branch\u2026", "Submap from link", "Mind map shape", "Mind map connector", "Mind map palette", "Mind map contrast",
       "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)",
       "Focus mode", "Todo mode", "Embed query results", "Embed page children", "Link selected", "Filter regions by tag",
       "Lock or unlock selection", "Unlock all", "Copy diagnostics", "Where is this cited?",
