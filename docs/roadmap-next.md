@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (22)
+### 6.1 Later (14)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -860,7 +860,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REF-13 | Multi-image blocks and rotated images | Rare; inverse rotation needs a 90-degree test | The image-index pick (S) can ship alone if needed | |
 | AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
-| AUTH-13 | Styling helpers | Menu weight for marginal wins | The contrast rule can ride with mind-map colours | park |
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
 | AUTH-21 | Layer manager | Frames plus NAV-9 approximate it; emulated hide leaks into exports | Layered plant maps become frequent | park |
@@ -868,13 +867,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | NAV-6 | Canvas outline / regions panel | Duplicates the outline; NAV-7 is the Roam-native answer | Only as a host for a slide sorter | park |
 | NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
-| GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
-| MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
-| MM-4 | More mind-map layouts and a chooser | Five layouts exist | A map asks for both-sides or org chart | |
-| MM-5 | Mind-map styling (shape, connector, palettes) | Arrow type changes rewrite points; styling is not the gap | | park |
-| MM-6 | Mind-map conversions and bulk input | Paste-indented-list-as-branch is the useful piece; the rest is heuristic | | |
-| MM-9 | Mind-map cross-links from block refs | Derived arrows ignore layout and cross badly | | |
-| MM-10 | Import a linked page's outline, submaps | Many writes; embed cap | After MM-1, MM-7, MM-8 settle | |
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
@@ -919,6 +911,14 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EMB-3 | 0.27.0 | `ccc2996` | A live query renders the query. A pull watch on each named page, at most four, repaints. A query with no page stays a snapshot |
 | EMB-2 | 0.27.0 | `ccc2996` | A page card shows the attributes you name. Enter writes that attribute. An existing page is reused. Better Tasks attributes are shown and not written |
 | GRAPH-3 | 0.27.0 | `ccc2996` | Hovering an embed draws lines to other embeds on this canvas that mention each other. Lines leave with the pointer. At most twelve |
+| MM-5 | 0.28.0 | `9012476` | A mind map node is a rectangle or an ellipse. Its edge is a line or an arrow. The palette is default, ink, or leaf |
+| MM-6 | 0.28.0 | `9012476` | An indented paste becomes child blocks. A drawing is refused. At most forty |
+| MM-9 | 0.28.0 | `9012476` | A block ref draws a dashed line. At most twelve |
+| MM-3 | 0.28.0 | `9012476` | A plus adds a child. A badge shows the folded count. Tab and fold stay |
+| MM-4 | 0.28.0 | `9012476` | Both sides alternates left and right. Org chart widens the sibling gap. Alt+L keeps five |
+| MM-10 | 0.28.0 | `9012476` | A link opens that outline beside this map |
+| AUTH-13 | 0.28.0 | `9012476` | Contrast picks black or white ink from the fill |
+| GRAPH-11 | 0.28.0 | `9012476` | One plain text follows the region caption. Markup and conflict write nothing |
 
 ### 6.2 Parked (17)
 
@@ -1089,7 +1089,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-10 | Drawing templates as blocks | P13 |
 | AUTH-11 | New drawing commands | P9 (QW) |
 | AUTH-12 | Stencil library in the graph | P16 |
-| AUTH-13 | Styling helpers | Later |
+| AUTH-13 | Styling helpers | 0.28.0 |
 | AUTH-14 | Insert image or drawing from picker | 0.26.0 |
 | AUTH-15 | Annotate a Roam image | P16 |
 | AUTH-16 | Nested drawings | Later |
@@ -1131,7 +1131,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | GRAPH-8 | Lanes and timelines by attribute | Parked |
 | GRAPH-9 | Bulk attribute brush | Rejected |
 | GRAPH-10 | Managed "Linked from this drawing" list | 0.25.0 |
-| GRAPH-11 | Two-way sync for single-text regions | Later |
+| GRAPH-11 | Two-way sync for single-text regions | 0.28.0 |
 | GRAPH-12 | Site-map heat overlay | P15 |
 | GRAPH-13 | Connected margins | Parked |
 | CMP-1 | Compass opens via RoamPlexus.open | P8 (QW) |
@@ -1165,14 +1165,14 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | PRES-10 | Narrated walkthrough | Rejected |
 | MM-1 | Drag to reparent and reorder | P12 |
 | MM-2 | Mind-map keyboard extras | P12 |
-| MM-3 | "+" buttons and collapse badge | Later |
-| MM-4 | More layouts and a chooser | Later |
-| MM-5 | Mind-map styling | Later |
-| MM-6 | Conversions and bulk input | Later |
+| MM-3 | "+" buttons and collapse badge | 0.28.0 |
+| MM-4 | More layouts and a chooser | 0.28.0 |
+| MM-5 | Mind-map styling | 0.28.0 |
+| MM-6 | Conversions and bulk input | 0.28.0 |
 | MM-7 | Attribute blocks as labelled edges | P12 |
 | MM-8 | Task nodes and tag colours | P12 |
-| MM-9 | Cross-links from block refs | Later |
-| MM-10 | Linked page import, submaps | Later |
+| MM-9 | Cross-links from block refs | 0.28.0 |
+| MM-10 | Linked page import, submaps | 0.28.0 |
 | MM-11 | Cause-and-effect / RCA builder | P12 |
 | MM-12 | Process flow / swimlane | P13 |
 | EXP-1 | Copy crop as PNG/SVG | P7 (QW) |

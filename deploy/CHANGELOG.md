@@ -15,6 +15,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - One plain text follows the region caption. Markup and conflict write nothing.
 - Native keys already add the next shape. No command.
 - The palette stays two entries. The command list is 75.
+- Typing, editor closed, five rounds: +0.129 ms/key. Loaded mean 12.118. Unloaded mean 11.989.
 
 ## [0.27.0]
 - A task card embeds a to-do or done block. A checkbox swaps the Roam macro. The rest of the text stays. Better Tasks attribute blocks are shown and not written.
