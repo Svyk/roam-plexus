@@ -32,7 +32,13 @@ const flat = (n) => [n, ...(n.children || []).flatMap((c) => (typeof c === "obje
 const texts = (root) => flat(root).map((n) => n.text).filter(Boolean);
 const buttons = (root, cls) => flat(root).filter((n) => n.tag === "button" && n.className.includes(cls));
 const tick = () => new Promise((r) => setImmediate(r));
-const T = new Date(2026, 8, 30, 14, 5).getTime();
+function localAt(dayOffset, hours, minutes) {
+  const d = new Date();
+  d.setHours(hours, minutes, 0, 0);
+  d.setDate(d.getDate() + dayOffset);
+  return d.getTime();
+}
+const T = localAt(0, 14, 5);
 
 test("lists session entries with label, time and element count; saved entries after loading", async () => {
   const doc = fakeDoc();
@@ -49,12 +55,15 @@ test("lists session entries with label, time and element count; saved entries af
   assert.ok(texts(root).some((t) => t.endsWith("1 element")));
   assert.ok(texts(root).includes("Loading…"));
   await tick();
-  resolve([{ key: ["g", "d", T], t: T, count: 7 }, { key: ["g", "d", T - 1], t: T - 86400000, count: 3 }]);
+  const Y = localAt(-1, 14, 5);
+  resolve([{ key: ["g", "d", T], t: T, count: 7 }, { key: ["g", "d", Y], t: Y, count: 3 }]);
   await tick();
   assert.ok(!texts(root).includes("Loading…"));
   assert.ok(texts(root).includes("14:05"));
   assert.ok(texts(root).includes("7 elements"));
-  assert.ok(texts(root).some((t) => /^2026-09-29 14:05$/.test(t)));
+  const y = new Date(Y);
+  const yText = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, "0")}-${String(y.getDate()).padStart(2, "0")} 14:05`;
+  assert.ok(texts(root).includes(yText));
 });
 
 test("empty and failing loads show a message; encrypted graphs say so", async () => {
