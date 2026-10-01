@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Typing `[[` or `((` inserts the closer and leaves the caret inside. Selected words stay the alias, and a page pick writes `[words]([[Title]])`. An empty `[[` lists recent pages. A `#` lists referenced pages. Page rows show the ref count. Related appears only when semantic search is enabled.
 - A quiet chip on an open mind map. "Outline update pending" after the queue has been busy for 2.5 s. "Could not update the outline" when the last write failed, until a later write succeeds. No second save control.
 - The palette stays two entries. The command list stays 53.
+- Typing, editor closed, five rounds: +0.077 ms/key. Loaded mean 11.797. Unloaded mean 11.720.
 
 ## [0.19.0]
 

@@ -40,6 +40,7 @@ Standing constraints:
 | B2 | Someday batch 2: region gallery (REF-14), card size, alignment, bare, and padding (REF-5), region kind chooser (REF-10) | Live gate (Readwisenotes) | done 2026-09-30, 0.17.0 (`7dac0b7`); live: gallery wrapped 10 cards on 4 rows and the container text stayed; large bare centered card, 8px padding, image 108px; chooser Frame and Loose shapes, Escape added no region; typing +0.097 ms/key |
 | B3 | Someday batch 3: page badges and cite (REG-4), remove embed (UX-10) | Live gate (Readwisenotes) | done 2026-10-01, 0.18.0 (`e6e9ff4`); live: badge 2, one embed and no arrow, cite opens the popover and writes nothing, remove-embed toast exact; typing -0.054 ms/key |
 | B4 | Someday batch 4: card keys (NAV-10), graph and mentions (NAV-13) | Live gate (Readwisenotes) | done 2026-10-01, 0.19.0 (`96cfe31`); live: Alt+Right selected the next anchor and nothing moved, copy and sidebar block, cold Space left the key, plain arrow nudged 20px and was restored; graph and mentions opened the page; typing -0.096 ms/key |
+| B5 | Someday batch 5: picker alias and tags (UX-8), outline chip (DATA-7) | Live gate (Readwisenotes) | done 2026-10-01, 0.20.0 (`6e1bf04`); live: selected words became the alias, [[ paired with the caret inside, # listed tags, the chip was absent while idle; typing +0.077 ms/key |
 
 Resolved defaults (spec §12):
 - Text-element links do not get automatic region blocks; Roam's tail already makes them refs.

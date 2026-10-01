@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (48)
+### 6.1 Later (46)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -899,9 +899,7 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | EXP-9 | Auto-synced export image block | Upload churn and orphan files | Mobile viewing becomes a habit | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
-| DATA-7 | Outline write-queue status chip | Toasts work | Failed outline writes occur | |
 | UX-6 | Per-drawing attributes | Attribute pages clutter All Pages; settings cover current needs | | |
-| UX-8 | Picker triggers (alias on selection, #tag, auto-pair, recents) | IME and auto-pair on the input path | | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 | REV-4 | Tags on elements and a tag filter | Typing `#tags` already makes refs; the filter needs the veil | After NAV-9 | park |
 ### Shipped from Later
@@ -919,6 +917,8 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | UX-10 | 0.18.0 | `e6e9ff4` | Remove embed deletes only the anchor and toasts that the block is unchanged. Hint and pulse cut |
 | NAV-10 | 0.19.0 | `96cfe31` | Alt+arrows, Shift+Tab, copy link, sidebar, and a cache-only crop on one anchor. Plain arrows still nudge |
 | NAV-13 | 0.19.0 | `96cfe31` | Open in graph view and Show mentions open the block's page. No graph colouring |
+| UX-8 | 0.20.0 | `6e1bf04` | Selected words stay the alias. [[ and (( insert the closer. Empty [[ lists recent pages. # lists referenced pages. Ref counts on page rows. Related only when semantic search is on |
+| DATA-7 | 0.20.0 | `6e1bf04` | Quiet chip after the outline queue is busy for 2.5 s, and the failure text when the last write failed. No second save control |
 
 ### 6.2 Parked (17)
 
@@ -1194,7 +1194,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | DATA-4 | Copy diagnostics | 0.16.0 |
 | DATA-5 | View-state measurement and native-feature probe | P7 (QW) |
 | DATA-6 | Edit-conflict guard | Parked |
-| DATA-7 | Write-queue status chip | Later |
+| DATA-7 | Write-queue status chip | 0.20.0 |
 | UX-1 | Default hotkeys and hints | P9 (QW) |
 | UX-2 | Context-only palette commands | Parked |
 | UX-3 | Reduced motion | P8 |
@@ -1202,7 +1202,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | UX-5 | Canvas preferences | 0.16.0 |
 | UX-6 | Per-drawing attributes | Later |
 | UX-7 | Picker: natural dates, create page | P9 |
-| UX-8 | Picker triggers | Later |
+| UX-8 | Picker triggers | 0.20.0 |
 | UX-9 | Preferences bundle | Parked |
 | UX-10 | Feedback polish | 0.18.0 |
 | UX-11 | Floating mini-toolbar | Parked |
