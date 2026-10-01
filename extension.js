@@ -1,4 +1,4 @@
-/* Plexus v0.16.0 | MIT | generated; edit src/ */
+/* Plexus v0.17.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -104,7 +104,15 @@ function createLifecycle() {
 var DISPLAY_MODES = ["image", "thumbnail", "link"];
 var CAPTION_OVERRIDES = ["hide", "show"];
 var CAPTION_DISPLAYS = ["written", "always", "never"];
+var CARD_SIZES = ["s", "m", "l"];
+var CARD_ALIGNS = ["left", "center", "right"];
+var CARD_PAD_MAX = 48;
 var MAX_OVERRIDES = 500;
+function cardScale(size) {
+  if (size === "s") return 0.6;
+  if (size === "l") return 1.5;
+  return 1;
+}
 function overrideKey(blockUid, refUid) {
   return `${blockUid}|${refUid}`;
 }
@@ -124,7 +132,12 @@ function cleanEntry(value) {
   const entry = {};
   if (DISPLAY_MODES.includes(value.mode)) entry.mode = value.mode;
   if (CAPTION_OVERRIDES.includes(value.caption)) entry.caption = value.caption;
-  return entry.mode || entry.caption ? entry : null;
+  if (CARD_SIZES.includes(value.size)) entry.size = value.size;
+  if (CARD_ALIGNS.includes(value.align)) entry.align = value.align;
+  if (value.bare === true) entry.bare = true;
+  const pad2 = Number(value.pad);
+  if (value.pad != null && Number.isInteger(pad2) && pad2 >= 0 && pad2 <= CARD_PAD_MAX) entry.pad = pad2;
+  return entry.mode || entry.caption || entry.size || entry.align || entry.bare || entry.pad != null ? entry : null;
 }
 function parseOverrides(value) {
   let raw = value;
@@ -156,7 +169,7 @@ function withOverride(map, blockUid, refUid, patch) {
   const fields = typeof patch === "string" ? { mode: patch } : patch;
   if (typeof fields !== "object" || Array.isArray(fields)) return out;
   const next = { ...prev };
-  for (const field of ["mode", "caption"]) {
+  for (const field of ["mode", "caption", "size", "align", "bare", "pad"]) {
     if (!(field in fields)) continue;
     if (fields[field] == null) delete next[field];
     else next[field] = fields[field];
@@ -168,10 +181,13 @@ function withOverride(map, blockUid, refUid, patch) {
   for (let i = 0; i < keys.length - MAX_OVERRIDES; i++) delete out[keys[i]];
   return out;
 }
+function hasExtra(entry) {
+  return entry.caption != null || entry.size != null || entry.align != null || entry.bare === true || entry.pad != null;
+}
 function serializeOverrides(map) {
   const out = {};
   for (const [key, entry] of Object.entries(parseOverrides(map))) {
-    out[key] = entry.caption ? entry : entry.mode;
+    out[key] = hasExtra(entry) ? entry : entry.mode;
   }
   return out;
 }
@@ -192,6 +208,7 @@ var SETTING_IDS = Object.freeze({
   inlineDisplay: "inline-display",
   darkCrops: "dark-crops",
   refOverrides: "ref-overrides",
+  regionGalleries: "region-galleries",
   cacheOnDisk: "cache-on-disk",
   cacheLimitMb: "cache-limit-mb",
   showBacklinks: "show-backlinks",
@@ -222,6 +239,7 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.inlineDisplay]: "thumbnail",
   [SETTING_IDS.darkCrops]: true,
   [SETTING_IDS.refOverrides]: "{}",
+  [SETTING_IDS.regionGalleries]: "[]",
   [SETTING_IDS.cacheOnDisk]: true,
   [SETTING_IDS.cacheLimitMb]: "100",
   [SETTING_IDS.showBacklinks]: true,
@@ -366,6 +384,7 @@ function readSettings(extensionAPI) {
     inlineDisplay: get(SETTING_IDS.inlineDisplay) === "link" ? "link" : "thumbnail",
     darkCrops: !!get(SETTING_IDS.darkCrops),
     refOverrides: memoOverrides(get(SETTING_IDS.refOverrides)),
+    regionGalleries: parseRegionGalleries(get(SETTING_IDS.regionGalleries)),
     cacheOnDisk: !!get(SETTING_IDS.cacheOnDisk),
     cacheLimitMb: Number(get(SETTING_IDS.cacheLimitMb)) || 100,
     showBacklinks: !!get(SETTING_IDS.showBacklinks),
@@ -410,6 +429,46 @@ function setRefOverride(extensionAPI, blockUid, refUid, patch) {
     }
   });
   overrideQueues.set(extensionAPI, next);
+  return next;
+}
+var GALLERY_CAP = 200;
+var GALLERY_UID_RE = /^[A-Za-z0-9_-]{9}$/;
+function parseRegionGalleries(value) {
+  let raw = value;
+  if (typeof value === "string") {
+    try {
+      raw = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const uid of raw) {
+    if (typeof uid !== "string" || !GALLERY_UID_RE.test(uid) || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out.length > GALLERY_CAP ? out.slice(-GALLERY_CAP) : out;
+}
+function withRegionGallery(list, uid, on) {
+  const next = parseRegionGalleries(list).filter((item) => item !== uid);
+  if (on && typeof uid === "string" && GALLERY_UID_RE.test(uid)) next.push(uid);
+  return next.length > GALLERY_CAP ? next.slice(-GALLERY_CAP) : next;
+}
+var galleryQueues = /* @__PURE__ */ new WeakMap();
+function setRegionGallery(extensionAPI, uid, on) {
+  const prev = galleryQueues.get(extensionAPI) || Promise.resolve();
+  const next = prev.then(async () => {
+    try {
+      const list = parseRegionGalleries(extensionAPI.settings.get(SETTING_IDS.regionGalleries));
+      await writeSetting(extensionAPI, SETTING_IDS.regionGalleries, JSON.stringify(withRegionGallery(list, uid, on)));
+    } catch (error) {
+      console.warn("[plexus] setRegionGallery failed", error);
+    }
+  });
+  galleryQueues.set(extensionAPI, next);
   return next;
 }
 
@@ -5483,7 +5542,11 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
   const unclaim = (root, info) => {
     dropInfo(info);
     releaseHosts(info);
-    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden"]) info.refEl?.classList?.remove(c);
+    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden", "plexus-ref-bare"]) info.refEl?.classList?.remove(c);
+    if (info.refEl?.style) {
+      info.refEl.style.padding = "";
+      info.refEl.style.textAlign = "";
+    }
     for (const el of info.extras.splice(0)) el.remove?.();
     info.btn.classList.remove("plexus-hidden");
     info.btn.removeAttribute(CLAIMED);
@@ -5511,15 +5574,22 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       });
       if (root.isConnected) finishChip(root, region);
     };
+    const scale = cardScale(info.size);
     if (info.mode === "thumbnail") {
-      img.style.height = `${s.thumbHeight}px`;
+      const h = Math.round(s.thumbHeight * scale);
+      img.style.height = `${h}px`;
       img.style.maxHeight = "none";
-      img.style.maxWidth = `min(100%, ${4 * s.thumbHeight}px)`;
+      img.style.maxWidth = `min(100%, ${4 * h}px)`;
     } else {
-      img.style.maxHeight = `${s.figureHeight}px`;
+      img.style.maxHeight = `${Math.round(s.figureHeight * scale)}px`;
     }
     img.src = entry.url;
     root.className = `plexus-root plexus-regionref plexus-regionref--${info.mode}`;
+    if (root.style) {
+      const align = info.align;
+      root.style.marginLeft = align === "center" || align === "right" ? "auto" : align === "left" ? "0" : "";
+      root.style.marginRight = align === "center" || align === "left" ? "auto" : align === "right" ? "0" : "";
+    }
     root.textContent = "";
     root.append(img);
   };
@@ -5668,7 +5738,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
     if (!ctx.blockUid) return {};
     const entries = [ctx.blockUid, ctx.outerUid].filter(Boolean).map((b) => s.refOverrides[overrideKey(b, uid)]).map((e) => typeof e === "string" ? { mode: e } : e).filter((e) => e && typeof e === "object");
     const pick3 = (field) => entries.find((e) => e[field] != null)?.[field];
-    return { mode: pick3("mode"), caption: pick3("caption") };
+    return { mode: pick3("mode"), caption: pick3("caption"), size: pick3("size"), align: pick3("align"), bare: pick3("bare"), pad: pick3("pad") };
   };
   const captionOf = (ctx, override, s) => resolveCaption({ captionDisplay: s.captionDisplay, override: { caption: override.caption }, context: ctx.context });
   const modeFor = (btn, ctx, override, s) => {
@@ -5751,11 +5821,14 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, doc, 
       root.title = label;
       btn.parentNode.insertBefore(root, btn.nextSibling);
       prune2();
-      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, disposers: [], hosts: [], extras: [] };
+      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, size: override.size, align: override.align, disposers: [], hosts: [], extras: [] };
       roots.set(root, info);
       if (ctx.refEl && mode !== "link") {
         ctx.refEl.classList.add("plexus-ref-card");
         ctx.refEl.classList.add(`plexus-mode-${mode}`);
+        if (override.bare === true) ctx.refEl.classList.add("plexus-ref-bare");
+        if (Number.isInteger(override.pad) && ctx.refEl.style) ctx.refEl.style.padding = `${override.pad}px`;
+        if ((override.align === "left" || override.align === "center" || override.align === "right") && ctx.refEl.style) ctx.refEl.style.textAlign = override.align;
         hostAncestors(ctx.refEl, info);
       }
       addMeta(root, info, block.children);
@@ -6041,7 +6114,7 @@ function classifyAddedNode(node) {
   }
   return out;
 }
-function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEditorUnmount, MutationObserverImpl = globalThis.MutationObserver }) {
+function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEditorUnmount, onScan, MutationObserverImpl = globalThis.MutationObserver }) {
   let trackedEditor = null;
   let disposed = false;
   const safe2 = (fn, arg) => {
@@ -6075,6 +6148,7 @@ function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEdito
     } catch (error) {
       console.warn("[plexus] discovery failed", error);
     }
+    safe2(onScan);
   });
   observer.observe(root, { childList: true, subtree: true });
   return {
@@ -6084,6 +6158,7 @@ function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEdito
         const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el) && !el.closest?.(DOCK_SELECTOR));
         const aliases = Array.from(root.querySelectorAll(`a.${ALIAS_CLASS}`)).filter((el) => !skipped(el));
         handle({ regionButtons, editors, aliases });
+        safe2(onScan);
       } catch (error) {
         console.warn("[plexus] scanExisting failed", error);
       }
@@ -6094,6 +6169,49 @@ function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEdito
       trackedEditor = null;
     }
   };
+}
+
+// src/view/gallery.js
+var GALLERY_CLASS = "plexus-regions-gallery";
+function directChildren(block) {
+  const list = block?.children;
+  if (!list || typeof list.length !== "number") return null;
+  for (let i = 0; i < list.length; i++) {
+    const child = list[i];
+    if (child?.classList?.contains?.("rm-block-children")) return child;
+  }
+  return null;
+}
+function childrenOf(input) {
+  const block = input?.closest?.(".rm-block");
+  if (!block) return null;
+  return directChildren(block) || block.querySelector?.(".rm-block-children") || null;
+}
+function uidOfMarked(el) {
+  const block = el?.closest?.(".rm-block");
+  if (!block || typeof block.querySelectorAll !== "function") return "";
+  const inputs = block.querySelectorAll('[id^="block-input-"]');
+  for (const input of inputs) {
+    if (typeof el.contains === "function" && el.contains(input)) continue;
+    const id = typeof input?.id === "string" ? input.id : "";
+    if (id.startsWith("block-input-")) return id.slice(-9);
+  }
+  return "";
+}
+function applyRegionGalleries(doc, uids) {
+  if (typeof doc?.querySelectorAll !== "function") return;
+  const list = Array.isArray(uids) ? uids : [];
+  const want = new Set(list);
+  if (list.length && typeof doc.querySelector === "function") {
+    for (const uid of list) {
+      const input = doc.querySelector(`[id^="block-input-"][id$="-${uid}"]`);
+      const children = input ? childrenOf(input) : null;
+      children?.classList?.add?.(GALLERY_CLASS);
+    }
+  }
+  for (const el of doc.querySelectorAll(`.rm-block-children.${GALLERY_CLASS}`)) {
+    if (!want.has(uidOfMarked(el))) el.classList?.remove?.(GALLERY_CLASS);
+  }
 }
 
 // src/view/spotlight.js
@@ -16760,6 +16878,75 @@ function detectRegionKind({ elements, ids, selectedGroupIds }) {
   }
   return { kind: "area" };
 }
+function regionKindCandidates({ elements, ids, selectedGroupIds }) {
+  const live3 = (elements || []).filter((el) => el && !el.isDeleted);
+  const byId = new Map(live3.map((el) => [el.id, el]));
+  const selectedIds = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of ids || []) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    selectedIds.push(id);
+  }
+  const candidates = [];
+  const covered = /* @__PURE__ */ new Set();
+  const frames = selectedIds.map((id) => byId.get(id)).filter(isFrame2);
+  if (frames.length === 1) {
+    const frame = frames[0];
+    const children = live3.filter((el) => el.frameId === frame.id);
+    candidates.push({ kind: "cframe", frame, children });
+    covered.add(frame.id);
+    for (const el of children) covered.add(el.id);
+  }
+  const fullGroups = [];
+  for (const groupId of Object.keys(selectedGroupIds || {})) {
+    if (!selectedGroupIds[groupId]) continue;
+    const members = live3.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(groupId));
+    if (members.length && members.every((el) => seen.has(el.id))) fullGroups.push({ groupId, members });
+  }
+  if (fullGroups.length === 1) {
+    const { groupId, members } = fullGroups[0];
+    candidates.push({ kind: "group", groupId, members });
+    for (const el of members) covered.add(el.id);
+  }
+  if (candidates.length) {
+    const loose = selectedIds.filter((id) => !covered.has(id));
+    if (loose.length) candidates.push({ kind: "area", ids: loose });
+    return candidates;
+  }
+  if ((ids || []).length) return [{ kind: "area", ids: selectedIds }];
+  return [];
+}
+function chooseRegionKind(doc, candidates) {
+  const parent = typeof doc?.body?.append === "function" ? doc.body : typeof doc?.documentElement?.append === "function" ? doc.documentElement : null;
+  if (!parent || typeof doc.createElement !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const box = doc.createElement("div");
+    box.className = "plexus-kind-chooser";
+    box.setAttribute("role", "dialog");
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      doc.removeEventListener?.("keydown", onKey, true);
+      box.remove();
+      resolve(value);
+    }
+    function onKey(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      finish(null);
+    }
+    doc.addEventListener("keydown", onKey, true);
+    for (const candidate of candidates) {
+      const button = doc.createElement("button");
+      button.textContent = candidate.kind === "cframe" ? "Frame" : candidate.kind === "group" ? "Group" : "Loose shapes";
+      button.addEventListener("click", () => finish(candidate));
+      box.appendChild(button);
+    }
+    parent.append(box);
+  });
+}
 function contentRect(img, view2) {
   const rect = img.getBoundingClientRect();
   const nw = img.naturalWidth;
@@ -16829,7 +17016,8 @@ function createActions({
   printKit = { printPages, downloadPngs },
   printWin = (win) => win?.print?.(),
   setTimer = (fn, ms) => globalThis.setTimeout(fn, ms),
-  clearTimer = (id) => globalThis.clearTimeout(id)
+  clearTimer = (id) => globalThis.clearTimeout(id),
+  chooseKind = null
 }) {
   let disposed = false;
   let activeTool = null;
@@ -17638,9 +17826,18 @@ function createActions({
       }
       if (badTarget(drawingUid, ids)) return null;
       const elements = sceneElements(app);
-      const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
+      const selectedGroupIds = app.state?.selectedGroupIds;
+      const candidates = regionKindCandidates({ elements, ids, selectedGroupIds });
+      let detected;
+      if (candidates.length >= 2) {
+        detected = await (chooseKind || chooseRegionKind)(doc, candidates);
+        if (!detected || disposed) return null;
+      } else {
+        detected = detectRegionKind({ elements, ids, selectedGroupIds });
+      }
       let region;
       let words;
+      let anchorIds = ids;
       if (detected.kind === "cframe") {
         const { frame: frame2, children } = detected;
         words = drawingCaptions(elements, children.map((el) => el.id), frame2.name);
@@ -17649,10 +17846,12 @@ function createActions({
         words = drawingCaptions(elements, detected.members.map((el) => el.id));
         region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD };
       } else {
-        words = drawingCaptions(elements, ids);
-        region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD };
+        const areaIds = Array.isArray(detected.ids) ? detected.ids : ids;
+        words = drawingCaptions(elements, areaIds);
+        region = { kind: "area", drawingUid, ids: areaIds, pad: DEFAULT_PAD };
+        anchorIds = areaIds;
       }
-      const caption = await chooseCaption({ ...words, rect: anchorRect(app, commonBounds(elements.filter((e) => ids.includes(e.id)))), drawing: true });
+      const caption = await chooseCaption({ ...words, rect: anchorRect(app, commonBounds(elements.filter((e) => anchorIds.includes(e.id)))), drawing: true });
       if (caption == null || disposed) return null;
       region.caption = caption;
       return finishCreate(region, await hotSvg(app, region));
@@ -21085,7 +21284,9 @@ var cond = (fn) => (e) => {
   }
 };
 var overrideMode = (o) => typeof o === "string" ? o : o?.mode ?? null;
-function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
+function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, setRegionGallery: setRegionGallery2 = async () => {
+}, applyGalleries = () => {
+}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now() } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -21127,8 +21328,22 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
       captionState = "written";
     }
     const overrides = getSettings()?.refOverrides || {};
+    const raw = overrides[overrideKey(block, ref)];
+    const entry = typeof raw === "string" ? { mode: raw } : raw && typeof raw === "object" ? raw : {};
     const kind = parseRegion(string)?.kind;
-    return { supported, mode, captionState, kind, frameKind: kind === "frame" || kind === "cframe", drawingKind: !isImageKind(kind), hasOverride: overrideMode(overrides[overrideKey(block, ref)]) != null };
+    return {
+      supported,
+      mode,
+      captionState,
+      kind,
+      frameKind: kind === "frame" || kind === "cframe",
+      drawingKind: !isImageKind(kind),
+      hasOverride: overrideMode(raw) != null,
+      size: entry.size,
+      align: entry.align,
+      bare: entry.bare === true,
+      pad: entry.pad
+    };
   });
   const candidateOf = memoize((uid) => {
     try {
@@ -21234,6 +21449,50 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
       regionref.refreshBlock(block);
     });
   }
+  const currentSize = (i) => i.size == null ? "m" : i.size;
+  for (const [size, label] of [["s", "Plexus: Card size small"], ["m", "Plexus: Card size medium"], ["l", "Plexus: Card size large"]]) {
+    register("blockRefContextMenu", label, refShow((i) => i.mode !== "link" && currentSize(i) !== size), async (e) => {
+      const { ref, block } = refOf(e);
+      await setRefOverride2(block, ref, { size });
+      clearMemo();
+      regionref.refreshBlock(block);
+    });
+  }
+  for (const [align, label] of [["left", "Plexus: Align left"], ["center", "Plexus: Align center"], ["right", "Plexus: Align right"]]) {
+    register("blockRefContextMenu", label, refShow((i) => i.mode !== "link" && i.align !== align), async (e) => {
+      const { ref, block } = refOf(e);
+      await setRefOverride2(block, ref, { align });
+      clearMemo();
+      regionref.refreshBlock(block);
+    });
+  }
+  register("blockRefContextMenu", "Plexus: Bare card", refShow((i) => i.mode !== "link" && i.bare !== true), async (e) => {
+    const { ref, block } = refOf(e);
+    await setRefOverride2(block, ref, { bare: true });
+    clearMemo();
+    regionref.refreshBlock(block);
+  });
+  register("blockRefContextMenu", "Plexus: Show card frame", refShow((i) => i.mode !== "link" && i.bare === true), async (e) => {
+    const { ref, block } = refOf(e);
+    await setRefOverride2(block, ref, { bare: null });
+    clearMemo();
+    regionref.refreshBlock(block);
+  });
+  register("blockRefContextMenu", "Plexus: Card padding…", refShow((i) => i.mode !== "link"), async (e) => {
+    if (typeof openPrompt !== "function") return;
+    const { ref, block } = refOf(e);
+    const info = refInfo(`${ref}|${block}`, ref, block);
+    const initial = Number.isInteger(info.pad) ? String(info.pad) : "";
+    const text = await openPrompt({ doc, rect: anchorRect(block), initial, select: true, escape: "cancel" });
+    if (text == null) return;
+    const raw = String(text).trim();
+    if (!/^(?:0|[1-9]\d*)$/.test(raw)) return;
+    const n = Number(raw);
+    if (n > 48) return;
+    await setRefOverride2(block, ref, { pad: n });
+    clearMemo();
+    regionref.refreshBlock(block);
+  });
   register("blockRefContextMenu", "Plexus: Present from here", refShow((i) => i.frameKind), (e) => actions.presentFromRegion(refOf(e).ref));
   register("blockRefContextMenu", "Plexus: Refresh crop", refShow(), (e) => regionref.refreshRegion(refOf(e).ref));
   const relink = async (uid) => {
@@ -21287,6 +21546,26 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
+  const galleryOn = (uid) => {
+    const list = getSettings()?.regionGalleries;
+    return Array.isArray(list) && list.includes(uid);
+  };
+  register("blockContextMenu", "Plexus: Show as gallery", (e) => {
+    const uid = e?.["block-uid"];
+    return isContainerString(pullString(uid)) && !galleryOn(uid);
+  }, async (e) => {
+    await setRegionGallery2(e?.["block-uid"], true);
+    clearMemo();
+    applyGalleries();
+  });
+  register("blockContextMenu", "Plexus: Show as list", (e) => {
+    const uid = e?.["block-uid"];
+    return isContainerString(pullString(uid)) && galleryOn(uid);
+  }, async (e) => {
+    await setRegionGallery2(e?.["block-uid"], false);
+    clearMemo();
+    applyGalleries();
+  });
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
   register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
@@ -25460,6 +25739,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         onChanged: () => regionref.refreshAll(),
         dark: isHostDark(doc)
       });
+      const paintGalleries = () => applyRegionGalleries(doc, getSettings().regionGalleries);
       lifecycle.add(installRoamMenus({
         api,
         host,
@@ -25467,6 +25747,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         regionref,
         getSettings,
         setRefOverride: (blockUid, refUid2, patch) => setRefOverride(extensionAPI, blockUid, refUid2, patch),
+        setRegionGallery: (uid, on) => setRegionGallery(extensionAPI, uid, on),
+        applyGalleries: paintGalleries,
         openSettings,
         showInCompass,
         openPrompt: openCaptionPrompt,
@@ -25802,6 +26084,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         root: doc.body,
         onRegionButton: (btn) => regionref.claim(btn),
         onAlias: (a) => regionref.claimAlias(a),
+        onScan: paintGalleries,
         onEditorMount: (el) => {
           const outer = el.closest(".excalidraw-outer-container");
           if (outer) toolbar.show(outer);

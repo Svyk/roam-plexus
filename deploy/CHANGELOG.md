@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.17.0]
+
+- Show as gallery wraps a regions container. Show as list returns to bullets. The container text stays `{{[[plexus-regions]]}}`.
+- A block ref can set card size, alignment, bare, and padding. The region block stays as written.
+- Create region from selection asks Frame, Group, or Loose shapes when more than one kind is selected. Escape cancels. The palette stays two entries.
+
 ## [0.16.0]
 
 - Canvas theme follows Roam, on by default, with captureUpdate NEVER. Closing the editor restores the stored theme, so edit time stays put. Fit on open is not called.

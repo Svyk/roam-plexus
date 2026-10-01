@@ -1,5 +1,5 @@
 import { createLifecycle, sweepExtensionDom } from "./lifecycle.js";
-import { HOTKEYS, SETTING_IDS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, writeSetting } from "./settings.js";
+import { HOTKEYS, SETTING_IDS, createSettingsPanel, hotkeyFor, initializeSettings, readSettings, setRefOverride, setRegionGallery, writeSetting } from "./settings.js";
 import { createRoamHost } from "./host/roam.js";
 import * as native from "./host/native.js";
 import { createCropCache } from "./host/cache.js";
@@ -12,6 +12,7 @@ import { createPresenter } from "./view/present.js";
 import { installCanvasPaste } from "./view/canvas-paste.js";
 import { createRegionRefRenderer } from "./view/regionref.js";
 import { createDiscovery } from "./view/discover.js";
+import { applyRegionGalleries } from "./view/gallery.js";
 import { focusKeptIds, todoKeptIds, showFocusVeil, showTodoVeil, showSpotlight } from "./view/spotlight.js";
 import { cardsFromQuery, cardsFromChildren } from "./query-cards.js";
 import { relationPlan } from "./relations.js";
@@ -653,6 +654,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         onChanged: () => regionref.refreshAll(),
         dark: isHostDark(doc),
       }));
+      const paintGalleries = () => applyRegionGalleries(doc, getSettings().regionGalleries);
       lifecycle.add(installRoamMenus({
         api,
         host,
@@ -660,6 +662,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         regionref,
         getSettings,
         setRefOverride: (blockUid, refUid, patch) => setRefOverride(extensionAPI, blockUid, refUid, patch),
+        setRegionGallery: (uid, on) => setRegionGallery(extensionAPI, uid, on),
+        applyGalleries: paintGalleries,
         openSettings,
         showInCompass,
         openPrompt: openCaptionPrompt,
@@ -1056,6 +1060,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         root: doc.body,
         onRegionButton: (btn) => regionref.claim(btn),
         onAlias: (a) => regionref.claimAlias(a),
+        onScan: paintGalleries,
         onEditorMount: (el) => {
           const outer = el.closest(".excalidraw-outer-container");
           // show() replaces any previous bar. The unmount below clears the previous editor and must leave this bar up.

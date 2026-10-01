@@ -520,6 +520,39 @@ span.rm-block-ref.plexus-ref-card:hover {
   border-bottom: 1px solid rgba(138, 155, 168, 0.45);
 }
 
+span.rm-block-ref.plexus-ref-card.plexus-ref-bare,
+span.rm-block-ref.plexus-ref-card.plexus-ref-bare:hover {
+  border: 0;
+  border-bottom: 0;
+  padding: 0;
+}
+
+.rm-block-children.plexus-regions-gallery {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.rm-block-children.plexus-regions-gallery > .rm-block {
+  flex: 1 1 200px;
+  max-width: 280px;
+  min-width: 160px;
+}
+
+.plexus-kind-chooser {
+  position: fixed;
+  z-index: 10000;
+  left: 50%;
+  top: 20%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid rgba(138, 155, 168, 0.45);
+  border-radius: 6px;
+}
+
 span.bp3-popover-target[data-plexus-card-host],
 span.bp3-popover-wrapper[data-plexus-card-host] {
   display: inline-block;

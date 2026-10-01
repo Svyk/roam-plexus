@@ -298,6 +298,42 @@ test("U2: a ref inside text gets a thumbnail card; alone gives image; API refres
   assert.ok(!btn.classes.has("plexus-hidden"));
 });
 
+test("alone image ref paints bare card, pad, align, and cardScale height", () => {
+  const parent = makeEl("p");
+  const btn = makeEl("button");
+  parent.append(btn);
+  const refEl = makeEl("span");
+  refEl.parentElement = makeEl("div");
+  refEl.closest = () => ({ id: "block-input-x-outer0001" });
+  btn.closest = (sel) => (sel === ".rm-block-ref[data-uid]" ? refEl : null);
+  const host = {
+    blockUidFromNode: (n) => (n === btn ? regionUid : "blk000001"),
+    pullBlock: (uid) => ({ uid, string: uid === regionUid ? areaString : `((${regionUid}))` }),
+    drawing: () => ({ uid: "drw000001", elements, hash: "abcd1234" }),
+  };
+  const cache = { peek: () => ({ url: "blob:x", w: 1, h: 1 }), get: async () => null, put: async () => {}, delete: async () => {} };
+  const r = createRegionRefRenderer({
+    host, cache, cold: {}, onOpen() {}, doc,
+    getSettings: () => ({
+      figureHeight: 280,
+      thumbHeight: 72,
+      refOverrides: { [`blk000001|${regionUid}`]: { size: "l", align: "center", bare: true, pad: 8 } },
+    }),
+  });
+  r.claim(btn);
+  const root = parent.children[1];
+  assert.ok(refEl.classes.has("plexus-ref-bare") && refEl.classes.has("plexus-ref-card"));
+  assert.equal(refEl.style.padding, "8px");
+  assert.equal(refEl.style.textAlign, "center");
+  assert.equal(root.children[0].style.maxHeight, "420px");
+  assert.equal(root.style.marginLeft, "auto");
+  assert.equal(root.style.marginRight, "auto");
+  r.releaseAll();
+  assert.ok(!refEl.classes.has("plexus-ref-bare"));
+  assert.equal(refEl.style.padding, "");
+  assert.equal(refEl.style.textAlign, "");
+});
+
 test("U2: refreshAll over two roots leaves two roots; disconnected buttons are dropped", () => {
   const { r, btn, parent } = setup({ regionString: areaString, hit: { url: "blob:x", w: 1, h: 1, type: "x" } });
   const btn2 = makeEl("button");

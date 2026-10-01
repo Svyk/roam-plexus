@@ -122,6 +122,81 @@ export function detectRegionKind({ elements, ids, selectedGroupIds }) {
   return { kind: "area" };
 }
 
+// Every kind this selection can be. A whole frame or group still counts when other shapes are selected.
+export function regionKindCandidates({ elements, ids, selectedGroupIds }) {
+  const live = (elements || []).filter((el) => el && !el.isDeleted);
+  const byId = new Map(live.map((el) => [el.id, el]));
+  const selectedIds = [];
+  const seen = new Set();
+  for (const id of ids || []) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    selectedIds.push(id);
+  }
+  const candidates = [];
+  const covered = new Set();
+  const frames = selectedIds.map((id) => byId.get(id)).filter(isFrame);
+  if (frames.length === 1) {
+    const frame = frames[0];
+    const children = live.filter((el) => el.frameId === frame.id);
+    candidates.push({ kind: "cframe", frame, children });
+    covered.add(frame.id);
+    for (const el of children) covered.add(el.id);
+  }
+  const fullGroups = [];
+  for (const groupId of Object.keys(selectedGroupIds || {})) {
+    if (!selectedGroupIds[groupId]) continue;
+    const members = live.filter((el) => Array.isArray(el.groupIds) && el.groupIds.includes(groupId));
+    if (members.length && members.every((el) => seen.has(el.id))) fullGroups.push({ groupId, members });
+  }
+  if (fullGroups.length === 1) {
+    const { groupId, members } = fullGroups[0];
+    candidates.push({ kind: "group", groupId, members });
+    for (const el of members) covered.add(el.id);
+  }
+  if (candidates.length) {
+    const loose = selectedIds.filter((id) => !covered.has(id));
+    if (loose.length) candidates.push({ kind: "area", ids: loose });
+    return candidates;
+  }
+  if ((ids || []).length) return [{ kind: "area", ids: selectedIds }];
+  return [];
+}
+
+// One button per candidate. Null when the document cannot host the dialog, or on Escape.
+export function chooseRegionKind(doc, candidates) {
+  const parent = typeof doc?.body?.append === "function" ? doc.body
+    : typeof doc?.documentElement?.append === "function" ? doc.documentElement
+      : null;
+  if (!parent || typeof doc.createElement !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const box = doc.createElement("div");
+    box.className = "plexus-kind-chooser";
+    box.setAttribute("role", "dialog");
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      doc.removeEventListener?.("keydown", onKey, true);
+      box.remove();
+      resolve(value);
+    }
+    function onKey(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      finish(null);
+    }
+    doc.addEventListener("keydown", onKey, true);
+    for (const candidate of candidates) {
+      const button = doc.createElement("button");
+      button.textContent = candidate.kind === "cframe" ? "Frame" : candidate.kind === "group" ? "Group" : "Loose shapes";
+      button.addEventListener("click", () => finish(candidate));
+      box.appendChild(button);
+    }
+    parent.append(box);
+  });
+}
+
 export function contentRect(img, view) {
   const rect = img.getBoundingClientRect();
   const nw = img.naturalWidth;
@@ -193,6 +268,7 @@ export function createActions({
   printWin = (win) => win?.print?.(),
   setTimer = (fn, ms) => globalThis.setTimeout(fn, ms),
   clearTimer = (id) => globalThis.clearTimeout(id),
+  chooseKind = null,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -1015,9 +1091,18 @@ export function createActions({
       }
       if (badTarget(drawingUid, ids)) return null;
       const elements = sceneElements(app);
-      const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
+      const selectedGroupIds = app.state?.selectedGroupIds;
+      const candidates = regionKindCandidates({ elements, ids, selectedGroupIds });
+      let detected;
+      if (candidates.length >= 2) {
+        detected = await (chooseKind || chooseRegionKind)(doc, candidates);
+        if (!detected || disposed) return null;
+      } else {
+        detected = detectRegionKind({ elements, ids, selectedGroupIds });
+      }
       let region;
       let words;
+      let anchorIds = ids;
       if (detected.kind === "cframe") {
         const { frame, children } = detected;
         words = drawingCaptions(elements, children.map((el) => el.id), frame.name);
@@ -1026,10 +1111,12 @@ export function createActions({
         words = drawingCaptions(elements, detected.members.map((el) => el.id));
         region = { kind: "group", drawingUid, groupId: detected.groupId, pad: DEFAULT_PAD };
       } else {
-        words = drawingCaptions(elements, ids);
-        region = { kind: "area", drawingUid, ids, pad: DEFAULT_PAD };
+        const areaIds = Array.isArray(detected.ids) ? detected.ids : ids;
+        words = drawingCaptions(elements, areaIds);
+        region = { kind: "area", drawingUid, ids: areaIds, pad: DEFAULT_PAD };
+        anchorIds = areaIds;
       }
-      const caption = await chooseCaption({ ...words, rect: anchorRect(app, commonBounds(elements.filter((e) => ids.includes(e.id)))), drawing: true });
+      const caption = await chooseCaption({ ...words, rect: anchorRect(app, commonBounds(elements.filter((e) => anchorIds.includes(e.id)))), drawing: true });
       if (caption == null || disposed) return null;
       region.caption = caption;
       return finishCreate(region, await hotSvg(app, region));

@@ -40,7 +40,7 @@ export function classifyAddedNode(node) {
   return out;
 }
 
-export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEditorUnmount, MutationObserverImpl = globalThis.MutationObserver }) {
+export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, onEditorUnmount, onScan, MutationObserverImpl = globalThis.MutationObserver }) {
   let trackedEditor = null;
   let disposed = false;
 
@@ -78,6 +78,7 @@ export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, 
     } catch (error) {
       console.warn("[plexus] discovery failed", error);
     }
+    safe(onScan);
   });
   observer.observe(root, { childList: true, subtree: true });
 
@@ -88,6 +89,7 @@ export function createDiscovery({ root, onRegionButton, onAlias, onEditorMount, 
         const editors = Array.from(root.querySelectorAll(`${EDITOR_OUTER} .excalidraw`)).filter((el) => !skipped(el) && !el.closest?.(DOCK_SELECTOR));
         const aliases = Array.from(root.querySelectorAll(`a.${ALIAS_CLASS}`)).filter((el) => !skipped(el));
         handle({ regionButtons, editors, aliases });
+        safe(onScan);
       } catch (error) {
         console.warn("[plexus] scanExisting failed", error);
       }

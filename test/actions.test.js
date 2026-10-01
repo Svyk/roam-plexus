@@ -70,7 +70,7 @@ function make(over = {}) {
   const zooms = [];
   const zoomOpts = [];
   const spots = [];
-  const app = { getSceneElements: () => over.elements || elements };
+  const app = { getSceneElements: () => over.elements || elements, state: over.state || {} };
   const state = { editor: over.editor === undefined ? { app, drawingUid: "drw000001" } : over.editor };
   const native = {
     activeEditor: () => state.editor,
@@ -97,6 +97,7 @@ function make(over = {}) {
     doc: over.doc || { querySelectorAll: () => [] },
     clipboard: over.clipboard || { writeText: async (t) => copied.push(t) },
     refreshRegion: over.refreshRegion,
+    chooseKind: over.chooseKind,
   });
   return { actions, created, puts, copied, toasts, zooms, zoomOpts, spots, state, app };
 }
@@ -395,7 +396,7 @@ test("F1: re-dispatches when the editor has not mounted within 1500 ms, at most 
   assert.equal(clicks, 2);
 });
 
-import { detectRegionKind } from "../src/actions.js";
+import { chooseRegionKind, detectRegionKind, regionKindCandidates } from "../src/actions.js";
 
 test("detectRegionKind: cframe, group and area", () => {
   const frame = { id: "f", type: "frame" };
@@ -415,6 +416,119 @@ test("detectRegionKind: cframe, group and area", () => {
   assert.equal(grp.groupId, "G");
   assert.equal(detectRegionKind({ elements: [g1, g2, out], ids: ["g1"], selectedGroupIds: { G: true } }).kind, "area");
   assert.equal(detectRegionKind({ elements: all, ids: ["a"], selectedGroupIds: {} }).kind, "area");
+});
+
+test("regionKindCandidates: frame or group plus an outsider, and exact or partial matches", () => {
+  const frame = { id: "f", type: "frame" };
+  const a = { id: "a", type: "rectangle", frameId: "f" };
+  const out = { id: "o", type: "rectangle" };
+  const mixed = regionKindCandidates({ elements: [frame, a, out], ids: ["f", "a", "o"], selectedGroupIds: {} });
+  assert.deepEqual(mixed.map((c) => c.kind), ["cframe", "area"]);
+  assert.deepEqual(mixed[0].children.map((e) => e.id), ["a"]);
+  assert.deepEqual(mixed[1].ids, ["o"]);
+  const exactFrame = regionKindCandidates({ elements: [frame, a, out], ids: ["f", "a"], selectedGroupIds: {} });
+  assert.equal(exactFrame.length, 1);
+  assert.equal(exactFrame[0].kind, "cframe");
+  const g1 = { id: "g1", type: "rectangle", groupIds: ["G"] };
+  const g2 = { id: "g2", type: "ellipse", groupIds: ["G"] };
+  const exactGroup = regionKindCandidates({ elements: [g1, g2, out], ids: ["g1", "g2"], selectedGroupIds: { G: true } });
+  assert.equal(exactGroup.length, 1);
+  assert.equal(exactGroup[0].kind, "group");
+  assert.equal(exactGroup[0].groupId, "G");
+  assert.deepEqual(exactGroup[0].members.map((e) => e.id), ["g1", "g2"]);
+  const partial = regionKindCandidates({ elements: [g1, g2, out], ids: ["g1"], selectedGroupIds: { G: true } });
+  assert.equal(partial.length, 1);
+  assert.equal(partial[0].kind, "area");
+  assert.deepEqual(partial[0].ids, ["g1"]);
+  const withOutsider = regionKindCandidates({ elements: [g1, g2, out], ids: ["g1", "g2", "o"], selectedGroupIds: { G: true } });
+  assert.deepEqual(withOutsider.map((c) => c.kind), ["group", "area"]);
+  assert.deepEqual(withOutsider[1].ids, ["o"]);
+});
+
+const MIXED_FRAME = [
+  { id: "f", type: "frame", name: "Frame one", x: 0, y: 0, width: 30, height: 20 },
+  { id: "a", type: "rectangle", frameId: "f", x: 0, y: 0, width: 10, height: 10 },
+  { id: "o", type: "rectangle", x: 40, y: 0, width: 10, height: 10 },
+];
+
+test("createAreaRegion on a frame plus an outsider cancels when chooseKind returns null", async () => {
+  const { actions, created } = make({ elements: MIXED_FRAME, ids: ["f", "o"], chooseKind: async () => null });
+  assert.equal(await actions.createAreaRegion(), null);
+  assert.equal(created.length, 0);
+});
+
+test("createAreaRegion keeps only the outsider when the area candidate is chosen", async () => {
+  const { actions, created } = make({
+    elements: MIXED_FRAME,
+    ids: ["f", "o"],
+    chooseKind: async (_doc, candidates) => candidates.find((c) => c.kind === "area"),
+  });
+  await actions.createAreaRegion();
+  const region = parseRegion(created[0][1]);
+  assert.equal(region.kind, "area");
+  assert.deepEqual(region.ids, ["o"]);
+});
+
+test("createAreaRegion writes a padless cframe when the frame candidate is chosen", async () => {
+  const { actions, created } = make({
+    elements: MIXED_FRAME,
+    ids: ["f", "o"],
+    chooseKind: async (_doc, candidates) => candidates.find((c) => c.kind === "cframe"),
+  });
+  await actions.createAreaRegion();
+  const region = parseRegion(created[0][1]);
+  assert.equal(region.kind, "cframe");
+  assert.ok(!region.pad);
+});
+
+function chooserDoc() {
+  const buttons = [];
+  let box = null;
+  let keydown = null;
+  const doc = {
+    body: { append(node) { box = node; } },
+    createElement(tag) {
+      const node = {
+        className: "",
+        textContent: "",
+        attrs: {},
+        setAttribute(name, value) { this.attrs[name] = value; },
+        appendChild(child) { return child; },
+        addEventListener(type, fn) { if (type === "click") this.onclick = fn; },
+        remove() { this.removed = true; },
+      };
+      if (tag === "button") buttons.push(node);
+      return node;
+    },
+    addEventListener(type, fn, capture) { if (type === "keydown") keydown = { fn, capture }; },
+    removeEventListener() {},
+  };
+  return { doc, buttons, box: () => box, keydown: () => keydown };
+}
+
+test("chooseRegionKind resolves the clicked candidate and Escape resolves null", async () => {
+  const cframe = { kind: "cframe", frame: { id: "f" }, children: [] };
+  const group = { kind: "group", groupId: "G", members: [] };
+  const area = { kind: "area", ids: ["o"] };
+  const ui = chooserDoc();
+  const pending = chooseRegionKind(ui.doc, [cframe, group, area]);
+  assert.equal(ui.box().className, "plexus-kind-chooser");
+  assert.equal(ui.box().attrs.role, "dialog");
+  assert.deepEqual(ui.buttons.map((b) => b.textContent), ["Frame", "Group", "Loose shapes"]);
+  ui.buttons[2].onclick();
+  assert.equal(await pending, area);
+  assert.equal(ui.box().removed, true);
+
+  const ui2 = chooserDoc();
+  const pending2 = chooseRegionKind(ui2.doc, [cframe, area]);
+  const event = { key: "Escape", preventDefault() { this.prevented = true; } };
+  assert.equal(ui2.keydown().capture, true);
+  ui2.keydown().fn(event);
+  assert.equal(event.prevented, true);
+  assert.equal(await pending2, null);
+  assert.equal(ui2.box().removed, true);
+  ui2.buttons[0].onclick();
+  assert.equal(await pending2, null);
 });
 
 

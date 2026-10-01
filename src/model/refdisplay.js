@@ -1,7 +1,16 @@
 export const DISPLAY_MODES = ["image", "thumbnail", "link"];
 export const CAPTION_OVERRIDES = ["hide", "show"];
 export const CAPTION_DISPLAYS = ["written", "always", "never"];
+export const CARD_SIZES = ["s", "m", "l"];
+export const CARD_ALIGNS = ["left", "center", "right"];
+export const CARD_PAD_MAX = 48;
 const MAX_OVERRIDES = 500;
+
+export function cardScale(size) {
+  if (size === "s") return 0.6;
+  if (size === "l") return 1.5;
+  return 1;
+}
 
 export function overrideKey(blockUid, refUid) {
   return `${blockUid}|${refUid}`;
@@ -25,10 +34,15 @@ function cleanEntry(value) {
   const entry = {};
   if (DISPLAY_MODES.includes(value.mode)) entry.mode = value.mode;
   if (CAPTION_OVERRIDES.includes(value.caption)) entry.caption = value.caption;
-  return entry.mode || entry.caption ? entry : null;
+  if (CARD_SIZES.includes(value.size)) entry.size = value.size;
+  if (CARD_ALIGNS.includes(value.align)) entry.align = value.align;
+  if (value.bare === true) entry.bare = true;
+  const pad = Number(value.pad);
+  if (value.pad != null && Number.isInteger(pad) && pad >= 0 && pad <= CARD_PAD_MAX) entry.pad = pad;
+  return entry.mode || entry.caption || entry.size || entry.align || entry.bare || entry.pad != null ? entry : null;
 }
 
-// Accepts the 0.6.x form ({key: "link"}) and the object form ({key: {mode?, caption?}}); invalid entries are dropped.
+// Accepts the 0.6.x form ({key: "link"}) and the object form ({mode?, caption?, size?, align?, bare?, pad?}); invalid entries are dropped.
 export function parseOverrides(value) {
   let raw = value;
   if (typeof value === "string") {
@@ -43,7 +57,7 @@ export function parseOverrides(value) {
   return out;
 }
 
-// Merge patch ({mode?, caption?}) into the entry; a null field removes it, an empty entry is deleted, null patch deletes it.
+// Merge patch ({mode?, caption?, size?, align?, bare?, pad?}) into the entry; a null field removes it, an empty entry is deleted, null patch deletes it.
 // A bare mode string is shorthand for {mode}. The touched key moves to the end (recency for the cap).
 export function withOverride(map, blockUid, refUid, patch) {
   const out = {};
@@ -58,7 +72,7 @@ export function withOverride(map, blockUid, refUid, patch) {
   const fields = typeof patch === "string" ? { mode: patch } : patch;
   if (typeof fields !== "object" || Array.isArray(fields)) return out;
   const next = { ...prev };
-  for (const field of ["mode", "caption"]) {
+  for (const field of ["mode", "caption", "size", "align", "bare", "pad"]) {
     if (!(field in fields)) continue;
     if (fields[field] == null) delete next[field];
     else next[field] = fields[field];
@@ -71,11 +85,15 @@ export function withOverride(map, blockUid, refUid, patch) {
   return out;
 }
 
+function hasExtra(entry) {
+  return entry.caption != null || entry.size != null || entry.align != null || entry.bare === true || entry.pad != null;
+}
+
 // Persisted shape: a mode-only entry stays a bare string so a 0.6.x rollback keeps it.
 export function serializeOverrides(map) {
   const out = {};
   for (const [key, entry] of Object.entries(parseOverrides(map))) {
-    out[key] = entry.caption ? entry : entry.mode;
+    out[key] = hasExtra(entry) ? entry : entry.mode;
   }
   return out;
 }

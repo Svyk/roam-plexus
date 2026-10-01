@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DISPLAY_MODES, overrideKey, refContext, resolveCaption, resolveDisplay, parseOverrides, serializeOverrides, withOverride } from "../src/model/refdisplay.js";
+import { DISPLAY_MODES, cardScale, overrideKey, refContext, resolveCaption, resolveDisplay, parseOverrides, serializeOverrides, withOverride } from "../src/model/refdisplay.js";
 
 test("overrideKey and refContext", () => {
   assert.equal(overrideKey("b", "r"), "b|r");
@@ -91,6 +91,35 @@ test("resolveDisplay reads string or object overrides", () => {
   assert.equal(resolveDisplay({ context: "inline", override: { caption: "hide" }, inlineDisplay: "link" }), "link");
   assert.equal(resolveDisplay({ context: "alone", override: { caption: "hide" } }), "image");
   assert.equal(resolveDisplay({ context: "home", override: { mode: "link" } }), "image");
+});
+
+test("card layout fields survive clean, override, and serialize", () => {
+  const patch = { size: "l", align: "center", bare: true, pad: 12 };
+  const map = withOverride({}, "b", "r", patch);
+  const serialized = serializeOverrides(map);
+  assert.deepEqual(serialized, { "b|r": patch });
+  assert.deepEqual(parseOverrides(serialized), map);
+  assert.deepEqual(parseOverrides(JSON.stringify(serialized)), map);
+
+  const zero = withOverride({}, "b", "r", { pad: 0 });
+  assert.deepEqual(zero, { "b|r": { pad: 0 } });
+  assert.deepEqual(serializeOverrides(zero), { "b|r": { pad: 0 } });
+  assert.deepEqual(parseOverrides(serializeOverrides(zero)), zero);
+
+  assert.deepEqual(serializeOverrides(withOverride({}, "b", "r", "link")), { "b|r": "link" });
+  assert.equal(serializeOverrides({ "b|r": { mode: "link" } })["b|r"], "link");
+
+  assert.deepEqual(withOverride({}, "b", "r", { size: "xl", align: "up", bare: false, pad: 99 }), {});
+  assert.deepEqual(parseOverrides({ a: { size: "xl" }, b: { align: "up" }, c: { bare: false }, d: { pad: 99 }, e: { pad: -1 }, f: { pad: 12.5 } }), {});
+
+  assert.equal(cardScale("s"), 0.6);
+  assert.equal(cardScale("m"), 1);
+  assert.equal(cardScale("l"), 1.5);
+  assert.equal(cardScale(undefined), 1);
+
+  const mixed = serializeOverrides(withOverride({}, "b", "r", { mode: "link", size: "s" }));
+  assert.deepEqual(mixed, { "b|r": { mode: "link", size: "s" } });
+  assert.equal(typeof mixed["b|r"], "object");
 });
 
 test("resolveCaption", () => {

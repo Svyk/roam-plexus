@@ -6,7 +6,7 @@ import { cropKey, png2xKey, thumbKey } from "../host/cache.js";
 import { cropCanvasToBlob } from "../host/cold-render.js";
 import { cropToBlob, loadImageBitmap } from "../host/image-source.js";
 import { hostDarkMarker, isHostDark } from "../host/theme.js";
-import { overrideKey, refContext, resolveCaption, resolveDisplay } from "../model/refdisplay.js";
+import { cardScale, overrideKey, refContext, resolveCaption, resolveDisplay } from "../model/refdisplay.js";
 import { KIND_WORDS, drawingTitleOf, imageAltAt, regionLabel } from "../model/label.js";
 import { createCropPopover } from "./crop-popover.js";
 
@@ -237,7 +237,11 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   const unclaim = (root, info) => {
     dropInfo(info);
     releaseHosts(info);
-    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden"]) info.refEl?.classList?.remove(c);
+    for (const c of ["plexus-ref-card", "plexus-mode-image", "plexus-mode-thumbnail", "plexus-caption-hidden", "plexus-ref-bare"]) info.refEl?.classList?.remove(c);
+    if (info.refEl?.style) {
+      info.refEl.style.padding = "";
+      info.refEl.style.textAlign = "";
+    }
     for (const el of info.extras.splice(0)) el.remove?.();
     info.btn.classList.remove("plexus-hidden");
     info.btn.removeAttribute(CLAIMED);
@@ -266,15 +270,22 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       if (key) Promise.resolve(cache.delete?.(key)).catch(() => {});
       if (root.isConnected) finishChip(root, region);
     };
+    const scale = cardScale(info.size);
     if (info.mode === "thumbnail") {
-      img.style.height = `${s.thumbHeight}px`;
+      const h = Math.round(s.thumbHeight * scale);
+      img.style.height = `${h}px`;
       img.style.maxHeight = "none";
-      img.style.maxWidth = `min(100%, ${4 * s.thumbHeight}px)`;
+      img.style.maxWidth = `min(100%, ${4 * h}px)`;
     } else {
-      img.style.maxHeight = `${s.figureHeight}px`;
+      img.style.maxHeight = `${Math.round(s.figureHeight * scale)}px`;
     }
     img.src = entry.url;
     root.className = `plexus-root plexus-regionref plexus-regionref--${info.mode}`;
+    if (root.style) {
+      const align = info.align;
+      root.style.marginLeft = align === "center" || align === "right" ? "auto" : align === "left" ? "0" : "";
+      root.style.marginRight = align === "center" || align === "left" ? "auto" : align === "right" ? "0" : "";
+    }
     root.textContent = "";
     root.append(img);
   };
@@ -428,7 +439,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     return { refEl, blockUid, outerUid, context };
   };
 
-  // Each field (mode, caption) comes from the first of the block and outer-block entries that has it.
+  // Each field comes from the first of the block and outer-block entries that has it.
   const overrideOf = (ctx, uid, s) => {
     if (!ctx.blockUid) return {};
     const entries = [ctx.blockUid, ctx.outerUid]
@@ -437,7 +448,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       .map((e) => (typeof e === "string" ? { mode: e } : e))
       .filter((e) => e && typeof e === "object");
     const pick = (field) => entries.find((e) => e[field] != null)?.[field];
-    return { mode: pick("mode"), caption: pick("caption") };
+    return { mode: pick("mode"), caption: pick("caption"), size: pick("size"), align: pick("align"), bare: pick("bare"), pad: pick("pad") };
   };
 
   const captionOf = (ctx, override, s) => resolveCaption({ captionDisplay: s.captionDisplay, override: { caption: override.caption }, context: ctx.context });
@@ -531,11 +542,14 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       root.title = label;
       btn.parentNode.insertBefore(root, btn.nextSibling);
       prune();
-      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, disposers: [], hosts: [], extras: [] };
+      const info = { btn, refEl: ctx.refEl, refUid: uid, blockUid: ctx.blockUid, outerUid: ctx.outerUid, mode, label, capState, size: override.size, align: override.align, disposers: [], hosts: [], extras: [] };
       roots.set(root, info);
       if (ctx.refEl && mode !== "link") {
         ctx.refEl.classList.add("plexus-ref-card");
         ctx.refEl.classList.add(`plexus-mode-${mode}`);
+        if (override.bare === true) ctx.refEl.classList.add("plexus-ref-bare");
+        if (Number.isInteger(override.pad) && ctx.refEl.style) ctx.refEl.style.padding = `${override.pad}px`;
+        if ((override.align === "left" || override.align === "center" || override.align === "right") && ctx.refEl.style) ctx.refEl.style.textAlign = override.align;
         hostAncestors(ctx.refEl, info);
       }
       addMeta(root, info, block.children);

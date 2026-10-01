@@ -135,6 +135,21 @@ test("an editor rendered inside the outline dock is not an editor mount", () => 
   assert.deepEqual(classifyAddedNode(button).regionButtons, [button]);
 });
 
+test("onScan runs from scanExisting and once per mutation batch", () => {
+  let callback;
+  class FakeMO {
+    constructor(cb) { callback = cb; }
+    observe() {}
+    disconnect() {}
+  }
+  let n = 0;
+  const root = { querySelectorAll: () => [] };
+  const discovery = createDiscovery({ root, onScan: () => { n += 1; }, MutationObserverImpl: FakeMO });
+  discovery.scanExisting();
+  callback([{ addedNodes: [], removedNodes: [] }, { addedNodes: [], removedNodes: [] }]);
+  assert.equal(n, 2);
+});
+
 test("scanExisting skips an editor rendered inside the outline dock", () => {
   const inDock = fakeNode({ classes: ["excalidraw"], closest: { "full-screen": 1, "plexus-dock": 1 } });
   const root = { querySelectorAll: (sel) => (sel.includes("excalidraw-outer-container.full-screen") ? [inDock] : []) };

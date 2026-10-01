@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SETTING_IDS, createSettingsPanel, readSettings, setRefOverride, writeSetting } from "../src/settings.js";
+import { SETTING_IDS, createSettingsPanel, parseRegionGalleries, readSettings, setRefOverride, setRegionGallery, withRegionGallery, writeSetting } from "../src/settings.js";
 
 const fakeApi = (init = {}) => {
   const store = { ...init };
@@ -193,4 +193,35 @@ test("mm-tag-colors parses into a lowercase Map and drops bad colours", async ()
   const api = { settings: { get: (id) => (id === "mm-tag-colors" ? "a=#000" : undefined) } };
   assert.equal(readSettings(api).mmTagColors.get("a"), "#000");
   assert.equal(readSettings({ settings: { get: () => undefined } }).mmTagColors.size, 0);
+});
+
+test("regionGalleries defaults to [] and round-trips a stored JSON array", () => {
+  assert.equal(SETTING_IDS.regionGalleries, "region-galleries");
+  assert.deepEqual(readSettings(fakeApi()).regionGalleries, []);
+  const stored = '["ccccccccc","nope","ccccccccc","ddddddddd"]';
+  assert.deepEqual(readSettings(fakeApi({ [SETTING_IDS.regionGalleries]: stored })).regionGalleries, ["ccccccccc", "ddddddddd"]);
+  assert.deepEqual(parseRegionGalleries(["aaaaaaaaa", "bad", "aaaaaaaaa", "bbbbbbbbb"]), ["aaaaaaaaa", "bbbbbbbbb"]);
+  assert.deepEqual(parseRegionGalleries("nope"), []);
+});
+
+test("withRegionGallery moves the uid to the end, drops a bad uid, and caps at 200", () => {
+  assert.deepEqual(withRegionGallery(["aaaaaaaaa", "bbbbbbbbb"], "aaaaaaaaa", true), ["bbbbbbbbb", "aaaaaaaaa"]);
+  assert.deepEqual(withRegionGallery(["aaaaaaaaa"], "bad-uid", true), ["aaaaaaaaa"]);
+  assert.deepEqual(withRegionGallery(["aaaaaaaaa"], "aaaaaaaaa", false), []);
+  const many = Array.from({ length: 200 }, (_, i) => `u${String(i).padStart(8, "0")}`);
+  const capped = withRegionGallery(many, "zzzzzzzzz", true);
+  assert.equal(capped.length, 200);
+  assert.equal(capped.at(-1), "zzzzzzzzz");
+  assert.equal(capped.includes(many[0]), false);
+  assert.equal(capped[0], many[1]);
+});
+
+test("setRegionGallery persists JSON through settings.set", async () => {
+  const api = fakeApi();
+  await Promise.all([setRegionGallery(api, "aaaaaaaaa", true), setRegionGallery(api, "bbbbbbbbb", true)]);
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.regionGalleries]), ["aaaaaaaaa", "bbbbbbbbb"]);
+  await setRegionGallery(api, "nope", true);
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.regionGalleries]), ["aaaaaaaaa", "bbbbbbbbb"]);
+  await setRegionGallery(api, "aaaaaaaaa", false);
+  assert.deepEqual(JSON.parse(api.store[SETTING_IDS.regionGalleries]), ["bbbbbbbbb"]);
 });

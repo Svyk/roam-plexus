@@ -7,6 +7,7 @@ export const SETTING_IDS = Object.freeze({
   inlineDisplay: "inline-display",
   darkCrops: "dark-crops",
   refOverrides: "ref-overrides",
+  regionGalleries: "region-galleries",
   cacheOnDisk: "cache-on-disk",
   cacheLimitMb: "cache-limit-mb",
   showBacklinks: "show-backlinks",
@@ -38,6 +39,7 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.inlineDisplay]: "thumbnail",
   [SETTING_IDS.darkCrops]: true,
   [SETTING_IDS.refOverrides]: "{}",
+  [SETTING_IDS.regionGalleries]: "[]",
   [SETTING_IDS.cacheOnDisk]: true,
   [SETTING_IDS.cacheLimitMb]: "100",
   [SETTING_IDS.showBacklinks]: true,
@@ -194,6 +196,7 @@ export function readSettings(extensionAPI) {
     inlineDisplay: get(SETTING_IDS.inlineDisplay) === "link" ? "link" : "thumbnail",
     darkCrops: !!get(SETTING_IDS.darkCrops),
     refOverrides: memoOverrides(get(SETTING_IDS.refOverrides)),
+    regionGalleries: parseRegionGalleries(get(SETTING_IDS.regionGalleries)),
     cacheOnDisk: !!get(SETTING_IDS.cacheOnDisk),
     cacheLimitMb: Number(get(SETTING_IDS.cacheLimitMb)) || 100,
     showBacklinks: !!get(SETTING_IDS.showBacklinks),
@@ -242,5 +245,46 @@ export function setRefOverride(extensionAPI, blockUid, refUid, patch) {
     }
   });
   overrideQueues.set(extensionAPI, next);
+  return next;
+}
+
+const GALLERY_CAP = 200;
+const GALLERY_UID_RE = /^[A-Za-z0-9_-]{9}$/;
+
+export function parseRegionGalleries(value) {
+  let raw = value;
+  if (typeof value === "string") {
+    try { raw = JSON.parse(value); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const uid of raw) {
+    if (typeof uid !== "string" || !GALLERY_UID_RE.test(uid) || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out.length > GALLERY_CAP ? out.slice(-GALLERY_CAP) : out;
+}
+
+export function withRegionGallery(list, uid, on) {
+  const next = parseRegionGalleries(list).filter((item) => item !== uid);
+  if (on && typeof uid === "string" && GALLERY_UID_RE.test(uid)) next.push(uid);
+  return next.length > GALLERY_CAP ? next.slice(-GALLERY_CAP) : next;
+}
+
+const galleryQueues = new WeakMap();
+
+export function setRegionGallery(extensionAPI, uid, on) {
+  const prev = galleryQueues.get(extensionAPI) || Promise.resolve();
+  const next = prev.then(async () => {
+    try {
+      const list = parseRegionGalleries(extensionAPI.settings.get(SETTING_IDS.regionGalleries));
+      await writeSetting(extensionAPI, SETTING_IDS.regionGalleries, JSON.stringify(withRegionGallery(list, uid, on)));
+    } catch (error) {
+      console.warn("[plexus] setRegionGallery failed", error);
+    }
+  });
+  galleryQueues.set(extensionAPI, next);
   return next;
 }

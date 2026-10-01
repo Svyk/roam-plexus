@@ -21,7 +21,7 @@ function fakeApi(strings, { menus = ["blockRefContextMenu", "blockContextMenu"] 
     data: { pull: (_p, [, uid]) => { pulls++; return uid in strings ? { ":block/string": strings[uid] } : null; } },
   };
 }
-function setup({ strings = {}, mode = "thumbnail", overrides = {}, ...rest } = {}) {
+function setup({ strings = {}, mode = "thumbnail", overrides = {}, regionGalleries, openPrompt, ...rest } = {}) {
   const api = fakeApi(strings, rest);
   const calls = [];
   const rec = (name) => (...a) => { calls.push([name, ...a]); };
@@ -34,8 +34,11 @@ function setup({ strings = {}, mode = "thumbnail", overrides = {}, ...rest } = {
   let t = 0;
   const dispose = installRoamMenus({
     api, host: {}, actions, regionref,
-    getSettings: () => ({ refOverrides: overrides }),
+    getSettings: () => ({ refOverrides: overrides, regionGalleries }),
     setRefOverride: async (...a) => { calls.push(["setRefOverride", ...a]); },
+    setRegionGallery: async (...a) => { calls.push(["setRegionGallery", ...a]); },
+    applyGalleries: () => { calls.push(["applyGalleries"]); },
+    openPrompt,
     openSettings: rec("openSettings"),
     now: () => t,
   });
@@ -48,12 +51,17 @@ test("every label is registered and removed on dispose", () => {
   const { api, dispose } = setup();
   assert.deepEqual([...api.commands.blockRefContextMenu.keys()], [
     "Plexus: Open region", "Plexus: Open region in sidebar", "Plexus: Show as image", "Plexus: Show as thumbnail",
-    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption", "Plexus: Present from here", "Plexus: Refresh crop",
+    "Plexus: Show as link", "Plexus: Use default display", "Plexus: Hide caption", "Plexus: Show caption",
+    "Plexus: Card size small", "Plexus: Card size medium", "Plexus: Card size large",
+    "Plexus: Align left", "Plexus: Align center", "Plexus: Align right",
+    "Plexus: Bare card", "Plexus: Show card frame", "Plexus: Card padding…",
+    "Plexus: Present from here", "Plexus: Refresh crop",
     "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG", "Plexus: Copy crop as SVG",
     "Plexus: Download crop", "Plexus: Insert crop as image block", "Plexus: Copy alias", "Plexus: Show in Compass", "Plexus: Region settings…",
     "Plexus: Copy region link",
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
+    "Plexus: Show as gallery", "Plexus: Show as list",
     "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
     "Plexus: Present from here", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
@@ -146,6 +154,73 @@ test("ref callbacks call actions; show-as sets the override then refreshes the b
   run("Plexus: Use default display");
   await tick();
   assert.deepEqual(calls, [["setRefOverride", "blk000001", "reg000001", { mode: null }], ["refreshBlock", "blk000001"]]);
+});
+
+const CONTAINER = "{{[[plexus-regions]]}}";
+
+test("gallery items follow an exact container string and do not write the block", async () => {
+  const strings = {
+    box000001: CONTAINER,
+    extra0001: `${CONTAINER} gallery`,
+    reg000001: REGION,
+    flag00001: CONTAINER,
+  };
+  const { api, calls } = setup({ strings, regionGalleries: ["flag00001"] });
+  const s = (label, uid) => show(api, "blockContextMenu", label, { "block-uid": uid });
+  assert.equal(s("Plexus: Show as gallery", "box000001"), true);
+  assert.equal(s("Plexus: Show as list", "box000001"), false);
+  assert.equal(s("Plexus: Show as gallery", "extra0001"), false);
+  assert.equal(s("Plexus: Show as list", "extra0001"), false);
+  assert.equal(s("Plexus: Show as gallery", "reg000001"), false);
+  assert.equal(s("Plexus: Show as list", "reg000001"), false);
+  assert.equal(s("Plexus: Show as gallery", "flag00001"), false);
+  assert.equal(s("Plexus: Show as list", "flag00001"), true);
+  const missing = setup({ strings: { box000001: CONTAINER } });
+  assert.doesNotThrow(() => show(missing.api, "blockContextMenu", "Plexus: Show as gallery", { "block-uid": "box000001" }));
+  api.commands.blockContextMenu.get("Plexus: Show as gallery").callback({ "block-uid": "box000001" });
+  await tick();
+  api.commands.blockContextMenu.get("Plexus: Show as list").callback({ "block-uid": "flag00001" });
+  await tick();
+  assert.deepEqual(calls, [
+    ["setRegionGallery", "box000001", true],
+    ["applyGalleries"],
+    ["setRegionGallery", "flag00001", false],
+    ["applyGalleries"],
+  ]);
+  assert.equal(api.data.pull("[:block/string]", [":block/uid", "box000001"])[":block/string"], CONTAINER);
+  assert.equal(api.data.pull("[:block/string]", [":block/uid", "flag00001"])[":block/string"], CONTAINER);
+});
+
+test("card size large hides for size l and for link mode", () => {
+  const e = { "ref-uid": "reg000001", "block-uid": "blk000001" };
+  const label = "Plexus: Card size large";
+  const thumb = setup({ strings: { reg000001: REGION }, mode: "thumbnail" });
+  assert.equal(show(thumb.api, "blockRefContextMenu", label, e), true);
+  const sized = setup({ strings: { reg000001: REGION }, mode: "thumbnail", overrides: { "blk000001|reg000001": { size: "s" } } });
+  assert.equal(show(sized.api, "blockRefContextMenu", label, e), true);
+  const large = setup({ strings: { reg000001: REGION }, mode: "thumbnail", overrides: { "blk000001|reg000001": { size: "l" } } });
+  assert.equal(show(large.api, "blockRefContextMenu", label, e), false);
+  const link = setup({ strings: { reg000001: REGION }, mode: "link" });
+  assert.equal(show(link.api, "blockRefContextMenu", label, e), false);
+});
+
+test("card padding writes only an integer 0..48", async () => {
+  const e = { "ref-uid": "reg000001", "block-uid": "blk000001" };
+  const label = "Plexus: Card padding…";
+  const none = setup({ strings: { reg000001: REGION }, mode: "thumbnail", openPrompt: async () => null });
+  none.api.commands.blockRefContextMenu.get(label).callback(e);
+  await tick();
+  assert.equal(none.calls.some((c) => c[0] === "setRefOverride"), false);
+  const ok = setup({ strings: { reg000001: REGION }, mode: "thumbnail", openPrompt: async () => "12" });
+  ok.api.commands.blockRefContextMenu.get(label).callback(e);
+  await tick();
+  assert.deepEqual(ok.calls.filter((c) => c[0] === "setRefOverride"), [
+    ["setRefOverride", "blk000001", "reg000001", { pad: 12 }],
+  ]);
+  const bad = setup({ strings: { reg000001: REGION }, mode: "thumbnail", openPrompt: async () => "99" });
+  bad.api.commands.blockRefContextMenu.get(label).callback(e);
+  await tick();
+  assert.equal(bad.calls.some((c) => c[0] === "setRefOverride"), false);
 });
 
 test("block menu conditionals by content", () => {
