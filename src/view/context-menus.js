@@ -317,6 +317,8 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   register("blockContextMenu", "Plexus: Show mentions", drawingOrRegion, pageWindow("mentions"));
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
+  register("blockContextMenu", "Plexus: Export scene", blockShow("drawing"), (e) => actions.exportScene(e?.["block-uid"]));
+  register("blockContextMenu", "Plexus: Import scene\u2026", () => true, (e) => actions.importScene(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present from here", blockShow("frameKind"), (e) => actions.presentFromRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Mind map from outline", () => true, (e) => actions.mindMapFromOutline(e?.["block-uid"]));
@@ -584,7 +586,7 @@ export function installCanvasMenu({ doc, app, containerEl, getItems, raf, caf } 
 }
 
 // The canvas-menu items, built fresh on every right-click so each `enabled` reads the current selection.
-export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, tools, mindmap, arrange, openPicker, noteAt, toScene, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
+export function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, guard, point, tools, mindmap, arrange, openPicker, noteAt, toScene, showTag, mac = /mac|iphone|ipad/i.test(String(globalThis.navigator?.platform ?? "")) } = {}) {
   const kbd = (id) => hotkeyFor(id, { mac });
   const can = (fn) => { try { return !!fn(); } catch { return false; } };
   const call = (name, fn) => () => {
@@ -632,6 +634,11 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "add-occlusion", label: "Plexus: Add occlusion", enabled: can(() => selectedIds().length > 0), run: call("add-occlusion", () => actions.addOcclusion()) },
     { id: "mark-flashcard", label: "Plexus: Mark flashcard", enabled: can(() => selectedIds().length > 0), run: call("mark-flashcard", () => actions.markFlashcard()) },
     { id: "export", label: "Plexus: Export\u2026", enabled: can(() => !!drawingUid), run: call("export", () => actions.exportDrawing()) },
+    { id: "export-scene", label: "Plexus: Export scene", enabled: can(() => !!drawingUid), run: call("export-scene", () => actions.exportScene(drawingUid)) },
+    { id: "tag-elements", label: "Plexus: Tag elements\u2026", enabled: can(() => selectedElements().some((el) => el.type === "text")), run: call("tag-elements", () => actions.tagElements()) },
+    { id: "show-tag", label: "Plexus: Show only tag\u2026", enabled: can(() => !!drawingUid), run: call("show-tag", () => showTag?.()) },
+    { id: "keep-export", label: "Plexus: Keep export image", enabled: can(() => !!drawingUid), run: call("keep-export", () => actions.keepExportImage()) },
+    { id: "keep-links", label: "Plexus: Keep linked references", enabled: can(() => !!drawingUid), run: call("keep-links", () => actions.keepLinkedReferences(drawingUid)) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
     { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },

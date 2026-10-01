@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.25.0]
+- Scene JSON exports the drawing and imports into a new one. Images are refused. Props are not written.
+- A tag is written onto selected text and a child page ref is added when it is missing. Show only that tag dims the rest.
+- One export image updates on close when the scene changes. A collapsed linked-from list rewrites only when its refs change, and is deleted when empty.
+- The palette stays two entries. The command list is 61.
+
 ## [0.24.0]
 - Live present tweens the open drawing between frames. Escape restores the view. The image slideshow stays.
 - Slide builds hide later steps. Occlusion covers a region until reveal. Export copies, downloads, or inserts an image.

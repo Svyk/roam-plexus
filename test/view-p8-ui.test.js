@@ -95,12 +95,14 @@ test("canvas items keep today's nine in order (P9 adds the picker and note items
   const ids = items.map((i) => i.id);
   assert.deepEqual(ids.filter((id) => NINE.includes(id)), NINE);
   assert.deepEqual(ids.slice(0, 7), ["region", "frame", "crop", "image", "embed", "embed-picker", "note"]);
+  const at = ids.indexOf("export");
+  assert.deepEqual(ids.slice(at, at + 6), ["export", "export-scene", "tag-elements", "show-tag", "keep-export", "keep-links"]);
 });
 
 test("nothing selected: copy items always, frames and restore by condition", () => {
-  assert.deepEqual(canvas().enabled(), ["embed", "export", "mindmap", "settings", "copy-drawing", "copy-embed"]);
+  assert.deepEqual(canvas().enabled(), ["embed", "export", "export-scene", "show-tag", "keep-export", "keep-links", "mindmap", "settings", "copy-drawing", "copy-embed"]);
   const c = canvas({ frames: true, snapshot: true });
-  assert.deepEqual(c.enabled(), ["embed", "present", "present-here", "present-live", "export", "mindmap", "settings", "copy-drawing", "copy-embed", "frames-regions", "restore"]);
+  assert.deepEqual(c.enabled(), ["embed", "present", "present-here", "present-live", "export", "export-scene", "show-tag", "keep-export", "keep-links", "mindmap", "settings", "copy-drawing", "copy-embed", "frames-regions", "restore"]);
   for (const id of ["copy-drawing", "copy-embed", "frames-regions", "restore"]) c.run(id);
   assert.deepEqual(c.calls, ["ref", "embed", "frames", "restore"]);
   assert.ok(!canvas({ drawingUid: null }).enabled().includes("copy-drawing"));
@@ -109,6 +111,14 @@ test("nothing selected: copy items always, frames and restore by condition", () 
 test("restore can read hasSnapshot from an injected guard", () => {
   const guard = { hasSnapshot: (uid) => uid === "abc123XYZ" };
   assert.ok(canvas({ guard }).enabled().includes("restore"));
+});
+
+test("tag elements shows for a selected text element", () => {
+  const text = { id: "t", type: "text" };
+  const rect = { id: "r", type: "rectangle" };
+  assert.ok(canvas({ selected: ["t"], elements: [text] }).enabled().includes("tag-elements"));
+  assert.ok(!canvas({ selected: ["r"], elements: [rect] }).enabled().includes("tag-elements"));
+  assert.ok(!canvas().enabled().includes("tag-elements"));
 });
 
 test("with a selection the nothing-selected items go away", () => {

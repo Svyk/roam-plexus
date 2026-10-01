@@ -23,6 +23,7 @@ import { downloadPngs, printPages } from "./view/print.js";
 import { createLegacyDialog } from "./view/legacy-dialog.js";
 import { createCleanupDialog } from "./view/cleanup-dialog.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
+import { EXPORT_MARK, LINKS_MARK, appendTagText, collectTargets, elementsToAdd, exportPlan, linkPlan, parseSceneDocument, sceneDocument, tagToken } from "./model/carry.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const noop = () => {};
@@ -319,7 +320,15 @@ export function createActions({
     }
   }
 
-  const sceneElements = (app) => app.getSceneElements?.() ?? app.getSceneElementsIncludingDeleted?.() ?? [];
+  const sceneElements = (app) => {
+    const primary = typeof app?.getSceneElements === "function" ? app.getSceneElements() : null;
+    if (Array.isArray(primary) && primary.length) return primary;
+    // getSceneElements can be empty while the scene object still has the elements.
+    const fromScene = app?.scene?.getNonDeletedElements?.();
+    if (Array.isArray(fromScene) && fromScene.length) return fromScene;
+    if (Array.isArray(primary)) return primary;
+    return app?.getSceneElementsIncludingDeleted?.() ?? [];
+  };
 
   async function putSvg(uid, region, svg) {
     const drawing = host.drawing(region.drawingUid);
@@ -1161,6 +1170,297 @@ export function createActions({
     }
   }
 
+  // A hash in block props is not a Roam ref. The live scene is what just changed; props can still be the previous save.
+  const liveScene = (app) => sceneElements(app).filter((el) => el && !el.isDeleted);
+  const sceneHash = (app) => fnv1a(JSON.stringify(liveScene(app)));
+  let closeSyncTail = Promise.resolve();
+
+  function drawingUidOf(uid) {
+    const editor = native.activeEditor(doc);
+    const block = isId(uid) ? safe(() => host.pullBlock(uid)) : null;
+    if (block && DRAWING_BLOCK_RE.test(block.string)) return uid;
+    if (isId(editor?.drawingUid)) return editor.drawingUid;
+    return "";
+  }
+
+  function downloadBlob(blob, name) {
+    const url = urls.createObjectURL(blob);
+    try {
+      const a = doc.createElement("a");
+      a.href = url;
+      a.download = name;
+      doc.body?.append?.(a);
+      a.click?.();
+      a.remove?.();
+    } finally {
+      setTimeout(() => urls.revokeObjectURL?.(url), revokeDelayMs);
+    }
+  }
+
+  function pickSceneText() {
+    return new Promise((resolve) => {
+      let input;
+      try { input = doc.createElement("input"); } catch { resolve(null); return; }
+      if (!input) { resolve(null); return; }
+      input.type = "file";
+      input.accept = ".excalidraw,.json,application/json";
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        try { input.remove?.(); } catch { /* already gone */ }
+        resolve(value);
+      };
+      input.addEventListener?.("change", async () => {
+        const file = input.files?.[0];
+        if (!file) return finish(null);
+        try {
+          const text = typeof file.text === "function" ? await file.text() : await new Promise((res, rej) => {
+            const reader = new doc.defaultView.FileReader();
+            reader.onload = () => res(String(reader.result ?? ""));
+            reader.onerror = () => rej(reader.error);
+            reader.readAsText(file);
+          });
+          finish(text);
+        } catch (error) {
+          console.warn("[plexus] scene read failed", error);
+          finish(null);
+        }
+      });
+      input.addEventListener?.("cancel", () => finish(null));
+      try { doc.body?.append?.(input); } catch { /* a detached input can still open the picker */ }
+      try { input.click?.(); } catch { finish(null); }
+    });
+  }
+
+  async function exportScene(uid) {
+    const drawingUid = drawingUidOf(uid);
+    if (!drawingUid) {
+      toaster.show("Open a drawing or click a drawing block", { kind: "error" });
+      return null;
+    }
+    const editor = native.activeEditor(doc);
+    const open = editor?.app && editor.drawingUid === drawingUid ? editor : null;
+    const drawing = safe(() => host.drawing(drawingUid));
+    const elements = open ? liveScene(open.app) : (drawing?.elements ?? []);
+    if (!elements.length) {
+      toaster.show("Nothing to export", { kind: "error" });
+      return null;
+    }
+    const files = open && open.app.files && typeof open.app.files === "object" && !Array.isArray(open.app.files) ? open.app.files : {};
+    const payload = sceneDocument({ elements, appState: open ? open.app.state : drawing?.appState, files });
+    downloadBlob(new Blob([JSON.stringify(payload)], { type: "application/json" }), "drawing.excalidraw");
+    toaster.show("Scene exported");
+    return drawingUid;
+  }
+
+  async function importScene(parentUid) {
+    const text = await pickSceneText();
+    if (text == null) return null;
+    const data = parseSceneDocument(text);
+    if (!data) {
+      toaster.show("That file is not a scene", { kind: "error" });
+      return null;
+    }
+    const elements = elementsToAdd(data.elements);
+    if (!elements.length) {
+      toaster.show("Images are not imported", { kind: "error" });
+      return null;
+    }
+    const parent = isId(parentUid) ? safe(() => host.pullBlock(parentUid)) : null;
+    const below = parent && !DRAWING_BLOCK_RE.test(parent.string);
+    const made = await newDrawingRun({ where: below ? "below" : "page", uid: below ? parentUid : undefined, open: true, fresh: true });
+    const drawingUid = made && typeof made === "object" ? made.uid : made;
+    if (!isId(drawingUid)) return null;
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || editor.drawingUid !== drawingUid) {
+      toaster.show("Drawing created; open it from the outline");
+      return drawingUid;
+    }
+    if (typeof native.insertElements !== "function" || !native.insertElements(editor.app, elements, { select: true })) {
+      toaster.show("Could not add the scene", { kind: "error" });
+      return drawingUid;
+    }
+    toaster.show("Scene imported");
+    return drawingUid;
+  }
+
+  async function tagElements(raw) {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || !isId(editor.drawingUid)) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const st = editor.app.state || {};
+    // A right-click leaves the button down while this menu item runs. Only an open text editor blocks the tag.
+    if (st.editingTextElement || st.newElement) {
+      toaster.show("Finish the current edit first", { kind: "error" });
+      return null;
+    }
+    const selected = new Set(native.selectedElementIds(editor.app));
+    const targets = liveScene(editor.app).filter((el) => selected.has(el.id) && el.type === "text");
+    if (!targets.length) {
+      toaster.show("Select a text element first", { kind: "error" });
+      return null;
+    }
+    let name = raw;
+    if (!name) {
+      name = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+      if (!name) return null;
+    }
+    const token = tagToken(name);
+    if (!token) {
+      toaster.show("That tag name will not work", { kind: "error" });
+      return null;
+    }
+    const ids = new Set(targets.map((el) => el.id));
+    const ok = guard.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label: "Tag elements",
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => current.map((el) => {
+        if (!el || !ids.has(el.id)) return el;
+        const prev = typeof el.originalText === "string" ? el.originalText : (typeof el.text === "string" ? el.text : "");
+        const nextText = appendTagText(prev, name);
+        if (nextText === prev) return el;
+        return {
+          ...el,
+          text: nextText,
+          originalText: nextText,
+          version: (el.version || 0) + 1,
+          versionNonce: Math.floor(Math.random() * 2147483647),
+          updated: Date.now(),
+        };
+      }),
+    });
+    if (!ok) return null;
+    const kids = safe(() => host.pullBlock(editor.drawingUid)?.children) || [];
+    if (!kids.some((child) => String(child?.string ?? "").includes(token))) {
+      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: token });
+      if (!made) {
+        toaster.show("Could not add the tag ref", { kind: "error" });
+        return null;
+      }
+    }
+    toaster.show("Tag added");
+    return token;
+  }
+
+  async function syncExport(app, drawingUid) {
+    if (!app || !isId(drawingUid)) return { action: "skip" };
+    const children = safe(() => host.pullBlock(drawingUid)?.children) || [];
+    const mark = children.find((child) => child?.string === EXPORT_MARK) || null;
+    if (!mark?.uid) return { action: "skip" };
+    const nested = safe(() => host.pullBlock(mark.uid)?.children) || [];
+    const plan = exportPlan({ children, markChildren: nested, hash: sceneHash(app) });
+    if (plan.action !== "update") return plan;
+    const ids = liveScene(app).map((el) => el.id);
+    if (!ids.length) return { action: "skip" };
+    const png = ids.length && typeof native.captureSelectionPng === "function"
+      ? await native.captureSelectionPng(app, ids, { scale: 2, dark: app.state?.theme === "dark", clipboard })
+      : null;
+    if (!png) {
+      toaster.show("Could not export", { kind: "error" });
+      return null;
+    }
+    try {
+      const file = new File([png], "drawing.png", { type: "image/png" });
+      const res = await (upload ? upload(file) : api.file.upload({ file }));
+      const raw = typeof res === "string" ? res : res?.url ?? "";
+      const md = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(String(raw).trim());
+      const href = md ? md[1] : String(raw).trim();
+      if (!href) throw new Error("[plexus] upload returned nothing");
+      const image = `![drawing](${href})`;
+      const hashString = `\`${plan.hash}\``;
+      if (plan.imageUid) await api.data.block.update({ block: { uid: plan.imageUid, string: image } });
+      else await host.createBlock?.({ parentUid: plan.markUid, order: 0, string: image });
+      if (plan.hashUid) await api.data.block.update({ block: { uid: plan.hashUid, string: hashString } });
+      else await host.createBlock?.({ parentUid: plan.markUid, order: 1, string: hashString });
+      if (plan.oldUrl && plan.oldUrl !== href) {
+        try { await api.file?.delete?.({ url: plan.oldUrl }); }
+        catch (error) { console.warn("[plexus] old export delete failed", error); }
+      }
+      return { action: "update", href };
+    } catch (error) {
+      console.warn("[plexus] export image failed", error);
+      toaster.show("Could not export", { kind: "error" });
+      return null;
+    }
+  }
+
+  async function applyLinks(app, drawingUid, { createMark }) {
+    const elements = app ? liveScene(app) : (safe(() => host.drawing(drawingUid)?.elements) ?? []);
+    const regions = safe(() => host.regionsOf?.(drawingUid)) || [];
+    const targets = collectTargets({ elements, regions, drawingUid });
+    const children = safe(() => host.pullBlock(drawingUid)?.children) || [];
+    const mark = children.find((child) => child?.string === LINKS_MARK) || null;
+    const markChildren = mark?.uid ? (safe(() => host.pullBlock(mark.uid)?.children) || []) : [];
+    const plan = linkPlan({ children, markChildren, targets });
+    if (plan.action === "none" || plan.action === "create" && !createMark) return plan;
+    if (plan.action === "delete") {
+      await host.deleteBlock?.(plan.markUid);
+      return plan;
+    }
+    if (plan.action === "create") {
+      const markUid = await host.createBlock?.({ parentUid: drawingUid, order: "last", string: LINKS_MARK, open: false });
+      if (!markUid) return null;
+      for (let i = 0; i < plan.refs.length; i++) await host.createBlock?.({ parentUid: markUid, order: i, string: plan.refs[i] });
+      return { ...plan, markUid };
+    }
+    for (const child of [...markChildren]) if (child?.uid) await host.deleteBlock?.(child.uid);
+    for (let i = 0; i < plan.refs.length; i++) await host.createBlock?.({ parentUid: plan.markUid, order: i, string: plan.refs[i] });
+    return plan;
+  }
+
+  async function keepExportImage() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || !isId(editor.drawingUid)) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const children = safe(() => host.pullBlock(editor.drawingUid)?.children) || [];
+    if (!children.some((child) => child?.string === EXPORT_MARK)) {
+      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: EXPORT_MARK, open: false });
+      if (!made) {
+        toaster.show("Could not keep the export image", { kind: "error" });
+        return null;
+      }
+    }
+    const result = await syncExport(editor.app, editor.drawingUid);
+    if (!result) return null;
+    toaster.show("Export image kept");
+    return editor.drawingUid;
+  }
+
+  async function keepLinkedReferences(uid) {
+    const drawingUid = drawingUidOf(uid);
+    if (!drawingUid) {
+      toaster.show("Open a drawing or click a drawing block", { kind: "error" });
+      return null;
+    }
+    const editor = native.activeEditor(doc);
+    const app = editor?.drawingUid === drawingUid ? editor.app : null;
+    const plan = await applyLinks(app, drawingUid, { createMark: true });
+    if (!plan || (plan.action === "none" && !plan.markUid) || plan.action === "delete") {
+      toaster.show("Nothing to list");
+      return plan?.action === "delete" ? drawingUid : null;
+    }
+    toaster.show("Linked references kept");
+    return drawingUid;
+  }
+
+  function syncOnClose(app, drawingUid) {
+    if (!app || !isId(drawingUid) || disposed) return Promise.resolve(null);
+    const run = closeSyncTail.catch(() => {}).then(async () => {
+      try { await syncExport(app, drawingUid); }
+      catch (error) { console.warn("[plexus] close sync failed", error); }
+      try { await applyLinks(app, drawingUid, { createMark: false }); }
+      catch (error) { console.warn("[plexus] close sync failed", error); }
+    });
+    closeSyncTail = run;
+    return run;
+  }
+
   return {
     dispose() {
       disposed = true;
@@ -1641,6 +1941,13 @@ export function createActions({
       });
       return true;
     },
+
+    exportScene: (uid) => exportScene(uid),
+    importScene: (uid) => importScene(uid),
+    tagElements: (raw) => tagElements(raw),
+    keepExportImage: () => keepExportImage(),
+    keepLinkedReferences: (uid) => keepLinkedReferences(uid),
+    syncOnClose: (app, drawingUid) => syncOnClose(app, drawingUid),
 
     presentFromRegion: async (regionUid) => {
       const block = isId(regionUid) ? safe(() => host.pullBlock(regionUid)) : null;

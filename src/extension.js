@@ -55,6 +55,7 @@ import { createDock } from "./view/dock.js";
 import { installRoamDrop } from "./view/drop.js";
 import { installTextLinks } from "./view/text-links.js";
 import { parseEmbedRef } from "./model/embeds.js";
+import { taggedElementIds } from "./model/carry.js";
 import { elementBounds, viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
 import { LOCK_ACTION_NAMES, applyCanvasPrefs, captureView, copyText, diagnosticsText, restoreAutomaticView, runNamedAction, shouldReapplyTheme, syncGeneration } from "./host/canvas-prefs.js";
@@ -101,6 +102,54 @@ function isMindMapChord(event) {
   if (!event || event.isComposing || event.repeat) return false;
   if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return false;
   return event.code === "KeyM";
+}
+
+// Roam clears the scene before unmount. Sync while the minimize click still has the elements, then let that click close.
+export function holdMinimizeClose({ outer, sync, timeoutMs = 8000 } = {}) {
+  if (!outer?.addEventListener) return () => {};
+  let pass = false;
+  let pending = null;
+  let fired = false;
+  const hitOf = (event) => {
+    const hit = event?.target?.closest?.(".bp3-icon-minimize");
+    if (!hit || !outer.contains?.(hit)) return null;
+    return hit;
+  };
+  const onEvent = (event) => {
+    const hit = hitOf(event);
+    if (!hit) return;
+    if (pass) return;
+    if (fired) {
+      const still = outer.isConnected !== false && outer.classList?.contains?.("full-screen");
+      if (!(event.type === "pointerdown" && still)) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        return;
+      }
+      fired = false;
+    }
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    if (pending) return;
+    let timer;
+    const cap = new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); });
+    const run = Promise.resolve().then(() => sync?.()).catch((error) => {
+      console.warn("[plexus] close sync failed", error);
+    });
+    pending = Promise.race([run, cap]).finally(() => {
+      clearTimeout(timer);
+      fired = true;
+      pass = true;
+      try { hit.click?.(); }
+      catch (error) { console.warn("[plexus] minimize failed", error); }
+      pass = false;
+      pending = null;
+    });
+  };
+  for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) outer.addEventListener(type, onEvent, true);
+  return () => {
+    for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) outer.removeEventListener(type, onEvent, true);
+  };
 }
 
 // Roam's keydown walk costs about 0.055 ms per palette entry. Register for the open palette, then drop.
@@ -195,6 +244,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let openSettings = () => console.warn("[plexus] unavailable outside Roam: settings");
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
+    let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
     let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
     let runEmbedQuery = () => console.warn("[plexus] unavailable outside Roam: embedQuery");
     let runEmbedChildren = () => console.warn("[plexus] unavailable outside Roam: embedChildren");
@@ -881,6 +931,35 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         focusIndex = next;
         focusVeil = veil;
       };
+      runShowTag = async () => {
+        if (typeof showFocusVeil !== "function") return void toaster.show("Focus mode is unavailable");
+        const editor = native.activeEditor(doc);
+        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        let raw = null;
+        try {
+          raw = await openCaptionPrompt({ doc, initial: "", select: true, escape: "cancel", rect: null });
+        } catch (error) {
+          console.warn("[plexus] tag prompt failed", error);
+          return;
+        }
+        if (typeof raw !== "string" || !raw.trim()) return;
+        const ids = taggedElementIds(sceneElements(editor.app), raw);
+        if (!ids.length) return void toaster.show("No element has that tag");
+        endTodo();
+        endFocus();
+        const app = editor.app;
+        try {
+          focusVeil = openVeil(() => showFocusVeil({
+            doc,
+            getHoles: () => holesFor(app, taggedElementIds(sceneElements(app), raw)),
+            subscribe: (place) => subscribeViewport(app, place),
+          }));
+          focusIndex = -1;
+        } catch (error) {
+          console.warn("[plexus] tag veil failed", error);
+          toaster.show("Could not show that tag", { kind: "error" });
+        }
+      };
       runTodoMode = () => {
         if (typeof showTodoVeil !== "function" || typeof todoKeptIds !== "function") return void toaster.show("Todo mode is unavailable");
         const editor = native.activeEditor(doc);
@@ -1049,7 +1128,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         mounted = null;
         closeDialogs();
         if (!current) return Promise.resolve();
+        try { actions.cancelDrawingTool(); } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
         if (Date.now() - navigatedAt <= 2000) clearLinkTooltip(doc);
+        // The dock and the other editor chrome leave before close sync. A remount during that sync must not release the new app.
         const pending = [];
         for (const dispose of current.disposers) {
           try {
@@ -1057,16 +1138,28 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             if (out && typeof out.then === "function") pending.push(out.catch((error) => console.warn("[plexus] editor cleanup failed", error)));
           } catch (error) { console.warn("[plexus] editor cleanup failed", error); }
         }
-        if (current.app) scenes.release(current.app);
-        actions.cancelDrawingTool();
-        if (current.uid) {
-          emitter.emit({ uid: current.uid, kind: "drawing" });
-          warmThumbnails(current.uid);
-          if (!unloading) {
-            Promise.resolve(actions.refreshAfterClose(current.uid, current.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+        const finish = () => {
+          if (current.app && mounted?.app !== current.app) scenes.release(current.app);
+          if (current.uid) {
+            emitter.emit({ uid: current.uid, kind: "drawing" });
+            warmThumbnails(current.uid);
+            if (!unloading) {
+              Promise.resolve(actions.refreshAfterClose(current.uid, current.hash)).catch((error) => console.warn("[plexus] refresh after close failed", error));
+            }
           }
+          return Promise.all(pending).then(() => undefined);
+        };
+        if (!unloading && current.app && current.uid && typeof actions.syncOnClose === "function") {
+          let timer;
+          const cap = new Promise((resolve) => { timer = setTimeout(resolve, 8000); });
+          // Minimize already started this sync while the scene was still on screen.
+          const job = current.closeOnce || actions.syncOnClose(current.app, current.uid);
+          const sync = Promise.resolve(job).catch((error) => {
+            console.warn("[plexus] close sync failed", error);
+          });
+          return Promise.race([sync, cap]).then(() => { clearTimeout(timer); return finish(); });
         }
-        return Promise.all(pending).then(() => undefined);
+        return finish();
       };
       lifecycle.add(() => unmountEditor({ unloading: true }));
       const discovery = createDiscovery({
@@ -1130,6 +1223,17 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
               });
             }
           } catch (error) { console.warn("[plexus] canvas prefs failed", error); }
+          if (outer && mountUid) {
+            const releaseClose = holdMinimizeClose({
+              outer,
+              sync: () => {
+                const job = actions.syncOnClose(app, mountUid);
+                if (mounted?.app === app) mounted.closeOnce = job;
+                return job;
+              },
+            });
+            mounted.disposers.push(releaseClose);
+          }
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -1355,6 +1459,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
               openPicker: (p) => openPicker(p),
               noteAt: (p) => actions.newNoteCard(sceneAt(app, p)),
               toScene: (p) => sceneAt(app, p),
+              showTag: () => runShowTag(),
             }),
           }));
           if (mountUid) {
@@ -1464,6 +1569,12 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       },
       { id: "presentLive", label: "Present live", run: () => (actions ? Promise.resolve(actions.presentLive()).catch((error) => console.warn("[plexus] present live failed", error)) : unavailable("presentLive")) },
       { id: "exportDrawing", label: "Export drawing\u2026", run: () => (actions ? Promise.resolve(actions.exportDrawing()).catch((error) => console.warn("[plexus] export failed", error)) : unavailable("exportDrawing")) },
+      { id: "exportScene", label: "Export scene", run: (ctx) => (actions ? Promise.resolve(actions.exportScene(ctx?.focusedUid)).catch((error) => console.warn("[plexus] export scene failed", error)) : unavailable("exportScene")) },
+      { id: "importScene", label: "Import scene\u2026", run: (ctx) => (actions ? Promise.resolve(actions.importScene(ctx?.focusedUid)).catch((error) => console.warn("[plexus] import scene failed", error)) : unavailable("importScene")) },
+      { id: "tagElements", label: "Tag elements\u2026", run: () => (actions ? Promise.resolve(actions.tagElements()).catch((error) => console.warn("[plexus] tag failed", error)) : unavailable("tagElements")) },
+      { id: "showTag", label: "Show only tag\u2026", run: () => Promise.resolve(runShowTag()).catch((error) => console.warn("[plexus] show tag failed", error)) },
+      { id: "keepExport", label: "Keep export image", run: () => (actions ? Promise.resolve(actions.keepExportImage()).catch((error) => console.warn("[plexus] export image failed", error)) : unavailable("keepExport")) },
+      { id: "keepLinks", label: "Keep linked references", run: (ctx) => (actions ? Promise.resolve(actions.keepLinkedReferences(ctx?.focusedUid)).catch((error) => console.warn("[plexus] linked references failed", error)) : unavailable("keepLinks")) },
       { id: "printFrames", label: "Print frames\u2026", run: (ctx) => printMode(ctx, "print") },
       { id: "pngFrames", label: "PNG per frame", run: (ctx) => printMode(ctx, "png") },
       { id: "makeSlide", label: "Make slide", run: () => (actions ? Promise.resolve(actions.makeSlide()).catch((error) => console.warn("[plexus] make slide failed", error)) : unavailable("makeSlide")) },

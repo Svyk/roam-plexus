@@ -63,7 +63,7 @@ test("every label is registered and removed on dispose", () => {
   ]);
   assert.deepEqual([...api.commands.blockContextMenu.keys()], [
     "Plexus: Show as gallery", "Plexus: Show as list",
-    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Open in graph view", "Plexus: Show mentions", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Present this outline",
+    "Plexus: Region on image", "Plexus: Present frames", "Plexus: Show in Compass", "Plexus: Open in graph view", "Plexus: Show mentions", "Plexus: Print frames", "Plexus: PNG per frame", "Plexus: Export scene", "Plexus: Import scene\u2026", "Plexus: Present this outline",
     "Plexus: Present from here", "Plexus: Mind map from outline", "Plexus: Open region",
     "Plexus: Refresh crop", "Plexus: Link caption to source blocks", "Plexus: Name region", "Plexus: Copy crop as PNG",
     "Plexus: Copy crop as SVG", "Plexus: Download crop", "Plexus: Copy alias", "Plexus: Refresh crops", "Plexus: Region settings…",
