@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (38)
+### 6.1 Later (37)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -871,7 +871,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EMB-5 | Task cards and checkboxes on the canvas | Better Tasks rules and glyph-swap risks; MM-8 and P5 embeds cover it | | |
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
 | NAV-6 | Canvas outline / regions panel | Duplicates the outline; NAV-7 is the Roam-native answer | Only as a host for a slide sorter | park |
-| NAV-8 | Minimap | Work during pan; most scenes are small | After DATA-5 | |
 | NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
 | GRAPH-3 | Ref lines between embeds | Rated the biggest perf risk in the source plugin; duplicates Compass | A hovered-only minimal version | park |
@@ -919,6 +918,7 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | CMP-5 | 0.22.0 | `8ea9e6e` | Send to drawing appends the neighborhood to the open drawing. Plain by default. Links mode writes a page ref. A closed drawing is refused. apiVersion 6. Compass `851eea4` |
 | CMP-8 | 0.22.0 | `8ea9e6e` | Pages, blocks, drawings, regions, and a keyword. All on. Fade only. Compass `851eea4` |
 | CMP-13 | 0.22.0 | `8ea9e6e` | Cross links stay off until toggled. Faint edges, cap 40. Compass `851eea4` |
+| NAV-8 | 0.23.0 | `87398ee` | Corner map on a large full-screen drawing. Click or drag pans. A scene that fits hides it. The switch defaults on. No thumbnail |
 
 ### 6.2 Parked (17)
 
@@ -1115,7 +1115,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | NAV-5 | Find in drawing | P16 |
 | NAV-6 | Canvas outline / regions panel | Later |
 | NAV-7 | Docked Roam outline | P10 |
-| NAV-8 | Minimap | Later |
+| NAV-8 | Minimap | 0.23.0 |
 | NAV-9 | Focus mode veil | P15 |
 | NAV-10 | Keyboard navigation on cards | 0.19.0 |
 | NAV-11 | Drawings finder and gallery | Later |

@@ -7,6 +7,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 ## [0.23.0]
 - A corner minimap on a large drawing. Click or drag it to pan. The pan does not write elements. A small drawing hides it. The minimap switch is remembered.
 - The palette stays two entries. The command list stays 53.
+- Typing, editor closed, five rounds: +0.112 ms/key. Loaded mean 11.980. Unloaded mean 11.869.
 
 ## [0.22.0]
 
