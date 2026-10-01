@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (59)
+### 6.1 Later (55)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -905,16 +905,20 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | EXP-9 | Auto-synced export image block | Upload churn and orphan files | Mobile viewing becomes a habit | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
-| DATA-4 | "Plexus: Copy diagnostics" | The Debug switch suffices for one maintainer | A bug needs a report | next (P8) |
 | DATA-7 | Outline write-queue status chip | Toasts work | Failed outline writes occur | |
-| UX-5 | Canvas preferences (theme follows Roam, fit on open, ...) | A theme or appState write may persist and churn `:edit/time` | After DATA-5 | |
 | UX-6 | Per-drawing attributes | Attribute pages clutter All Pages; settings cover current needs | | |
 | UX-8 | Picker triggers (alias on selection, #tag, auto-pair, recents) | IME and auto-pair on the input path | | |
 | UX-10 | Feedback polish | Onboarding is not needed; the "Removed from the drawing, block unchanged" toast is the useful bit | A delete confuses someone | |
-| UX-12 | Expose native Excalidraw actions Roam hides | Some need UI Roam does not render; the DATA-5 probe (P7) lists which action names exist | Lock/Unlock all is the one worth surfacing | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 | REV-4 | Tags on elements and a tag filter | Typing `#tags` already makes refs; the filter needs the veil | After NAV-9 | park |
-| PERF-2 | Hot-path audit | No evidence of a hot-path problem | The generation counter after a Depot reinstall is worth doing alone | |
+### Shipped from Later
+
+| ID | Version | Sha | What shipped |
+|---|---|---|---|
+| UX-5 | 0.16.0 | `a5ee31d` | Theme follows Roam. Restored on close. Fit on open, grid color, default font, and presenter on open cut |
+| UX-12 | 0.16.0 | `a5ee31d` | Lock or unlock selection, and Unlock all, on the command list |
+| DATA-4 | 0.16.0 | `a5ee31d` | Copy diagnostics, on the command list |
+| PERF-2 | 0.16.0 | `a5ee31d` | Crop generation prefix `nN|` when the extension version changes |
 
 ### 6.2 Parked (17)
 
@@ -1187,7 +1191,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | DATA-1 | Snapshots and restore | P12 |
 | DATA-2 | Shrink guard, in-memory pre-write snapshot | P8 (QW) |
 | DATA-3 | Flush writes on hide/unload | P8 (QW) |
-| DATA-4 | Copy diagnostics | Later |
+| DATA-4 | Copy diagnostics | 0.16.0 |
 | DATA-5 | View-state measurement and native-feature probe | P7 (QW) |
 | DATA-6 | Edit-conflict guard | Parked |
 | DATA-7 | Write-queue status chip | Later |
@@ -1195,20 +1199,20 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | UX-2 | Context-only palette commands | Parked |
 | UX-3 | Reduced motion | P8 |
 | UX-4 | Accessible region refs | P7 |
-| UX-5 | Canvas preferences | Later |
+| UX-5 | Canvas preferences | 0.16.0 |
 | UX-6 | Per-drawing attributes | Later |
 | UX-7 | Picker: natural dates, create page | P9 |
 | UX-8 | Picker triggers | Later |
 | UX-9 | Preferences bundle | Parked |
 | UX-10 | Feedback polish | Later |
 | UX-11 | Floating mini-toolbar | Parked |
-| UX-12 | Expose hidden native actions | Later |
+| UX-12 | Expose hidden native actions | 0.16.0 |
 | REV-1 | Comment pins | Later |
 | REV-2 | Todo mode | P15 |
 | REV-3 | Stamps and voting | Rejected |
 | REV-4 | Tags on elements, tag filter | Later |
 | PERF-1 | Touch and long-press parity | Parked |
-| PERF-2 | Hot-path audit | Later |
+| PERF-2 | Hot-path audit | 0.16.0 |
 | OUT-1 | AI features in core | Rejected |
 | OUT-2 | OCR | Rejected |
 | OUT-3 | Live cursors and presence | Rejected |
