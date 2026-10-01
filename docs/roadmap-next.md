@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (29)
+### 6.1 Later (26)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -861,7 +861,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
 | AUTH-13 | Styling helpers | Menu weight for marginal wins | The contrast rule can ride with mind-map colours | park |
-| AUTH-14 | Insert a Roam image or drawing from a picker | `addFiles` re-uploads every file (spec S4); regions on plain images cover partial refs | Storage duplication is solved | |
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
 | AUTH-21 | Layer manager | Frames plus NAV-9 approximate it; emulated hide leaks into exports | Layered plant maps become frequent | park |
@@ -873,7 +872,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
 | GRAPH-3 | Ref lines between embeds | Rated the biggest perf risk in the source plugin; duplicates Compass | A hovered-only minimal version | park |
-| GRAPH-6 | Turn text into a page or block (and back) | AUTH-3 covers most of the need | After AUTH-3 | |
 | GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
 | MM-4 | More mind-map layouts and a chooser | Five layouts exist | A map asks for both-sides or org chart | |
@@ -883,7 +881,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | MM-10 | Import a linked page's outline, submaps | Many writes; embed cap | After MM-1, MM-7, MM-8 settle | |
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
-| UX-6 | Per-drawing attributes | Attribute pages clutter All Pages; settings cover current needs | | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 ### Shipped from Later
 
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REV-4 | 0.25.0 | `e613772` | A tag is written onto selected text and a child page ref is added when it is missing. Show only that tag dims the rest |
 | EXP-9 | 0.25.0 | `e613772` | One export image updates on close when the scene changes. The same hash skips the upload |
 | GRAPH-10 | 0.25.0 | `e613772` | A collapsed linked-from list rewrites only when its refs change, and is deleted when empty. The drawing string stays |
+| GRAPH-6 | 0.26.0 | `381cab6` | Selected text becomes a page or a block. A prompt confirms the title. An existing title is reused. Arrows follow. An image leaves the canvas |
+| AUTH-14 | 0.26.0 | `381cab6` | This page lists images and drawings. Enter fits inside 480 by 360. Shift+Enter is pixel size or drawing bounds. The file address is reused. A drawing inserts an embed |
+| UX-6 | 0.26.0 | `381cab6` | One Name child, written or deleted by a prompt. Props stay. Mount shows the name |
 
 ### 6.2 Parked (17)
 
@@ -1090,7 +1090,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-11 | New drawing commands | P9 (QW) |
 | AUTH-12 | Stencil library in the graph | P16 |
 | AUTH-13 | Styling helpers | Later |
-| AUTH-14 | Insert image or drawing from picker | Later |
+| AUTH-14 | Insert image or drawing from picker | 0.26.0 |
 | AUTH-15 | Annotate a Roam image | P16 |
 | AUTH-16 | Nested drawings | Later |
 | AUTH-17 | Extract selection to new drawing | Parked |
@@ -1126,7 +1126,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | GRAPH-3 | Ref lines between embeds | Later |
 | GRAPH-4 | Graph analysis helpers | Rejected |
 | GRAPH-5 | Drawing to outline | P12 |
-| GRAPH-6 | Turn into page or block | Later |
+| GRAPH-6 | Turn into page or block | 0.26.0 |
 | GRAPH-7 | Populate from query or page | P15 |
 | GRAPH-8 | Lanes and timelines by attribute | Parked |
 | GRAPH-9 | Bulk attribute brush | Rejected |
@@ -1200,7 +1200,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | UX-3 | Reduced motion | P8 |
 | UX-4 | Accessible region refs | P7 |
 | UX-5 | Canvas preferences | 0.16.0 |
-| UX-6 | Per-drawing attributes | Later |
+| UX-6 | Per-drawing attributes | 0.26.0 |
 | UX-7 | Picker: natural dates, create page | P9 |
 | UX-8 | Picker triggers | 0.20.0 |
 | UX-9 | Preferences bundle | Parked |

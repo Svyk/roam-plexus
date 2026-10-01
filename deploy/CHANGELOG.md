@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - This page lists images and drawings. Enter fits inside 480 by 360. Shift+Enter is the pixel size or the drawing bounds. The file address is reused and linked to the source. addFiles is not called. A drawing inserts an embed.
 - One Name child, written or deleted by a prompt. Props stay. The open drawing shows the name.
 - The palette stays two entries. The command list is 64.
+- Typing, editor closed, five rounds: -0.201 ms/key. Loaded mean 11.808. Unloaded mean 12.009.
 
 ## [0.25.0]
 - Scene JSON exports the drawing and imports into a new one. Images are refused. Props are not written.
