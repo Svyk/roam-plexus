@@ -37,6 +37,8 @@ import { installRegionLanding } from "./view/landing.js";
 import { auditOpenTarget, openAuditDialog } from "./view/audit-dialog.js";
 import { createMeasurer } from "./host/measure.js";
 import { createActions } from "./actions.js";
+import { drawingName } from "./model/drawing-name.js";
+import { paintDrawingName } from "./view/drawing-name.js";
 import { clearImageMemo } from "./host/image-source.js";
 import { createLinkSuggest, installSuggestAutoAttach } from "./view/link-suggest.js";
 import { installCanvasMenu, installRoamMenus, plexusCanvasItems } from "./view/context-menus.js";
@@ -423,6 +425,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         camera,
         motionOk,
         viewHistory: (app) => (mounted?.app === app ? mounted.history : null),
+        onDrawingName: (uid, value) => {
+          if (mounted?.uid === uid) mounted.paintName?.(value);
+        },
       });
       lifecycle.add(() => actions.dispose());
       const templates = createTemplateActions({
@@ -1234,6 +1239,16 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             });
             mounted.disposers.push(releaseClose);
           }
+          if (outer && mountUid) {
+            try {
+              const named = drawingName(host.pullBlock(mountUid)?.children);
+              paintDrawingName(outer, named?.value || "");
+              mounted.paintName = (value) => { paintDrawingName(outer, value); };
+              mounted.disposers.push(() => {
+                for (const node of [...(outer.querySelectorAll?.(".plexus-drawing-name") ?? [])]) node.remove?.();
+              });
+            } catch (error) { console.warn("[plexus] drawing name failed", error); }
+          }
           try {
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
@@ -1618,6 +1633,15 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         toaster.show("Select a page link, region, or mind-map node");
       } },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
+      { id: "turnIntoPage", label: "Turn into page", run: () => {
+        if (!actions) return unavailable("turnIntoPage");
+        return Promise.resolve(actions.turnInto("page-embed")).catch((error) => console.warn("[plexus] turn into page failed", error));
+      } },
+      { id: "insertImage", label: "Insert image or drawing\u2026", run: run("insertImageOrDrawing") },
+      { id: "drawingName", label: "Drawing name\u2026", run: (ctx) => {
+        if (!actions) return unavailable("drawingName");
+        return Promise.resolve(actions.setDrawingName(ctx?.focusedUid)).catch((error) => console.warn("[plexus] drawing name failed", error));
+      } },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;

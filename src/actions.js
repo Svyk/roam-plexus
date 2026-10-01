@@ -24,6 +24,10 @@ import { createLegacyDialog } from "./view/legacy-dialog.js";
 import { createCleanupDialog } from "./view/cleanup-dialog.js";
 import { IMAGE_SETTLE_MS, PLAIN_SETTLE_MS, displayedPoly, displayedRect, displayedToNatural, isImageKind, renderRegionCrop, resolveRegionTarget } from "./view/regionref.js";
 import { EXPORT_MARK, LINKS_MARK, appendTagText, collectTargets, elementsToAdd, exportPlan, linkPlan, parseSceneDocument, sceneDocument, tagToken } from "./model/carry.js";
+import { drawingName, namePlan } from "./model/drawing-name.js";
+import { cappedBounds, fitSize, imageParts, placedImage, reuseFileId, stageReusedFile } from "./model/image-insert.js";
+import { blockRef, dropElement, imageMarkdown, pageRef, sourceText, splitTitleBody, turnBackToText, turnIntoEmbed, turnIntoLink } from "./model/turninto.js";
+import { openInsertPicker } from "./view/insert-picker.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const noop = () => {};
@@ -274,6 +278,8 @@ export function createActions({
   setTimer = (fn, ms) => globalThis.setTimeout(fn, ms),
   clearTimer = (id) => globalThis.clearTimeout(id),
   chooseKind = null,
+  onDrawingName = () => {},
+  openInsert = openInsertPicker,
 }) {
   let disposed = false;
   let activeTool = null;
@@ -1346,6 +1352,436 @@ export function createActions({
     return token;
   }
 
+  function openEditor() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app || !isId(editor.drawingUid)) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    const st = editor.app.state || {};
+    if (st.editingTextElement || st.newElement) {
+      toaster.show("Finish the current edit first", { kind: "error" });
+      return null;
+    }
+    return editor;
+  }
+
+  function selectedLive(app) {
+    const ids = new Set(native.selectedElementIds(app));
+    return liveScene(app).filter((el) => el && ids.has(el.id));
+  }
+
+  function applyWrite(editor, label, apply) {
+    let produced = null;
+    const ok = guard.guardedWrite(editor.app, {
+      drawingUid: editor.drawingUid,
+      label,
+      captureUpdate: "IMMEDIATELY",
+      next: (current) => {
+        produced = apply(current);
+        return Array.isArray(produced) ? produced : current;
+      },
+    });
+    return ok && Array.isArray(produced) ? produced : null;
+  }
+
+  async function dropCreatedPage(existed, pageUid) {
+    if (existed || !pageUid) return;
+    try { await api.data.page.delete({ page: { uid: pageUid } }); }
+    catch (error) { console.warn("[plexus] page delete failed", error); }
+  }
+
+  async function dropCreatedBlock(uid) {
+    if (!uid) return;
+    try { await host.deleteBlock?.(uid); }
+    catch (error) { console.warn("[plexus] block delete failed", error); }
+  }
+
+  function turnBackValue(elements, el) {
+    const raw = el?.customData?.plexus?.embed;
+    const parsed = parseEmbedRef(typeof raw === "string" ? raw : "");
+    if (parsed?.kind === "block") {
+      const string = safe(() => host.pullBlock(parsed.uid)?.string);
+      if (string) return string;
+    }
+    if (parsed?.kind === "page" && parsed.title) return parsed.title;
+    const bound = (elements || []).find((item) => item && !item.isDeleted && item.type === "text" && item.containerId === el.id);
+    const label = bound ? sourceText(bound) : "";
+    return label || embedLabel(raw);
+  }
+
+  async function turnPage(editor, el, embed) {
+    const split = splitTitleBody(sourceText(el));
+    const confirmed = await askCaption({ initial: split.title, select: true, escape: "cancel", rect: null, drawing: true });
+    if (confirmed == null) return null;
+    const title = splitTitleBody(confirmed).title;
+    const ref = pageRef(title);
+    if (!ref) {
+      toaster.show("That title will not work", { kind: "error" });
+      return null;
+    }
+    const existed = typeof host.pageUidByTitle === "function" && !!safe(() => host.pageUidByTitle(title));
+    let pageUid = null;
+    try { pageUid = await host.ensurePage?.(title); }
+    catch (error) {
+      console.warn("[plexus] page create failed", error);
+      toaster.show("Could not create the page", { kind: "error" });
+      return null;
+    }
+    if (!pageUid) {
+      toaster.show("Could not create the page", { kind: "error" });
+      return null;
+    }
+    const written = applyWrite(editor, "Turn into page", (current) => (
+      embed ? turnIntoEmbed(current, el.id, { ref, label: title }) : turnIntoLink(current, el.id, ref)
+    ));
+    if (!written) {
+      await dropCreatedPage(existed, pageUid);
+      return null;
+    }
+    if (!existed && split.body) {
+      try { await host.createBlock?.({ parentUid: pageUid, order: "last", string: split.body }); }
+      catch (error) {
+        console.warn("[plexus] page body failed", error);
+        toaster.show("Could not add the page body", { kind: "error" });
+      }
+    }
+    toaster.show(embed ? "Turned into a page embed" : "Turned into a page link");
+    return ref;
+  }
+
+  async function turnBlock(editor, el, embed) {
+    const text = sourceText(el);
+    if (!String(text ?? "").trim()) {
+      toaster.show("Select a free text element", { kind: "error" });
+      return null;
+    }
+    let childUid = null;
+    try {
+      childUid = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: text, open: false });
+    } catch (error) {
+      console.warn("[plexus] block create failed", error);
+      toaster.show("Could not add the block", { kind: "error" });
+      return null;
+    }
+    const ref = blockRef(childUid);
+    if (!ref) {
+      await dropCreatedBlock(childUid);
+      toaster.show("Could not add the block", { kind: "error" });
+      return null;
+    }
+    const written = applyWrite(editor, "Turn into block", (current) => (
+      embed ? turnIntoEmbed(current, el.id, { ref, label: embedLabel(text) }) : turnIntoLink(current, el.id, ref)
+    ));
+    if (!written) {
+      await dropCreatedBlock(childUid);
+      return null;
+    }
+    toaster.show(embed ? "Turned into a block embed" : "Turned into a block link");
+    return ref;
+  }
+
+  async function turnImage(editor, el) {
+    const markdown = imageMarkdown(el.customData?.firebaseUrl);
+    if (!markdown) {
+      toaster.show("This image has no file address", { kind: "error" });
+      return null;
+    }
+    let childUid = null;
+    try {
+      childUid = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: markdown, open: false });
+    } catch (error) {
+      console.warn("[plexus] image block failed", error);
+      toaster.show("Could not add the block", { kind: "error" });
+      return null;
+    }
+    if (!childUid) {
+      toaster.show("Could not add the block", { kind: "error" });
+      return null;
+    }
+    const written = applyWrite(editor, "Move image to block", (current) => dropElement(current, el.id));
+    if (!written) {
+      await dropCreatedBlock(childUid);
+      return null;
+    }
+    toaster.show("Image moved to a block");
+    return childUid;
+  }
+
+  async function turnBack(editor, el) {
+    const value = turnBackValue(editor.app.getSceneElementsIncludingDeleted?.() ?? liveScene(editor.app), el);
+    const written = applyWrite(editor, "Turn back to text", (current) => turnBackToText(current, el.id, value));
+    if (!written) return null;
+    toaster.show("Turned back to text");
+    return true;
+  }
+
+  async function turnInto(mode) {
+    return once("turnInto", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const hits = selectedLive(editor.app);
+      const el = hits.length === 1 ? hits[0] : null;
+      const free = !!(el && el.type === "text" && !el.containerId);
+      if (mode === "page-embed" || mode === "page-link" || mode === "block-embed" || mode === "block-link") {
+        if (!free) {
+          toaster.show(hits.length === 1 ? "Select a free text element" : "Select one element", { kind: "error" });
+          return null;
+        }
+        const embed = mode === "page-embed" || mode === "block-embed";
+        return mode.startsWith("page") ? turnPage(editor, el, embed) : turnBlock(editor, el, embed);
+      }
+      if (mode === "image-block") {
+        if (!el || el.type !== "image") {
+          toaster.show("Select one element", { kind: "error" });
+          return null;
+        }
+        return turnImage(editor, el);
+      }
+      if (mode === "text") {
+        if (!el || el.type !== "rectangle" || typeof el.customData?.plexus?.embed !== "string") {
+          toaster.show("Select one element", { kind: "error" });
+          return null;
+        }
+        return turnBack(editor, el);
+      }
+      return null;
+    });
+  }
+
+  const INSERT_CAP = 40;
+
+  function collectInsertRows(pageUid, skipUid) {
+    const rows = [];
+    const visit = (uid, depth) => {
+      if (!uid || depth > 3 || rows.length >= INSERT_CAP) return;
+      const block = safe(() => host.pullBlock(uid));
+      for (const child of block?.children || []) {
+        if (rows.length >= INSERT_CAP) return;
+        if (!child?.uid || child.uid === skipUid) continue;
+        const string = String(child.string ?? "");
+        if (DRAWING_BLOCK_RE.test(string)) {
+          const named = drawingName(safe(() => host.pullBlock(child.uid)?.children));
+          rows.push({ kind: "drawing", uid: child.uid, label: named?.value || "Drawing" });
+          continue;
+        }
+        const image = imageParts(string);
+        if (image) rows.push({ kind: "image", uid: child.uid, label: image.alt || "Image", url: image.url });
+        if (depth < 3) visit(child.uid, depth + 1);
+      }
+    };
+    visit(pageUid, 1);
+    return rows;
+  }
+
+  async function asDataURL(file) {
+    if (typeof file === "string") return file.startsWith("data:") ? file : null;
+    if (typeof file?.dataURL === "string") return file.dataURL;
+    if (typeof file?.arrayBuffer !== "function") return null;
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < buf.length; i += 0x8000) binary += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return `data:${file.type || "image/png"};base64,${btoa(binary)}`;
+  }
+
+  async function reusePayload(url) {
+    let file = null;
+    try { file = await api.file.get({ url }); }
+    catch (error) {
+      console.warn("[plexus] file get failed", error);
+      return null;
+    }
+    if (!file) return null;
+    const dataURL = await asDataURL(file);
+    if (!dataURL) return null;
+    let width = 480;
+    let height = 360;
+    let sized = false;
+    if (typeof createBitmap === "function") {
+      try {
+        const bmp = await createBitmap(file);
+        if (bmp?.width > 0 && bmp?.height > 0) {
+          width = bmp.width;
+          height = bmp.height;
+          sized = true;
+        }
+        bmp?.close?.();
+      } catch { /* natural size falls back */ }
+    }
+    if (!sized && typeof loadBitmap === "function") {
+      try {
+        const bmp = await loadBitmap(url);
+        if (bmp?.width > 0 && bmp?.height > 0) {
+          width = bmp.width;
+          height = bmp.height;
+        }
+        bmp?.close?.();
+      } catch { /* 480 by 360 */ }
+    }
+    return { dataURL, mimeType: file.type || file.mimeType || "image/png", width, height };
+  }
+
+  async function placeInsert(choice) {
+    const editor = openEditor();
+    if (!editor) return null;
+    const row = choice.row;
+    const centre = viewCentre(editor.app);
+    if (row.kind === "drawing") {
+      let width = 480;
+      let height = 360;
+      if (choice.full) {
+        const bounds = cappedBounds(safe(() => host.drawing?.(row.uid)?.elements));
+        if (bounds) { width = bounds.width; height = bounds.height; }
+      }
+      const ref = blockRef(row.uid);
+      if (!ref) {
+        toaster.show("Could not insert that", { kind: "error" });
+        return null;
+      }
+      const [rect, text] = makeEmbedAnchor({
+        ref,
+        label: row.label || "Drawing",
+        x: centre.x - width / 2,
+        y: centre.y - height / 2,
+        width,
+        height,
+      });
+      const ok = insertGuarded(editor.app, editor.drawingUid, [rect, text], "Insert drawing");
+      if (!ok) {
+        toaster.show("Could not insert that", { kind: "error" });
+        return null;
+      }
+      toaster.show("Drawing inserted");
+      return ref;
+    }
+    if (row.kind !== "image" || !row.url) {
+      toaster.show("Could not insert that", { kind: "error" });
+      return null;
+    }
+    const payload = await reusePayload(row.url);
+    if (!payload) {
+      toaster.show("Could not reuse that file", { kind: "error" });
+      return null;
+    }
+    const size = fitSize(payload.width, payload.height, !!choice.full);
+    const fileId = reuseFileId(row.uid);
+    const elementId = `plximg${Math.random().toString(36).slice(2, 10)}`;
+    let staged = false;
+    try { staged = stageReusedFile(editor.app, { fileId, dataURL: payload.dataURL, mimeType: payload.mimeType }); }
+    catch (error) {
+      console.warn("[plexus] file reuse failed", error);
+      toaster.show("Could not reuse that file", { kind: "error" });
+      return null;
+    }
+    if (!staged || !fileId) {
+      toaster.show("Could not reuse that file", { kind: "error" });
+      return null;
+    }
+    const image = placedImage({
+      elementId,
+      fileId,
+      url: row.url,
+      link: blockRef(row.uid),
+      x: centre.x - size.width / 2,
+      y: centre.y - size.height / 2,
+      width: size.width,
+      height: size.height,
+    });
+    if (!image) {
+      toaster.show("Could not insert that", { kind: "error" });
+      return null;
+    }
+    const ok = insertGuarded(editor.app, editor.drawingUid, [image], "Insert image");
+    if (!ok) {
+      toaster.show("Could not insert that", { kind: "error" });
+      return null;
+    }
+    toaster.show("Image inserted");
+    return image.id;
+  }
+
+  async function insertImageOrDrawing() {
+    return once("insertImage", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const pageUid = safe(() => host.blockInfo?.(editor.drawingUid)?.pageUid);
+      if (!pageUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const rows = collectInsertRows(pageUid, editor.drawingUid);
+      return new Promise((resolve) => {
+        try {
+          openInsert({
+            doc,
+            rows,
+            zIndex: 100003,
+            onChoose: (choice) => {
+              if (!choice?.row) { resolve(null); return; }
+              Promise.resolve(placeInsert(choice)).then(resolve, (error) => {
+                console.warn("[plexus] insert failed", error);
+                toaster.show("Could not insert that", { kind: "error" });
+                resolve(null);
+              });
+            },
+          });
+        } catch (error) {
+          console.warn("[plexus] insert picker failed", error);
+          toaster.show("Could not insert that", { kind: "error" });
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  function drawingUidForName(uid) {
+    if (!isId(uid)) return null;
+    const info = safe(() => host.blockInfo?.(uid));
+    if (info) return DRAWING_BLOCK_RE.test(info.string || "") ? uid : null;
+    const pulled = safe(() => host.pullBlock?.(uid));
+    if (pulled?.string && !DRAWING_BLOCK_RE.test(pulled.string)) return null;
+    return uid;
+  }
+
+  async function setDrawingName(uid) {
+    return once("drawingName", async () => {
+      let drawingUid = drawingUidForName(uid);
+      if (!drawingUid) {
+        const editor = native.activeEditor(doc);
+        drawingUid = isId(editor?.drawingUid) ? editor.drawingUid : null;
+      }
+      if (!drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const children = safe(() => host.pullBlock(drawingUid)?.children) || [];
+      const current = drawingName(children);
+      const value = await askCaption({ initial: current?.value || "", select: true, escape: "cancel", rect: null, drawing: true });
+      if (value == null) return null;
+      const plan = namePlan(children, value);
+      if (plan.action === "none") {
+        try { onDrawingName(drawingUid, current?.value || ""); } catch (error) { console.warn("[plexus] drawing name paint failed", error); }
+        return "none";
+      }
+      try {
+        if (plan.action === "delete") await host.deleteBlock?.(plan.uid);
+        else if (plan.action === "update") await api.data.block.update({ block: { uid: plan.uid, string: plan.string } });
+        else if (plan.action === "create") {
+          const made = await host.createBlock?.({ parentUid: drawingUid, order: "last", string: plan.string });
+          if (!made) throw new Error("[plexus] name block was not created");
+        } else return null;
+      } catch (error) {
+        console.warn("[plexus] drawing name failed", error);
+        toaster.show("Could not save the name", { kind: "error" });
+        return null;
+      }
+      const shown = plan.action === "delete" ? "" : String(value).trim();
+      try { onDrawingName(drawingUid, shown); } catch (error) { console.warn("[plexus] drawing name paint failed", error); }
+      toaster.show(plan.action === "delete" ? "Name removed" : "Name saved");
+      return plan.action;
+    });
+  }
+
   async function syncExport(app, drawingUid) {
     if (!app || !isId(drawingUid)) return { action: "skip" };
     const children = safe(() => host.pullBlock(drawingUid)?.children) || [];
@@ -1945,6 +2381,9 @@ export function createActions({
     exportScene: (uid) => exportScene(uid),
     importScene: (uid) => importScene(uid),
     tagElements: (raw) => tagElements(raw),
+    turnInto: (mode) => turnInto(mode),
+    insertImageOrDrawing: () => insertImageOrDrawing(),
+    setDrawingName: (uid) => setDrawingName(uid),
     keepExportImage: () => keepExportImage(),
     keepLinkedReferences: (uid) => keepLinkedReferences(uid),
     syncOnClose: (app, drawingUid) => syncOnClose(app, drawingUid),

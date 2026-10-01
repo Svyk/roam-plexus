@@ -318,6 +318,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   register("blockContextMenu", "Plexus: Print frames", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "print" }));
   register("blockContextMenu", "Plexus: PNG per frame", blockShow("drawing"), (e) => actions.printFrames({ drawingUid: e?.["block-uid"], mode: "png" }));
   register("blockContextMenu", "Plexus: Export scene", blockShow("drawing"), (e) => actions.exportScene(e?.["block-uid"]));
+  register("blockContextMenu", "Plexus: Drawing name\u2026", blockShow("drawing"), (e) => actions.setDrawingName?.(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Import scene\u2026", () => true, (e) => actions.importScene(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present this outline", (e) => outlineInfo(e?.["block-uid"], e?.["block-uid"]), (e) => actions.presentOutline(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present from here", blockShow("frameKind"), (e) => actions.presentFromRegion(e?.["block-uid"]));
@@ -615,6 +616,21 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     return { id: "arrange", label: "Plexus: Arrange \u203a", enabled: children.some((c) => c.enabled), children };
   };
   const placing = (() => { try { return actions.pendingPlace?.() ?? null; } catch { return null; } })();
+  let only = [];
+  try { only = selectedElements(); } catch { only = []; }
+  const single = only.length === 1 ? only[0] : null;
+  const freeOne = !!(single && single.type === "text" && !single.containerId);
+  const imageOne = !!(single && single.type === "image");
+  const embedOne = !!(single && single.type === "rectangle" && typeof single.customData?.plexus?.embed === "string");
+  const turnKids = [
+    { id: "turn-page-embed", label: "Plexus: Page embed", enabled: freeOne, run: call("turn-page-embed", () => actions.turnInto("page-embed")) },
+    { id: "turn-page-link", label: "Plexus: Page link", enabled: freeOne, run: call("turn-page-link", () => actions.turnInto("page-link")) },
+    { id: "turn-block-embed", label: "Plexus: Block embed", enabled: freeOne, run: call("turn-block-embed", () => actions.turnInto("block-embed")) },
+    { id: "turn-block-link", label: "Plexus: Block link", enabled: freeOne, run: call("turn-block-link", () => actions.turnInto("block-link")) },
+    { id: "turn-image", label: "Plexus: Image block", enabled: imageOne, run: call("turn-image", () => actions.turnInto("image-block")) },
+    { id: "turn-text", label: "Plexus: Back to text", enabled: embedOne, run: call("turn-text", () => actions.turnInto("text")) },
+  ].filter((kid) => kid.enabled);
+  const turnIntoItem = { id: "turn-into", label: "Plexus: Turn into \u203a", enabled: turnKids.length > 0, children: turnKids };
 
   return [
     { id: "region", label: "Plexus: Create region", enabled: can(() => selectedIds().length > 0), kbd: kbd("region"), run: call("region", () => actions.createAreaRegion()) },
@@ -639,6 +655,9 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "show-tag", label: "Plexus: Show only tag\u2026", enabled: can(() => !!drawingUid), run: call("show-tag", () => showTag?.()) },
     { id: "keep-export", label: "Plexus: Keep export image", enabled: can(() => !!drawingUid), run: call("keep-export", () => actions.keepExportImage()) },
     { id: "keep-links", label: "Plexus: Keep linked references", enabled: can(() => !!drawingUid), run: call("keep-links", () => actions.keepLinkedReferences(drawingUid)) },
+    turnIntoItem,
+    { id: "insert-image", label: "Plexus: Insert image or drawing\u2026", enabled: can(() => !!drawingUid), run: call("insert-image", () => actions.insertImageOrDrawing()) },
+    { id: "drawing-name", label: "Plexus: Drawing name\u2026", enabled: can(() => !!drawingUid), run: call("drawing-name", () => actions.setDrawingName(drawingUid)) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
     { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },

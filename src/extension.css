@@ -1695,3 +1695,27 @@ body.bt-theme-dark .plexus-portal.plexus-minimap {
 
 :root.bp3-dark .plexus-occlude,
 body.bt-theme-dark .plexus-occlude { background: #252a31; }
+
+.excalidraw-outer-container > .plexus-drawing-name {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  pointer-events: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e1e1e;
+  font: 12px/1.4 sans-serif;
+}
+
+:root.bp3-dark .plexus-drawing-name,
+body.bt-theme-dark .plexus-drawing-name {
+  background: rgba(37, 42, 49, 0.92);
+  color: #fff;
+}

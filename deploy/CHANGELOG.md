@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.26.0]
+- Selected text becomes a page or a block. A prompt confirms the title. An existing title is reused. It becomes an embed or a link, and arrows follow. An image becomes a block and leaves the canvas. Turn back restores the text.
+- This page lists images and drawings. Enter fits inside 480 by 360. Shift+Enter is the pixel size or the drawing bounds. The file address is reused and linked to the source. addFiles is not called. A drawing inserts an embed.
+- One Name child, written or deleted by a prompt. Props stay. The open drawing shows the name.
+- The palette stays two entries. The command list is 64.
+
 ## [0.25.0]
 - Scene JSON exports the drawing and imports into a new one. Images are refused. Props are not written.
 - A tag is written onto selected text and a child page ref is added when it is missing. Show only that tag dims the rest.
