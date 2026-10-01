@@ -852,17 +852,14 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (11)
+### 6.1 Later (8)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
-| AUTH-21 | Layer manager | Frames plus NAV-9 approximate it; emulated hide leaks into exports | Layered plant maps become frequent | park |
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
-| NAV-6 | Canvas outline / regions panel | Duplicates the outline; NAV-7 is the Roam-native answer | Only as a host for a slide sorter | park |
-| NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REF-13 | 0.29.0 | `50508cc` | A block with several images uses S to pick the next one. A rotated drawing image keeps its angle |
 | REF-9 | 0.29.0 | `50508cc` | Two or more links in a region caption open a chooser. One link still opens the region |
 | AUTH-6 | 0.29.0 | `50508cc` | A sticky is a yellow note with bound text. A number stamp is the next number. Stack places one copy underneath |
+| NAV-11 | 0.30.0 | `0618712` | Drawing gallery lists at most forty drawings, newest first. A cache miss stays blank. Choosing a row opens that drawing |
+| NAV-6 | 0.30.0 | `0618712` | Frame list shows the open drawing's frames. Choosing one scrolls to it. The outline dock stays the Roam children |
+| AUTH-21 | 0.30.0 | `0618712` | Hide covers a frame on screen. It does not write opacity. Closing the editor drops the covers |
 
 ### 6.2 Parked (17)
 
@@ -1097,7 +1097,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-18 | Paste a ref as embed or link node | P9 |
 | AUTH-19 | Image paste helpers | Rejected |
 | AUTH-20 | Inbox tray | Later |
-| AUTH-21 | Layer manager | Later |
+| AUTH-21 | Layer manager | 0.30.0 |
 | EMB-1 | Embed display modes and polish | P16 |
 | EMB-2 | Page cards with attributes | 0.27.0 |
 | EMB-3 | Live query node | 0.27.0 |
@@ -1113,12 +1113,12 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | NAV-3 | Animated zoom, better spotlight | P8 |
 | NAV-4 | Back after programmatic zoom | P8 (QW) |
 | NAV-5 | Find in drawing | P16 |
-| NAV-6 | Canvas outline / regions panel | Later |
+| NAV-6 | Canvas outline / regions panel | 0.30.0 |
 | NAV-7 | Docked Roam outline | P10 |
 | NAV-8 | Minimap | 0.23.0 |
 | NAV-9 | Focus mode veil | P15 |
 | NAV-10 | Keyboard navigation on cards | 0.19.0 |
-| NAV-11 | Drawings finder and gallery | Later |
+| NAV-11 | Drawings finder and gallery | 0.30.0 |
 | NAV-12 | Floating pins | Parked |
 | NAV-13 | Open in graph / mentions view | 0.19.0 |
 | GRAPH-1 | Arrows as typed relations | P15 |

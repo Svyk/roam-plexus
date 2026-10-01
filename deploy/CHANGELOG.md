@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Frame list shows the open drawing's frames. Choosing one scrolls to it. The outline dock stays the Roam children.
 - Hide covers a frame on screen. It does not write opacity. The saved scene and the export stay as they were. Closing the editor drops the covers.
 - The palette stays two entries. The command list is 80.
+- Typing, editor closed, five rounds: +0.108 ms/key. Loaded mean 12.115. Unloaded mean 12.007.
 
 ## [0.29.0]
 - A block with several images uses S to pick the next one, in string order. One image ignores S.
