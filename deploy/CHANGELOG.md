@@ -4,6 +4,10 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.23.0]
+- A corner minimap on a large drawing. Click or drag it to pan. The pan does not write elements. A small drawing hides it. The minimap switch is remembered.
+- The palette stays two entries. The command list stays 53.
+
 ## [0.22.0]
 
 - `dropSubgraph` appends a neighborhood snapshot to the open drawing. Plain text is the default. Links mode writes a page ref. A closed drawing is refused and is not opened. apiVersion stays 6.

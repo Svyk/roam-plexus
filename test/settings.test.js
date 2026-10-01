@@ -262,4 +262,7 @@ test("previewModifier id, default off, stored true and \"false\", and the panel 
   const item = createSettingsPanel().settings.find((x) => x.id === "preview-modifier");
   assert.equal(item.name, "Preview links only while holding Ctrl/Cmd");
   assert.equal(item.action.type, "switch");
+  const panel = createSettingsPanel().settings;
+  assert.equal(panel.at(-2).id, "preview-modifier");
+  assert.equal(panel.at(-1).id, "minimap");
 });

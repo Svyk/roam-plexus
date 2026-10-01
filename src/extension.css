@@ -1657,3 +1657,25 @@ span.plexus-attr {
 .plexus-portal.plexus-regions-layer .plexus-region-outline.plexus-region-dim {
   opacity: 0.28;
 }
+
+.plexus-portal.plexus-minimap {
+  width: 160px;
+  height: 110px;
+  box-sizing: border-box;
+  border: 1px solid rgba(16, 22, 26, 0.35);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(16, 22, 26, 0.25);
+}
+
+.plexus-portal.plexus-minimap canvas {
+  display: block;
+  width: 160px;
+  height: 110px;
+}
+
+:root.bp3-dark .plexus-portal.plexus-minimap,
+body.bt-theme-dark .plexus-portal.plexus-minimap {
+  background: rgba(37, 42, 49, 0.92);
+  border-color: rgba(255, 255, 255, 0.35);
+}

@@ -36,6 +36,7 @@ export const SETTING_IDS = Object.freeze({
   cardSidebar: "card-sidebar",
   cardQuickLook: "card-quick-look",
   previewModifier: "preview-modifier",
+  minimap: "minimap",
 });
 
 const DEFAULTS = Object.freeze({
@@ -74,6 +75,7 @@ const DEFAULTS = Object.freeze({
   [SETTING_IDS.cardSidebar]: true,
   [SETTING_IDS.cardQuickLook]: true,
   [SETTING_IDS.previewModifier]: false,
+  [SETTING_IDS.minimap]: true,
 });
 
 export const CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
@@ -164,6 +166,7 @@ export function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardSidebar, name: "Card open in sidebar", description: "Opens the card block in the sidebar. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.previewModifier, name: "Preview links only while holding Ctrl/Cmd", description: "Show a link preview only while Ctrl or Cmd is held. Off keeps the preview after a short hover.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.minimap, name: "Minimap", description: "Show a corner map on a large drawing. Click or drag it to pan.", action: wrap({ type: "switch" }) },
     ],
   };
 }
@@ -243,6 +246,7 @@ export function readSettings(extensionAPI) {
     cardSidebar: get(SETTING_IDS.cardSidebar) !== false && get(SETTING_IDS.cardSidebar) !== "false",
     cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false",
     previewModifier: get(SETTING_IDS.previewModifier) === true || get(SETTING_IDS.previewModifier) === "true",
+    minimap: get(SETTING_IDS.minimap) !== false && get(SETTING_IDS.minimap) !== "false",
   };
 }
 

@@ -32,6 +32,7 @@ import { createArrangeActions } from "./actions-arrange.js";
 import { createLaneRegionMaker } from "./lane-regions.js";
 import * as camera from "./host/camera.js";
 import { createRegionsLayer } from "./view/regions-layer.js";
+import { mountMinimap } from "./view/minimap.js";
 import { installRegionLanding } from "./view/landing.js";
 import { auditOpenTarget, openAuditDialog } from "./view/audit-dialog.js";
 import { createMeasurer } from "./host/measure.js";
@@ -167,7 +168,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     await initializeSettings(extensionAPI);
     let refreshTimer = null;
     let refreshAll = () => {};
+    let minimapRefresh = () => {};
     const scheduleRefresh = () => {
+      try { minimapRefresh(); } catch (error) { console.warn("[plexus] minimap refresh failed", error); }
       if (refreshTimer != null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
@@ -656,7 +659,10 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         doc,
         get: (id) => extensionAPI.settings.get(id),
         set: (id, value) => writeSetting(extensionAPI, id, value),
-        onChanged: () => regionref.refreshAll(),
+        onChanged: () => {
+          try { regionref.refreshAll(); } catch (error) { console.warn("[plexus] settings refresh failed", error); }
+          try { minimapRefresh(); } catch (error) { console.warn("[plexus] minimap refresh failed", error); }
+        },
         dark: isHostDark(doc),
       }));
       const paintGalleries = () => applyRegionGalleries(doc, getSettings().regionGalleries);
@@ -1139,6 +1145,21 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           mounted.disposers.push(() => overlay.dispose());
           mounted.disposers.push(installEmbedF2({ containerEl: el, app, canEdit: () => actions.canEditEmbed(), onEdit: () => actions.editEmbed() }));
           mounted.disposers.push(mindmap.mount({ app, containerEl: el, outerEl: outer, zIndex: outer ? baseZIndex(doc, outer) : 1000, drawingUid: mountUid }));
+          if (outer?.classList?.contains("full-screen")) {
+            try {
+              const mini = mountMinimap({
+                doc, app, outer,
+                getEnabled: () => getSettings().minimap === true,
+                subscribe: (cb) => native.subscribeViewport(app, cb),
+                zIndex: baseZIndex(doc, outer) + 1,
+              });
+              minimapRefresh = () => mini.refresh();
+              mounted.disposers.push(() => {
+                mini.dispose();
+                if (minimapRefresh === mini.refresh) minimapRefresh = () => {};
+              });
+            } catch (error) { console.warn("[plexus] minimap mount failed", error); }
+          }
           mounted.disposers.push(installBackKey({ containerEl: el, app, canBack: () => history.size() > 0, onBack: () => goBack() }));
           mounted.disposers.push(installHotkeyGuard({ containerEl: el, run: runHotkey, doc }));
           const cardPop = createCropPopover({ doc, delayMs: 0 });
