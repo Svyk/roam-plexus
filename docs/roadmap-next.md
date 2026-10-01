@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (33)
+### 6.1 Later (29)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -874,7 +874,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
 | GRAPH-3 | Ref lines between embeds | Rated the biggest perf risk in the source plugin; duplicates Compass | A hovered-only minimal version | park |
 | GRAPH-6 | Turn text into a page or block (and back) | AUTH-3 covers most of the need | After AUTH-3 | |
-| GRAPH-10 | Managed "Linked from this drawing" list | Contradicts spec §5.2; CMP-2 is the read-only alternative | Backlinks for non-text links become a felt gap | park |
 | GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
 | MM-4 | More mind-map layouts and a chooser | Five layouts exist | A map asks for both-sides or org chart | |
@@ -882,13 +881,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | MM-6 | Mind-map conversions and bulk input | Paste-indented-list-as-branch is the useful piece; the rest is heuristic | | |
 | MM-9 | Mind-map cross-links from block refs | Derived arrows ignore layout and cross badly | | |
 | MM-10 | Import a linked page's outline, submaps | Many writes; embed cap | After MM-1, MM-7, MM-8 settle | |
-| EXP-4 | Scene JSON export and import | Good hygiene; DATA-1 covers restore | Opus: it is the durable backup on encrypted graphs, so first in line | |
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
-| EXP-9 | Auto-synced export image block | Upload churn and orphan files | Mobile viewing becomes a habit | park |
 | API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
 | UX-6 | Per-drawing attributes | Attribute pages clutter All Pages; settings cover current needs | | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
-| REV-4 | Tags on elements and a tag filter | Typing `#tags` already makes refs; the filter needs the veil | After NAV-9 | park |
 ### Shipped from Later
 
 | ID | Version | Sha | What shipped |
@@ -919,6 +915,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REF-16 | 0.24.0 | `77a3087` | Occlusion covers a region until reveal. A flashcard tag is a child block, and only when chosen |
 | EXP-2 | 0.24.0 | `77a3087` | One export dialog: whole drawing or selection, scale, padding, and theme. Copy, download, or insert an image |
 | PRES-5 | 0.24.0 | `77a3087` | Live present tweens the open drawing between frames. Escape restores the view. The image slideshow stays |
+| EXP-4 | 0.25.0 | `e613772` | Scene JSON exports the drawing and imports into a new one. Images are refused. Props are not written |
+| REV-4 | 0.25.0 | `e613772` | A tag is written onto selected text and a child page ref is added when it is missing. Show only that tag dims the rest |
+| EXP-9 | 0.25.0 | `e613772` | One export image updates on close when the scene changes. The same hash skips the upload |
+| GRAPH-10 | 0.25.0 | `e613772` | A collapsed linked-from list rewrites only when its refs change, and is deleted when empty. The drawing string stays |
 
 ### 6.2 Parked (17)
 
@@ -1130,7 +1130,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | GRAPH-7 | Populate from query or page | P15 |
 | GRAPH-8 | Lanes and timelines by attribute | Parked |
 | GRAPH-9 | Bulk attribute brush | Rejected |
-| GRAPH-10 | Managed "Linked from this drawing" list | Later |
+| GRAPH-10 | Managed "Linked from this drawing" list | 0.25.0 |
 | GRAPH-11 | Two-way sync for single-text regions | Later |
 | GRAPH-12 | Site-map heat overlay | P15 |
 | GRAPH-13 | Connected margins | Parked |
@@ -1178,12 +1178,12 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | EXP-1 | Copy crop as PNG/SVG | P7 (QW) |
 | EXP-2 | Export dialog | 0.24.0 |
 | EXP-3 | Frames as PDF pages | P11 |
-| EXP-4 | Scene JSON export/import | Later |
+| EXP-4 | Scene JSON export/import | 0.25.0 |
 | EXP-5 | Paste canvas elements into a block | P11 |
 | EXP-6 | Mermaid import/export | Later |
 | EXP-7 | Chart from a table | Rejected |
 | EXP-8 | PDF pages into the canvas | Rejected |
-| EXP-9 | Auto-synced export image block | Later |
+| EXP-9 | Auto-synced export image block | 0.25.0 |
 | API-1 | Builder helpers | P12 |
 | API-2 | Event hooks, self-describing API | Later |
 | API-3 | Agent surface, scene.describe() | P16 |
@@ -1210,7 +1210,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | REV-1 | Comment pins | Later |
 | REV-2 | Todo mode | P15 |
 | REV-3 | Stamps and voting | Rejected |
-| REV-4 | Tags on elements, tag filter | Later |
+| REV-4 | Tags on elements, tag filter | 0.25.0 |
 | PERF-1 | Touch and long-press parity | Parked |
 | PERF-2 | Hot-path audit | 0.16.0 |
 | OUT-1 | AI features in core | Rejected |

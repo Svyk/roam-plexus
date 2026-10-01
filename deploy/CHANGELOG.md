@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - A tag is written onto selected text and a child page ref is added when it is missing. Show only that tag dims the rest.
 - One export image updates on close when the scene changes. A collapsed linked-from list rewrites only when its refs change, and is deleted when empty.
 - The palette stays two entries. The command list is 61.
+- Typing, editor closed, five rounds: +0.105 ms/key. Loaded mean 11.989. Unloaded mean 11.883.
 
 ## [0.24.0]
 - Live present tweens the open drawing between frames. Escape restores the view. The image slideshow stays.
