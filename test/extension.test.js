@@ -347,7 +347,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 48 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 53 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -374,7 +374,7 @@ test("the command list carries all 48 labels and hotkeys, and captures the focus
       "Insert template\u2026", "New drawing from template\u2026", "Save selection as template\u2026", "Mind map: attribute blocks as edges",
       "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)",
       "Focus mode", "Todo mode", "Embed query results", "Embed page children", "Link selected", "Filter regions by tag",
-      "Lock or unlock selection", "Unlock all", "Copy diagnostics",
+      "Lock or unlock selection", "Unlock all", "Copy diagnostics", "Where is this cited?",
       "Show in Compass", "Region settings",
     ]);
     assert.deepEqual(Object.fromEntries(commands.filter((c) => c.hotkey).map((c) => [c.label, c.hotkey])), {

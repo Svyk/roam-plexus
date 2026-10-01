@@ -22,7 +22,7 @@ const REG = "REG000001";
 const NODE = "NODE00001";
 const DRAWING = "DRAWING01";
 
-function setup({ elements, regions, refs = {}, openTarget = () => {} } = {}) {
+function setup({ elements, regions, refs = {}, openTarget = () => {}, onAddToCanvas } = {}) {
   const body = fakeNode("body");
   const doc = Object.assign(fakeNode("doc"), {
     body,
@@ -37,9 +37,14 @@ function setup({ elements, regions, refs = {}, openTarget = () => {} } = {}) {
   const rendered = [];
   const unmounted = [];
   const store = { ...refs };
+  const pulls = [];
   const api = {
     data: {
-      pull: (pattern, [, uid]) => (store[uid] ? { ":block/_refs": store[uid].map(([u, s, p]) => ({ ":block/uid": u, ":block/string": s, ":block/page": { ":node/title": p, ":block/uid": "pg" } })) } : {}),
+      pull: (pattern, lookup) => {
+        pulls.push(lookup);
+        const key = lookup?.[1];
+        return store[key] ? { ":block/_refs": store[key].map(([u, s, p]) => ({ ":block/uid": u, ":block/string": s, ":block/page": { ":node/title": p, ":block/uid": "pg" } })) } : {};
+      },
       addPullWatch: (pattern, eid, cb) => watches.push({ pattern, eid, cb }),
       removePullWatch: (pattern, eid, cb) => removed.push({ pattern, eid, cb }),
     },
@@ -61,11 +66,12 @@ function setup({ elements, regions, refs = {}, openTarget = () => {} } = {}) {
   const bl = createCanvasBacklinks({
     doc, api, host, app, containerEl, drawingUid: DRAWING, zIndex: 50, native, raf, caf() {},
     openTarget: (t, o) => { opened.push([t, o]); openTarget(t, o); },
+    onAddToCanvas,
   });
   const layer = () => body.children.find((c) => /plexus-backlinks(\s|$)/.test(c.className));
   const badges = () => (layer() ? layer().children : []);
   const popover = () => body.children.find((c) => /plexus-backlink-popover/.test(c.className));
-  return { bl, doc, body, app, api, store, watches, removed, rendered, unmounted, subs, flush, frames, layer, badges, popover, opened };
+  return { bl, doc, body, app, api, store, pulls, watches, removed, rendered, unmounted, subs, flush, frames, layer, badges, popover, opened };
 }
 
 const mm = (id, uid, x, y, w = 20, h = 20) => ({ id, type: "rectangle", x, y, width: w, height: h, angle: 0, version: 1, isDeleted: false, customData: { plexus: { mm: { uid } } } });
@@ -305,6 +311,185 @@ test("a region of several nodes keeps its own badge", () => {
   });
   assert.equal(s.badges().length, 1);
   assert.equal(s.badges()[0].style.left, "123px");
+});
+
+const rect = (id, extra = {}) => ({ id, type: "rectangle", x: 0, y: 0, width: 40, height: 20, angle: 0, version: 1, isDeleted: false, ...extra });
+
+test("a page link badge shows that page's ref count and watches the title", () => {
+  const title = 'A "B"';
+  const s = setup({
+    elements: [
+      rect("e1", { link: `[[${title}]]`, x: 10, y: 20, width: 30, height: 16 }),
+      rect("gone", { link: "[[Ghost]]", x: 200, isDeleted: true }),
+      rect("blk", { link: "((BLOCK0001))", x: 300 }),
+    ],
+    regions: [{ uid: REG, string: "s", region: { kind: "area", ids: ["missing"], pad: 0 } }],
+    refs: {
+      [title]: [
+        ["R1", "keep", "Daily"],
+        ["R2", "also", "Other"],
+        [DRAWING, "d", "P"],
+        [REG, "region block", "P"],
+        ["HOLD0001", "{{[[plexus-regions]]}}", "P"],
+      ],
+      Ghost: [["R9", "nope", "P"]],
+    },
+  });
+  assert.equal(s.badges().length, 1);
+  assert.equal(s.badges()[0].textContent, "2");
+  assert.equal(s.badges()[0].style.left, "43px");
+  assert.equal(s.badges()[0].style.top, "23px");
+  assert.equal(s.watches.length, 1);
+  assert.equal(s.watches[0].eid, `[:node/title ${JSON.stringify(title)}]`);
+  assert.ok(s.watches[0].eid.startsWith("[:node/title"));
+  assert.equal(s.watches[0].pattern, "[{:block/_refs [:block/uid]}]");
+  assert.ok(s.pulls.some((lookup) => lookup?.[0] === ":node/title" && lookup?.[1] === title));
+  assert.ok(!s.pulls.some((lookup) => lookup?.[0] === ":block/uid" && lookup?.[1] === title));
+  assert.ok(!s.watches.some((w) => w.eid.includes("Ghost")));
+});
+
+test("two elements linking one page get two badges and one title watch", () => {
+  const s = setup({
+    elements: [
+      rect("e1", { link: "[[Same]]", x: 0 }),
+      rect("e2", { link: "[[Same]]", x: 200 }),
+    ],
+    regions: [],
+    refs: { Same: [["R1", "a", "P"]] },
+  });
+  assert.equal(s.badges().length, 2);
+  assert.deepEqual(s.badges().map((b) => b.textContent).sort(), ["1", "1"]);
+  assert.equal(s.watches.length, 1);
+  assert.equal(s.watches[0].eid, '[:node/title "Same"]');
+  s.store.Same = [["R1", "a", "P"], ["R2", "b", "P"]];
+  s.watches[0].cb({}, {});
+  assert.deepEqual(s.badges().map((b) => b.textContent).sort(), ["2", "2"]);
+});
+
+test("page title watches share the cap and a further title is not watched", () => {
+  const elements = [];
+  const refs = {};
+  for (let i = 0; i < BACKLINK_WATCH_CAP - 1; i++) {
+    const uid = `N${String(i).padStart(8, "0")}`;
+    elements.push(mm(`n${i}`, uid, i * 30, 0, 10, 10));
+    refs[uid] = [["R1", "x", "P"]];
+  }
+  elements.push(rect("p1", { link: "[[Alpha]]", x: 0, y: 200 }));
+  elements.push(rect("p2", { link: "[[Beta]]", x: 80, y: 200 }));
+  refs.Alpha = [["R2", "a", "P"]];
+  refs.Beta = [["R3", "b", "P"]];
+  const warns = [];
+  const warn = console.warn;
+  console.warn = (...a) => warns.push(a.join(" "));
+  let s;
+  try { s = setup({ elements, regions: [], refs }); } finally { console.warn = warn; }
+  assert.equal(s.watches.length, BACKLINK_WATCH_CAP);
+  assert.deepEqual(s.watches.filter((w) => w.eid.startsWith("[:node/title")).map((w) => w.eid), ['[:node/title "Alpha"]']);
+  assert.equal(s.badges().length, BACKLINK_WATCH_CAP + 1);
+  assert.ok(s.badges().some((b) => b.style.left === "123px" && b.textContent === "1"));
+  assert.equal(warns.filter((w) => /not live/.test(w)).length, 1);
+});
+
+test("Add to canvas calls onAddToCanvas with the row and does not navigate", () => {
+  const added = [];
+  const s = setup({
+    elements: [
+      rect("e1", { link: "[[Pg]]", x: 0, y: 0, width: 40, height: 20 }),
+      rect("a", { x: 100, y: 100, width: 50, height: 40 }),
+    ],
+    refs: {
+      Pg: [["R1", "body text", "Daily"]],
+      [REG]: [["R2", "region body", "Other"]],
+    },
+    onAddToCanvas: (arg) => added.push(arg),
+  });
+  const pageBadge = s.badges().find((b) => b.style.left === "43px");
+  const regionBadge = s.badges().find((b) => b.style.left === "153px");
+  let stopped = false;
+  pageBadge.fire("click");
+  const pageRow = s.popover().children.find((c) => c.className === "plexus-backlink-row");
+  const pageButton = pageRow.children.find((c) => c.textContent === "Add to canvas");
+  assert.equal(pageButton.tag, "button");
+  pageButton.fire("click", { stopPropagation() { stopped = true; }, preventDefault() {} });
+  assert.equal(stopped, true);
+  assert.equal(s.opened.length, 0);
+  assert.deepEqual(added, [{
+    elementId: "e1",
+    bbox: [0, 0, 40, 20],
+    ref: { uid: "R1", string: "body text", page: "Daily" },
+  }]);
+  assert.ok(s.popover());
+  pageRow.fire("click", { shiftKey: false });
+  assert.deepEqual(s.opened, [[{ type: "block", uid: "R1" }, { sidebar: false }]]);
+  assert.equal(added.length, 1);
+
+  regionBadge.fire("click");
+  const regionRow = s.popover().children.find((c) => c.className === "plexus-backlink-row");
+  regionRow.children.find((c) => c.textContent === "Add to canvas").fire("click");
+  assert.equal(s.opened.length, 1);
+  assert.deepEqual(added[1], {
+    elementId: null,
+    bbox: [100, 100, 150, 140],
+    ref: { uid: "R2", string: "region body", page: "Other" },
+  });
+
+  const plain = setup({ refs: { [REG]: [["R1", "a", "P"]] } });
+  plain.badges()[0].fire("click");
+  const plainRow = plain.popover().children.find((c) => c.className === "plexus-backlink-row");
+  assert.equal(plainRow.children.some((c) => c.textContent === "Add to canvas"), false);
+});
+
+test("cite opens the matching popover and cite([]) returns false", () => {
+  const s = setup({
+    elements: [
+      rect("e1", { link: "[[Cited]]", x: 10, y: 10, width: 20, height: 20 }),
+      mm("n1", NODE, 300, 300),
+      rect("a", { x: 100, y: 100, width: 50, height: 40 }),
+    ],
+    refs: {
+      Cited: [["Rp", "page ref", "Daily"]],
+      [NODE]: [["Rn", "node ref", "Nodes"]],
+      [REG]: [["Rr", "region ref", "Regions"]],
+    },
+  });
+  assert.equal(s.bl.cite([]), false);
+  assert.equal(s.popover(), undefined);
+  assert.equal(s.opened.length, 0);
+  assert.equal(s.bl.cite("e1"), true);
+  assert.ok(s.popover());
+  assert.equal(s.rendered.at(-1)[1], "page ref");
+  assert.equal(s.opened.length, 0);
+  assert.equal(s.bl.cite(["n1"]), true);
+  assert.equal(s.rendered.at(-1)[1], "node ref");
+  assert.equal(s.bl.cite("a"), true);
+  assert.equal(s.rendered.at(-1)[1], "region ref");
+  assert.equal(s.bl.cite(["nope"]), false);
+  assert.equal(s.opened.length, 0);
+});
+
+test("cite matches a group member, the group id, and a frame id", () => {
+  const s = setup({
+    elements: [
+      rect("g1", { x: 0, y: 0, width: 20, height: 20, groupIds: ["GRP1"] }),
+      { id: "fr1", type: "frame", x: 400, y: 0, width: 80, height: 60, angle: 0, version: 1 },
+    ],
+    regions: [
+      { uid: REG, string: "s", region: { kind: "group", groupId: "GRP1", pad: 0 } },
+      { uid: "REG000002", string: "s", region: { kind: "frame", frameId: "fr1", pad: 0 } },
+    ],
+    refs: {
+      [REG]: [["R1", "group ref", "P"]],
+      REG000002: [["R2", "frame ref", "P"]],
+    },
+  });
+  assert.equal(s.badges().length, 2);
+  assert.equal(s.bl.cite("g1"), true);
+  assert.equal(s.rendered.at(-1)[1], "group ref");
+  assert.equal(s.bl.cite("GRP1"), true);
+  assert.equal(s.rendered.at(-1)[1], "group ref");
+  assert.equal(s.bl.cite("fr1"), true);
+  assert.equal(s.rendered.at(-1)[1], "frame ref");
+  assert.equal(s.opened.length, 0);
 });
 
 test("theme class follows app.state.theme on the layer and popover, re-checked on reposition", () => {

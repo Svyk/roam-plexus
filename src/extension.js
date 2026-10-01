@@ -175,6 +175,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     const getSettings = () => readSettings(extensionAPI);
 
     let actions = null;
+    let citeBacklinks = null;
     let audit = null;
     let toggleLayer = null;
     let backCommand = null;
@@ -1237,6 +1238,12 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
               toScene: (p) => sceneAt(app, p),
             }),
           }));
+          if (mountUid) {
+            try {
+              const stopLeave = actions.installAnchorLeaveWatch(app, mountUid);
+              mounted.disposers.push(() => stopLeave?.());
+            } catch (error) { console.warn("[plexus] anchor leave watch failed", error); }
+          }
           if (mounted.uid && getSettings().showBacklinks) {
             backlinks = createCanvasBacklinks({
               doc, api, host, app, containerEl: el, drawingUid: mounted.uid, zIndex: outer ? baseZIndex(doc, outer) : 1000, native,
@@ -1246,8 +1253,16 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
                 hover.hide();
                 if (sidebar) toaster.show("Opened in sidebar");
               },
+              onAddToCanvas: (payload) => {
+                try { actions.addCitedEmbed(payload); }
+                catch (error) { console.warn("[plexus] add to canvas failed", error); }
+              },
             });
-            mounted.disposers.push(() => backlinks.dispose());
+            citeBacklinks = backlinks;
+            mounted.disposers.push(() => {
+              if (citeBacklinks === backlinks) citeBacklinks = null;
+              backlinks.dispose();
+            });
           }
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
@@ -1364,6 +1379,12 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "lockSelection", label: "Lock or unlock selection", run: () => runLockAction("toggleElementLock") },
       { id: "unlockAll", label: "Unlock all", run: () => runLockAction("unlockAllElements") },
       { id: "copyDiagnostics", label: "Copy diagnostics", run: () => Promise.resolve(runDiagnostics()).catch((error) => console.warn("[plexus] diagnostics failed", error)) },
+      { id: "whereCited", label: "Where is this cited?", run: () => {
+        const editor = native.activeEditor(doc);
+        const ids = editor?.app ? native.selectedElementIds(editor.app) : [];
+        if (citeBacklinks?.cite?.(ids)) return;
+        toaster.show("Select a page link, region, or mind-map node");
+      } },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];

@@ -1,4 +1,4 @@
-/* Plexus v0.17.0 | MIT | generated; edit src/ */
+/* Plexus v0.18.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -3892,6 +3892,88 @@ function createEmbedOverlay({
   };
 }
 
+// src/model/links.js
+var URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
+function parseRoamLink(link, graphName) {
+  if (typeof link !== "string") return null;
+  const s = link.trim();
+  if (!s) return null;
+  let m = /^\[\[([^\]\n]+)\]\]$/.exec(s) || /^#\[\[([^\]\n]+)\]\]$/.exec(s);
+  if (m) return { type: "page", title: m[1] };
+  m = /^#([^\s[\]#()]+)$/.exec(s);
+  if (m) return { type: "page", title: m[1] };
+  m = /^\(\(([A-Za-z0-9_-]+)\)\)$/.exec(s);
+  if (m) return { type: "block", uid: m[1] };
+  m = URL_RE.exec(s);
+  if (m) {
+    let graph;
+    try {
+      graph = decodeURIComponent(m[1]);
+    } catch {
+      return null;
+    }
+    if (graphName && graph === graphName) return { type: "page", uid: m[2] };
+  }
+  return null;
+}
+var LINK_UID_RE = /^[A-Za-z0-9_-]+$/;
+var MAX_LINKS = 200;
+var MAX_LINK_TEXT = 80;
+function cutLinkText(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return [...text].slice(0, MAX_LINK_TEXT).join("");
+}
+function boundText(el, elements) {
+  if (!el?.id || !Array.isArray(elements)) return "";
+  for (const child of elements) {
+    if (!child || child.isDeleted || child.type !== "text" || child.containerId !== el.id) continue;
+    const text = cutLinkText(child.originalText ?? child.text);
+    if (text) return text;
+  }
+  return "";
+}
+function mindRef(el) {
+  const mm2 = el?.customData?.plexus?.mm;
+  if (!mm2 || typeof mm2 !== "object") return null;
+  if (mm2.edge || mm2.boundary) return false;
+  const uid = mm2.uid;
+  if (typeof uid !== "string" || !LINK_UID_RE.test(uid)) return null;
+  return { kind: "mindmap", ref: `((${uid}))` };
+}
+function roamRef(value, kind) {
+  const parsed = parseRoamLink(value);
+  if (!parsed) return null;
+  if (parsed.type === "block" && parsed.uid) return { kind, ref: `((${parsed.uid}))` };
+  if (parsed.type === "page" && parsed.title) return { kind, ref: `[[${parsed.title}]]` };
+  return null;
+}
+function linksIn(elements) {
+  if (!Array.isArray(elements)) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const el of elements) {
+    if (!el || el.isDeleted) continue;
+    const mind = mindRef(el);
+    if (mind === false) continue;
+    const embed = roamRef(el?.customData?.plexus?.embed, "embed");
+    const hit = mind || embed || roamRef(el.link, "link");
+    if (!hit) continue;
+    const key = `${hit.kind}
+${hit.ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const own = cutLinkText(el.originalText ?? el.text);
+    out.push({
+      elementId: el.id,
+      kind: hit.kind,
+      ref: hit.ref,
+      text: own || boundText(el, elements)
+    });
+    if (out.length >= MAX_LINKS) break;
+  }
+  return out;
+}
+
 // src/view/backlinks.js
 var BACKLINK_WATCH_CAP = 150;
 var BACKLINK_ROW_CAP = 20;
@@ -3914,6 +3996,7 @@ function createCanvasBacklinks({
   native = native_exports,
   openTarget = () => {
   },
+  onAddToCanvas,
   raf,
   caf,
   now = () => Date.now()
@@ -3927,11 +4010,13 @@ function createCanvasBacklinks({
   doc.body.append(layer);
   const badges = /* @__PURE__ */ new Map();
   const refsByUid = /* @__PURE__ */ new Map();
+  const refsByTitle = /* @__PURE__ */ new Map();
   const watches = /* @__PURE__ */ new Map();
   let regions = [];
   let regionsAt = -Infinity;
   let regionSig = "";
   let targets = [];
+  let pageLinks = [];
   let sceneSig = null;
   let pendingFrame = null;
   let unsubscribe2 = null;
@@ -3940,10 +4025,10 @@ function createCanvasBacklinks({
   let popover = null;
   const warn7 = (message, error) => console.warn("[plexus]", message, error);
   const excludedUids = () => /* @__PURE__ */ new Set([drawingUid, ...regions.map((r) => r.uid)]);
-  function loadRefs(uid) {
+  function loadRefs(lookup) {
     let raw;
     try {
-      raw = api.data.pull(REFS_PATTERN, [":block/uid", uid]);
+      raw = api.data.pull(REFS_PATTERN, lookup);
     } catch (error) {
       warn7("backlinks pull failed", error);
       return [];
@@ -4023,14 +4108,60 @@ function createCanvasBacklinks({
     }
     return [...byAnchor.values()].map((t) => ({ uids: [...t.uids], bbox: t.bbox }));
   }
-  function syncWatches(uids) {
-    const wanted = new Set(uids);
-    for (const [uid, entry] of [...watches]) {
-      if (wanted.has(uid)) continue;
-      removeWatch(uid, entry);
+  function collectPageLinks() {
+    const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const el of liveElements(elements)) {
+      if (el.id == null || seen.has(el.id)) continue;
+      const parsed = parseRoamLink(el.link);
+      if (!parsed || parsed.type !== "page" || typeof parsed.title !== "string" || !parsed.title) continue;
+      let bbox;
+      try {
+        bbox = elementBounds(el);
+      } catch (error) {
+        warn7("backlinks page bbox failed", error);
+        continue;
+      }
+      if (!bbox) continue;
+      seen.add(el.id);
+      out.push({ elementId: el.id, title: parsed.title, bbox });
     }
-    for (const uid of uids) {
-      if (watches.has(uid)) continue;
+    return out;
+  }
+  function blockSpec(uid) {
+    return { key: `b:${uid}`, refKey: uid, kind: "block", lookup: [":block/uid", uid], eid: `[:block/uid "${uid}"]` };
+  }
+  function pageSpec(title) {
+    return { key: `p:${title}`, refKey: title, kind: "page", lookup: [":node/title", title], eid: `[:node/title ${JSON.stringify(title)}]` };
+  }
+  function watchSpecs() {
+    const specs = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const uid of targets.flatMap((t) => t.uids)) {
+      if (seen.has(`b:${uid}`)) continue;
+      seen.add(`b:${uid}`);
+      specs.push(blockSpec(uid));
+    }
+    for (const { title } of pageLinks) {
+      if (seen.has(`p:${title}`)) continue;
+      seen.add(`p:${title}`);
+      specs.push(pageSpec(title));
+    }
+    return specs;
+  }
+  function storeRefs(spec, rows) {
+    if (spec.kind === "page") refsByTitle.set(spec.refKey, rows);
+    else refsByUid.set(spec.refKey, rows);
+  }
+  function syncWatches(specs) {
+    const wanted = new Set(specs.map((spec) => spec.key));
+    for (const [key, entry] of [...watches]) {
+      if (wanted.has(key)) continue;
+      removeWatch(key, entry);
+    }
+    for (const spec of specs) {
+      if (watches.has(spec.key)) continue;
       if (watches.size >= BACKLINK_WATCH_CAP) {
         if (!capLogged) {
           capLogged = true;
@@ -4038,11 +4169,10 @@ function createCanvasBacklinks({
         }
         continue;
       }
-      const eid = `[:block/uid "${uid}"]`;
       const cb = () => {
         if (disposed) return;
         try {
-          refsByUid.set(uid, loadRefs(uid));
+          storeRefs(spec, loadRefs(spec.lookup));
           render();
           layout();
         } catch (error) {
@@ -4050,8 +4180,8 @@ function createCanvasBacklinks({
         }
       };
       try {
-        api.data.addPullWatch(WATCH_PATTERN, eid, cb);
-        watches.set(uid, { eid, cb });
+        api.data.addPullWatch(WATCH_PATTERN, spec.eid, cb);
+        watches.set(spec.key, { eid: spec.eid, cb });
       } catch (error) {
         warn7("backlinks watch failed", error);
       }
@@ -4109,6 +4239,7 @@ function createCanvasBacklinks({
       key,
       el,
       uids: [],
+      elementId: null,
       bbox: null,
       refs: [],
       x: 0,
@@ -4122,28 +4253,36 @@ function createCanvasBacklinks({
       }
     };
   }
+  function putBadge(key, { refs, bbox, uids, elementId }) {
+    let badge = badges.get(key);
+    if (!badge) {
+      badge = makeBadge(key);
+      badges.set(key, badge);
+    }
+    const changed = badge.refs.length !== refs.length || badge.refs.some((r, i) => r.uid !== refs[i].uid || r.string !== refs[i].string);
+    badge.uids = uids;
+    badge.elementId = elementId ?? null;
+    badge.bbox = bbox;
+    badge.refs = refs;
+    if (badge.count !== refs.length) {
+      badge.count = refs.length;
+      badge.el.textContent = String(refs.length);
+      badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
+    }
+    if (changed && popover?.key === key) repaintPopover();
+    return key;
+  }
   function render() {
-    const live3 = /* @__PURE__ */ new Map();
+    const live3 = /* @__PURE__ */ new Set();
     for (const g of groups()) {
       const refs = refsOf(g.uids);
       if (!refs.length) continue;
-      const key = g.uids.join("|");
-      let badge = badges.get(key);
-      if (!badge) {
-        badge = makeBadge(key);
-        badges.set(key, badge);
-      }
-      const changed = badge.refs.length !== refs.length || badge.refs.some((r, i) => r.uid !== refs[i].uid || r.string !== refs[i].string);
-      badge.uids = g.uids;
-      badge.bbox = g.bbox;
-      badge.refs = refs;
-      if (badge.count !== refs.length) {
-        badge.count = refs.length;
-        badge.el.textContent = String(refs.length);
-        badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
-      }
-      live3.set(key, badge);
-      if (changed && popover?.key === key) repaintPopover();
+      live3.add(putBadge(g.uids.join("|"), { refs, bbox: g.bbox, uids: g.uids, elementId: null }));
+    }
+    for (const p of pageLinks) {
+      const refs = refsByTitle.get(p.title) ?? [];
+      if (!refs.length) continue;
+      live3.add(putBadge(`el:${p.elementId}`, { refs, bbox: p.bbox, uids: [], elementId: p.elementId }));
     }
     for (const [key, badge] of [...badges]) {
       if (live3.has(key)) continue;
@@ -4184,10 +4323,14 @@ function createCanvasBacklinks({
     if (regionsChanged || sig !== sceneSig) {
       sceneSig = sig;
       targets = collectTargets();
-      const uids = targets.flatMap((t) => t.uids);
-      syncWatches(uids);
-      for (const uid of uids) if (!refsByUid.has(uid) || regionsChanged) refsByUid.set(uid, loadRefs(uid));
-      for (const uid of [...refsByUid.keys()]) if (!uids.includes(uid)) refsByUid.delete(uid);
+      pageLinks = collectPageLinks();
+      const specs = watchSpecs();
+      syncWatches(specs);
+      for (const spec of specs) if ((spec.kind === "page" ? !refsByTitle.has(spec.refKey) : !refsByUid.has(spec.refKey)) || regionsChanged) storeRefs(spec, loadRefs(spec.lookup));
+      const uidSet = new Set(targets.flatMap((t) => t.uids));
+      for (const uid of [...refsByUid.keys()]) if (!uidSet.has(uid)) refsByUid.delete(uid);
+      const titleSet = new Set(pageLinks.map((p) => p.title));
+      for (const title of [...refsByTitle.keys()]) if (!titleSet.has(title)) refsByTitle.delete(title);
       render();
     }
     layout();
@@ -4245,6 +4388,31 @@ function createCanvasBacklinks({
       const body = doc.createElement("div");
       body.className = "plexus-backlink-block";
       row.append(page, body);
+      let addButton = null;
+      if (typeof onAddToCanvas === "function") {
+        addButton = doc.createElement("button");
+        addButton.type = "button";
+        addButton.className = "plexus-backlink-add";
+        addButton.textContent = "Add to canvas";
+        const onAdd = (e) => {
+          e?.stopPropagation?.();
+          e?.stopImmediatePropagation?.();
+          e?.preventDefault?.();
+          const current6 = badges.get(key) ?? badge;
+          try {
+            onAddToCanvas({
+              elementId: current6.elementId ?? null,
+              bbox: current6.bbox ? [...current6.bbox] : null,
+              ref: { uid: ref.uid, string: ref.string, page: ref.page }
+            });
+          } catch (error) {
+            warn7("backlinks add failed", error);
+          }
+        };
+        addButton.addEventListener("click", onAdd);
+        row.append(addButton);
+        rowHandlers.push([addButton, onAdd]);
+      }
       el.append(row);
       hosts.push(body);
       try {
@@ -4254,6 +4422,10 @@ function createCanvasBacklinks({
         body.textContent = ref.string;
       }
       const onClick = (e) => {
+        for (let n = e?.target; n; n = n.parentNode ?? n.parentElement) {
+          if (n === addButton) return;
+          if (n === row) break;
+        }
         e?.stopPropagation?.();
         e?.preventDefault?.();
         closePopover();
@@ -4311,6 +4483,7 @@ function createCanvasBacklinks({
       sceneSig = null;
       targets = [];
       for (const uid of [...refsByUid.keys()]) refsByUid.delete(uid);
+      refsByTitle.clear();
       update();
     } catch (error) {
       warn7("backlinks refresh failed", error);
@@ -4334,7 +4507,37 @@ function createCanvasBacklinks({
     for (const badge of badges.values()) badge.detach();
     badges.clear();
     refsByUid.clear();
+    refsByTitle.clear();
     layer.remove();
+  }
+  function selectionIds(value) {
+    if (typeof value === "string") return value ? [value] : [];
+    if (!Array.isArray(value)) return [];
+    return value.filter((id) => typeof id === "string" && id);
+  }
+  function regionCovers(region, id, el) {
+    if (!region || IMAGE_KINDS.has(region.kind)) return false;
+    if (Array.isArray(region.ids) && region.ids.includes(id)) return true;
+    const frame = region.frameId ?? region.fr;
+    if (frame && id === frame) return true;
+    const group = region.groupId ?? region.g;
+    if (group && (id === group || Array.isArray(el?.groupIds) && el.groupIds.includes(group))) return true;
+    return false;
+  }
+  function cite(elementIds) {
+    if (disposed) return false;
+    const ids = selectionIds(elementIds);
+    if (!ids.length) return false;
+    const live3 = liveElements(app.getSceneElementsIncludingDeleted?.() ?? []);
+    const byId = new Map(live3.map((el) => [el.id, el]));
+    const list = [...badges.values()];
+    const hit = list.find((b) => b.elementId && ids.includes(b.elementId)) ?? list.find((b) => ids.some((id) => {
+      const uid = byId.get(id)?.customData?.plexus?.mm?.uid;
+      return !!uid && b.uids.includes(uid);
+    })) ?? list.find((b) => ids.some((id) => regions.some((entry) => b.uids.includes(entry.uid) && regionCovers(entry.region, id, byId.get(id)))));
+    if (!hit) return false;
+    openPopover(hit.key);
+    return true;
   }
   try {
     unsubscribe2 = native.subscribeViewport(app, schedule);
@@ -4342,7 +4545,7 @@ function createCanvasBacklinks({
     warn7("backlinks subscribe failed", error);
   }
   refresh();
-  return { refresh, dispose };
+  return { refresh, dispose, cite };
 }
 
 // src/view/present.js
@@ -6561,88 +6764,6 @@ function relationPlan({ sourceUid, destUid, label = DEFAULT_LABEL, strings } = {
   return { parentUid: sourceUid, attribute: `${name}::`, child };
 }
 
-// src/model/links.js
-var URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
-function parseRoamLink(link, graphName) {
-  if (typeof link !== "string") return null;
-  const s = link.trim();
-  if (!s) return null;
-  let m = /^\[\[([^\]\n]+)\]\]$/.exec(s) || /^#\[\[([^\]\n]+)\]\]$/.exec(s);
-  if (m) return { type: "page", title: m[1] };
-  m = /^#([^\s[\]#()]+)$/.exec(s);
-  if (m) return { type: "page", title: m[1] };
-  m = /^\(\(([A-Za-z0-9_-]+)\)\)$/.exec(s);
-  if (m) return { type: "block", uid: m[1] };
-  m = URL_RE.exec(s);
-  if (m) {
-    let graph;
-    try {
-      graph = decodeURIComponent(m[1]);
-    } catch {
-      return null;
-    }
-    if (graphName && graph === graphName) return { type: "page", uid: m[2] };
-  }
-  return null;
-}
-var LINK_UID_RE = /^[A-Za-z0-9_-]+$/;
-var MAX_LINKS = 200;
-var MAX_LINK_TEXT = 80;
-function cutLinkText(value) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  return [...text].slice(0, MAX_LINK_TEXT).join("");
-}
-function boundText(el, elements) {
-  if (!el?.id || !Array.isArray(elements)) return "";
-  for (const child of elements) {
-    if (!child || child.isDeleted || child.type !== "text" || child.containerId !== el.id) continue;
-    const text = cutLinkText(child.originalText ?? child.text);
-    if (text) return text;
-  }
-  return "";
-}
-function mindRef(el) {
-  const mm2 = el?.customData?.plexus?.mm;
-  if (!mm2 || typeof mm2 !== "object") return null;
-  if (mm2.edge || mm2.boundary) return false;
-  const uid = mm2.uid;
-  if (typeof uid !== "string" || !LINK_UID_RE.test(uid)) return null;
-  return { kind: "mindmap", ref: `((${uid}))` };
-}
-function roamRef(value, kind) {
-  const parsed = parseRoamLink(value);
-  if (!parsed) return null;
-  if (parsed.type === "block" && parsed.uid) return { kind, ref: `((${parsed.uid}))` };
-  if (parsed.type === "page" && parsed.title) return { kind, ref: `[[${parsed.title}]]` };
-  return null;
-}
-function linksIn(elements) {
-  if (!Array.isArray(elements)) return [];
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const el of elements) {
-    if (!el || el.isDeleted) continue;
-    const mind = mindRef(el);
-    if (mind === false) continue;
-    const embed = roamRef(el?.customData?.plexus?.embed, "embed");
-    const hit = mind || embed || roamRef(el.link, "link");
-    if (!hit) continue;
-    const key = `${hit.kind}
-${hit.ref}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const own = cutLinkText(el.originalText ?? el.text);
-    out.push({
-      elementId: el.id,
-      kind: hit.kind,
-      ref: hit.ref,
-      text: own || boundText(el, elements)
-    });
-    if (out.length >= MAX_LINKS) break;
-  }
-  return out;
-}
-
 // src/host/links.js
 var MAX_MOVE_PX = 6;
 var MAX_HOLD_MS = 400;
@@ -6925,13 +7046,13 @@ var directGuard = Object.freeze({
   dispose() {
   }
 });
-function createWriteGuard({ toaster, ringSize = 5, maxDrawings = MAX_DRAWINGS, isActive = (app) => !!app && app.unmounted !== true, now = () => Date.now() } = {}) {
+function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_DRAWINGS, isActive = (app) => !!app && app.unmounted !== true, now = () => Date.now() } = {}) {
   let disposed = false;
   const rings = /* @__PURE__ */ new Map();
   let pending = null;
   const toast = (message, opts) => {
     try {
-      toaster?.show?.(message, opts);
+      toaster2?.show?.(message, opts);
     } catch (error) {
       console.warn("[plexus] guard toast failed", error);
     }
@@ -10169,14 +10290,14 @@ function rawWalk(raw, fn) {
     for (const c of n[":block/children"] || []) stack2.push(c);
   }
 }
-function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite, getTagColors = () => /* @__PURE__ */ new Map(), createLaneRegions = async () => [] }) {
+function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, native, toaster: toaster2, raf = defaultRaf, caf = defaultCaf, now = () => Date.now(), zIndexFor = () => 1e3, guardedWrite = defaultGuardedWrite, getTagColors = () => /* @__PURE__ */ new Map(), createLaneRegions = async () => [] }) {
   const sessions = /* @__PURE__ */ new Map();
   const laneFlights = /* @__PURE__ */ new Map();
   let disposed = false;
   const warn7 = (what, error) => console.warn(`[plexus] mind map ${what} failed`, error);
   const toast = (message, opts) => {
     try {
-      toaster.show(message, opts);
+      toaster2.show(message, opts);
     } catch (error) {
       warn7("toast", error);
     }
@@ -12799,7 +12920,7 @@ function createOutlineActions({
   host,
   native,
   api = globalThis.roamAlphaAPI,
-  toaster,
+  toaster: toaster2,
   clipboard,
   withLockFn = withLock,
   openPreview = openOutlinePreview,
@@ -12810,7 +12931,7 @@ function createOutlineActions({
   let disposed = false;
   const toast = (message, opts) => {
     try {
-      toaster?.show?.(message, opts);
+      toaster2?.show?.(message, opts);
     } catch {
     }
   };
@@ -13680,7 +13801,7 @@ function createTemplateActions({
   host,
   native,
   api = globalThis.roamAlphaAPI,
-  toaster,
+  toaster: toaster2,
   guardedWrite,
   beforeBulk = () => {
   },
@@ -13703,7 +13824,7 @@ function createTemplateActions({
   let prompt = null;
   const toast = (message, opts) => {
     try {
-      toaster?.show?.(message, opts);
+      toaster2?.show?.(message, opts);
     } catch {
     }
   };
@@ -14674,10 +14795,10 @@ function arrange(elements, selectionIds, op, opts = {}) {
 }
 
 // src/actions-arrange.js
-function createArrangeActions({ doc, native, toaster, guardedWrite, beforeBulk } = {}) {
+function createArrangeActions({ doc, native, toaster: toaster2, guardedWrite, beforeBulk } = {}) {
   const toast = (message, opts) => {
     try {
-      toaster?.show?.(message, opts);
+      toaster2?.show?.(message, opts);
     } catch {
     }
   };
@@ -16815,6 +16936,7 @@ var AUDIT_ROW_CAP = 2e3;
 var AUDIT_YIELD_EVERY = 20;
 var REPAIR_OF = { partial: "auto", "no-elements": "reselect", "outside-crop": "reselect", "not-image": "reselect", rotated: "reselect", "not-frame": "reselect" };
 var BOX_PROBLEM = { "no-elements": "no-elements", "outside-crop": "outside-crop", "not-image": "not-image", "rotated-image": "rotated", "not-frame": "not-frame" };
+var REMOVED_TOAST = "Removed from the drawing. The block is unchanged.";
 function headPreservingString(before, tail) {
   const head = REGION_HEAD_RE.exec(before)?.[0];
   if (!head) return null;
@@ -16976,7 +17098,7 @@ function createActions({
   native,
   cache,
   cold,
-  toaster,
+  toaster: toaster2,
   spotlight,
   getSettings,
   doc,
@@ -17041,6 +17163,8 @@ function createActions({
   const closePolls = /* @__PURE__ */ new Map();
   const revokers = /* @__PURE__ */ new Set();
   let pendingUpdate = null;
+  const leaveSilenced = /* @__PURE__ */ new Set();
+  const leaveWatches = /* @__PURE__ */ new Set();
   const cameraTo = camera ?? {
     animateTo: async (app, bbox, { maxZoom } = {}) => {
       native.zoomTo(app, bbox, { maxZoom });
@@ -17075,7 +17199,7 @@ function createActions({
       uid = await host.createRegion(region.drawingUid, serializeRegion(region));
     } catch (error) {
       console.warn("[plexus] create region failed", error);
-      toaster.show("Could not create region, try again", { kind: "error" });
+      toaster2.show("Could not create region, try again", { kind: "error" });
       return null;
     }
     try {
@@ -17091,10 +17215,10 @@ function createActions({
     try {
       const write = () => clipboard.writeText(`((${uid}))`);
       await (native.withClipboard ? native.withClipboard(write) : write());
-      toaster.show(`Region ((${uid})) copied`);
+      toaster2.show(`Region ((${uid})) copied`);
     } catch (error) {
       console.warn("[plexus] clipboard failed", error);
-      toaster.show(`Region ((${uid})) created`);
+      toaster2.show(`Region ((${uid})) created`);
     }
     return uid;
   }
@@ -17248,7 +17372,7 @@ function createActions({
   }
   const badTarget = (drawingUid, ids) => {
     if (isId(drawingUid) && ids.length && ids.every(isId)) return false;
-    toaster.show("Could not identify this drawing", { kind: "error" });
+    toaster2.show("Could not identify this drawing", { kind: "error" });
     return true;
   };
   const NEW_REUSE_MS = 2e3;
@@ -17287,7 +17411,7 @@ function createActions({
   }
   async function newDrawingRun({ where, uid, open: open5, order: wantOrder, fresh: fresh2 = false }) {
     if (native.activeEditor(doc)) {
-      toaster.show("Close the open drawing first", { kind: "error" });
+      toaster2.show("Close the open drawing first", { kind: "error" });
       return null;
     }
     const graph = host.graphName();
@@ -17297,7 +17421,7 @@ function createActions({
       const target = uid ? host.blockInfo(uid) : null;
       const onPage = !target && where === "here" && !!uid && host.pageTitleOf?.(uid) != null;
       if (!target && !onPage) {
-        toaster.show("Click into a block first", { kind: "error" });
+        toaster2.show("Click into a block first", { kind: "error" });
         return null;
       }
       if (onPage) {
@@ -17305,7 +17429,7 @@ function createActions({
         create = () => host.createDrawing({ parentUid: uid, order: wantOrder ?? "last" });
       } else {
         if (PLEXUS_BLOCK_RE.test(target.string) || PLEXUS_BLOCK_RE.test(target.parentString)) {
-          toaster.show("Plexus blocks cannot hold a drawing", { kind: "error" });
+          toaster2.show("Plexus blocks cannot hold a drawing", { kind: "error" });
           return null;
         }
         let parentUid;
@@ -17313,7 +17437,7 @@ function createActions({
         if (DAILY_UID_RE.test(target.pageUid ?? "")) {
           const top = host.topAncestor(uid);
           if (!top) {
-            toaster.show("Could not find where to put the drawing", { kind: "error" });
+            toaster2.show("Could not find where to put the drawing", { kind: "error" });
             return null;
           }
           parentUid = top.pageUid;
@@ -17326,7 +17450,7 @@ function createActions({
           order = target.order + 1;
         }
         if (!parentUid) {
-          toaster.show("Could not find where to put the drawing", { kind: "error" });
+          toaster2.show("Could not find where to put the drawing", { kind: "error" });
           return null;
         }
         key = parentUid;
@@ -17367,7 +17491,7 @@ function createActions({
         return host.createDrawing({ title: name });
       };
     } else {
-      toaster.show("Unknown place for a new drawing", { kind: "error" });
+      toaster2.show("Unknown place for a new drawing", { kind: "error" });
       return null;
     }
     const memoKey = `${where}|${key}`;
@@ -17379,13 +17503,13 @@ function createActions({
       try {
         const lock = await withLockFn(lockName(graph, `new:${key}`), create);
         if (!lock.acquired) {
-          toaster.show("Another drawing is being created, try again", { kind: "error" });
+          toaster2.show("Another drawing is being created, try again", { kind: "error" });
           return null;
         }
         result = lock.value;
       } catch (error) {
         console.warn("[plexus] new drawing failed", error);
-        toaster.show("Could not create the drawing", { kind: "error" });
+        toaster2.show("Could not create the drawing", { kind: "error" });
         return null;
       }
       if (!fresh2) newDone.set(memoKey, { uid: result.uid, at: Date.now() });
@@ -17408,14 +17532,14 @@ function createActions({
       await waitFor(rendered, 1500, 50, aborted);
       const editor = disposed ? null : await openDrawingOnce(result.uid, { reuseIcon: true, placeholder: true, quiet: true });
       opened = !!editor;
-      if (!editor && !disposed && !fresh2) toaster.show("Drawing created; open it from the outline");
+      if (!editor && !disposed && !fresh2) toaster2.show("Drawing created; open it from the outline");
     }
     return fresh2 ? { uid: result.uid, reused: !!result.reused, opened } : result.uid;
   }
   async function embedFromPickRun({ ref, scenePoint, app } = {}) {
     const editor = native.activeEditor(doc);
     if (!editor || app && editor.app !== app) {
-      toaster.show("Drawing closed");
+      toaster2.show("Drawing closed");
       return null;
     }
     const text = refText(ref);
@@ -17429,7 +17553,7 @@ function createActions({
     } else {
       const parsed = parseEmbedRef(text);
       if (!parsed) {
-        toaster.show("Could not embed that", { kind: "error" });
+        toaster2.show("Could not embed that", { kind: "error" });
         return null;
       }
       let content = null;
@@ -17448,14 +17572,14 @@ function createActions({
         }
       }
       if (!content || disposed) {
-        if (!disposed) toaster.show(parsed.kind === "page" ? "Could not find that page" : "Could not find that block", { kind: "error" });
+        if (!disposed) toaster2.show(parsed.kind === "page" ? "Could not find that page" : "Could not find that block", { kind: "error" });
         return null;
       }
       embed = parsed.ref;
       label = embedLabel(content.string || content.title || parsed.ref);
     }
     if (native.activeEditor(doc)?.app !== editor.app) {
-      toaster.show("Drawing closed");
+      toaster2.show("Drawing closed");
       return null;
     }
     const c = scenePoint ?? viewCentre(editor.app);
@@ -17464,28 +17588,28 @@ function createActions({
     const elements = makeEmbedAnchor({ ref: embed, label, x: c.x - width / 2, y: c.y - height / 2, width, height, idPrefix: "plexus-embed-" });
     if (link) elements[0].link = link;
     if (!insertGuarded(editor.app, editor.drawingUid, elements, "Embed")) {
-      toaster.show("Could not embed that", { kind: "error" });
+      toaster2.show("Could not embed that", { kind: "error" });
       return null;
     }
-    toaster.show(`Embedded ${label}`);
+    toaster2.show(`Embedded ${label}`);
     return elements[0].id;
   }
   async function createPageAndEmbedRun(title, scenePoint, { app } = {}) {
     const editor = native.activeEditor(doc);
     if (!editor || app && editor.app !== app) {
-      toaster.show("Drawing closed");
+      toaster2.show("Drawing closed");
       return null;
     }
     const name = String(title ?? "").replace(/\s+/g, " ").trim();
     if (!name || /\[\[|\]\]/.test(name)) {
-      toaster.show("That is not a valid page title", { kind: "error" });
+      toaster2.show("That is not a valid page title", { kind: "error" });
       return null;
     }
     try {
       await host.ensurePage(name);
     } catch (error) {
       console.warn("[plexus] create page failed", error);
-      toaster.show("Could not create the page", { kind: "error" });
+      toaster2.show("Could not create the page", { kind: "error" });
       return null;
     }
     await waitFor(() => host.pageUidByTitle(name), 2e3, 50, aborted);
@@ -17539,7 +17663,7 @@ function createActions({
   };
   function placeRefuse(message) {
     console.warn("[plexus] place:", message);
-    toaster.show(message, { kind: "error" });
+    toaster2.show(message, { kind: "error" });
     return null;
   }
   async function placeBlocksRun(items, opts = {}) {
@@ -17574,7 +17698,7 @@ function createActions({
     if (scenePoint && !at) console.warn("[plexus] place: bad click point, using the view centre", scenePoint);
     if (!textMode && list.length > EMBED_PLACE_CAP) {
       const n2 = list.length;
-      toaster.show(`Too many to embed live (${n2}, max ${EMBED_PLACE_CAP})`, {
+      toaster2.show(`Too many to embed live (${n2}, max ${EMBED_PLACE_CAP})`, {
         action: { label: `Place ${n2} as links`, run: () => {
           void placeBlocksRun(items, { mode: "link", scenePoint: at, app, onPlaced });
         } }
@@ -17583,7 +17707,7 @@ function createActions({
     }
     const cap = mindmap?.NODE_CAP ?? 500;
     if (textMode && list.length > cap) {
-      toaster.show(`Placing the first ${cap} of ${list.length}`);
+      toaster2.show(`Placing the first ${cap} of ${list.length}`);
       list = list.slice(0, cap);
     }
     const labels = list.map((p) => p.kind === "page" ? p.title : host.labelSource?.(p.uid)?.string ?? "");
@@ -17620,7 +17744,7 @@ function createActions({
     const elements = nodes.flatMap((node, i) => node.build(x0 + i % cols * cellW, y0 + Math.floor(i / cols) * cellH));
     if (!insertGuarded(editor.app, editor.drawingUid, elements, "Place blocks")) return placeRefuse("Could not place: the drawing refused the write");
     const noun = mode === "link" ? "link" : mode === "label" ? "label" : "block";
-    toaster.show(n === 1 ? `Placed 1 ${noun}` : `Placed ${n} ${noun}s`);
+    toaster2.show(n === 1 ? `Placed 1 ${noun}` : `Placed ${n} ${noun}s`);
     try {
       onPlaced?.();
     } catch (error) {
@@ -17631,17 +17755,17 @@ function createActions({
   async function newNoteCardRun(scenePoint) {
     const editor = native.activeEditor(doc);
     if (!editor) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return null;
     }
     const { app, drawingUid } = editor;
     if (!drawingUid) {
-      toaster.show("Could not identify this drawing", { kind: "error" });
+      toaster2.show("Could not identify this drawing", { kind: "error" });
       return null;
     }
     const overlay = getEmbedOverlay();
     if (!overlay || overlay.editState?.() !== "idle" || app.state?.editingTextElement) {
-      toaster.show("Finish the current edit first", { kind: "error" });
+      toaster2.show("Finish the current edit first", { kind: "error" });
       return null;
     }
     const home = ["drawing", "page", "daily"].includes(settingsNow().cardHome) ? settingsNow().cardHome : "drawing";
@@ -17658,7 +17782,7 @@ function createActions({
       }
     } catch (error) {
       console.warn("[plexus] create note card failed", error);
-      toaster.show("Could not create the note", { kind: "error" });
+      toaster2.show("Could not create the note", { kind: "error" });
       return null;
     }
     cards.set(uid, { anchorId: null, app, drawingUid });
@@ -17669,7 +17793,7 @@ function createActions({
     const c = scenePoint ?? viewCentre(app);
     const elements = makeEmbedAnchor({ ref: `((${uid}))`, label: "Note", x: c.x - 180, y: c.y - 100, width: 360, height: 200, idPrefix: "plexus-embed-" });
     if (!insertGuarded(app, drawingUid, elements, "New note")) {
-      toaster.show("Could not add the note", { kind: "error" });
+      toaster2.show("Could not add the note", { kind: "error" });
       await discardIfUntouched(uid, { trigger: "error" });
       return null;
     }
@@ -17759,6 +17883,8 @@ function createActions({
       cards.clear();
       newDone.clear();
       for (const revoke of [...revokers]) revoke();
+      for (const stop of [...leaveWatches]) stop();
+      leaveSilenced.clear();
     },
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
     cancelDrawingTool() {
@@ -17779,13 +17905,13 @@ function createActions({
     async addOutlineBlock(rootUid) {
       try {
         if (!rootUid || !host.pullBlock(rootUid)) {
-          toaster.show("Could not add a block", { kind: "error" });
+          toaster2.show("Could not add a block", { kind: "error" });
           return null;
         }
         return await host.createBlock({ parentUid: rootUid, order: "last", string: "" });
       } catch (error) {
         console.warn("[plexus] add outline block failed", error);
-        toaster.show("Could not add a block", { kind: "error" });
+        toaster2.show("Could not add a block", { kind: "error" });
         return null;
       }
     },
@@ -17794,7 +17920,7 @@ function createActions({
       const items = [...new Set((uids || []).map((u) => parseEmbedRef(refText(u))?.ref).filter(Boolean))];
       if (!items.length) return false;
       pending = { items, mode, at: Date.now() };
-      toaster.show(`Open a drawing, then right-click the canvas: Place ${items.length} blocks here`);
+      toaster2.show(`Open a drawing, then right-click the canvas: Place ${items.length} blocks here`);
       return true;
     },
     pendingPlace: pendingNow,
@@ -17815,13 +17941,13 @@ function createActions({
     createAreaRegion: () => once("area", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       const { app, drawingUid } = editor;
       const ids = native.selectedElementIds(app);
       if (!ids.length) {
-        toaster.show("Select some elements first", { kind: "error" });
+        toaster2.show("Select some elements first", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, ids)) return null;
@@ -17863,11 +17989,11 @@ function createActions({
     relinkRegionCaption: (regionUid) => once(`relink:${regionUid}`, async () => {
       const plan = relinkPlan(regionUid);
       if (!plan) {
-        toaster.show("No source blocks to link", { kind: "error" });
+        toaster2.show("No source blocks to link", { kind: "error" });
         return { changed: false, caption: null };
       }
       if (!plan.missing) {
-        toaster.show("Caption already linked");
+        toaster2.show("Caption already linked");
         return { changed: false, caption: plan.caption };
       }
       const next = serializeRegion({ ...plan.region, caption: plan.caption });
@@ -17875,14 +18001,14 @@ function createActions({
       const head = (str) => str.replace(/\}\}[\s\S]*$/, "}}");
       if (!check?.supported || check.caption !== plan.caption || head(next) !== head(plan.block.string)) {
         console.warn("[plexus] relink round-trip mismatch", regionUid);
-        toaster.show("Could not link caption", { kind: "error" });
+        toaster2.show("Could not link caption", { kind: "error" });
         return { changed: false, caption: plan.region.caption };
       }
       try {
         await host.updateRegionString(plan.region.drawingUid, regionUid, next);
       } catch (error) {
         console.warn("[plexus] relink caption failed", error);
-        toaster.show("Could not link caption, try again", { kind: "error" });
+        toaster2.show("Could not link caption, try again", { kind: "error" });
         return { changed: false, caption: plan.region.caption };
       }
       try {
@@ -17890,7 +18016,7 @@ function createActions({
       } catch (error) {
         console.warn("[plexus] change emit failed", error);
       }
-      toaster.show("Caption linked");
+      toaster2.show("Caption linked");
       return { changed: true, caption: plan.caption };
     }),
     // Rewrites only the caption tail (head kept byte for byte). Resolves true when the block changed.
@@ -17914,7 +18040,7 @@ function createActions({
     createFrameRegion: () => once("frame", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       const { app, drawingUid } = editor;
@@ -17922,7 +18048,7 @@ function createActions({
       const elements = sceneElements(app);
       const detected = detectRegionKind({ elements, ids, selectedGroupIds: app.state?.selectedGroupIds });
       if (detected.kind !== "cframe") {
-        toaster.show("Select exactly one frame", { kind: "error" });
+        toaster2.show("Select exactly one frame", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, [detected.frame.id])) return null;
@@ -17936,18 +18062,18 @@ function createActions({
     createImageRegion: () => once("image", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       const { app, drawingUid } = editor;
       const ids = native.selectedElementIds(app);
       const element = ids.length === 1 ? sceneElements(app).find((el) => el.id === ids[0] && !el.isDeleted) : null;
       if (!element || element.type !== "image") {
-        toaster.show("Select exactly one image", { kind: "error" });
+        toaster2.show("Select exactly one image", { kind: "error" });
         return null;
       }
       if (element.angle) {
-        toaster.show("Rotated images are not supported", { kind: "error" });
+        toaster2.show("Rotated images are not supported", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
@@ -17995,17 +18121,17 @@ function createActions({
     regionFromCrop: () => once("crop", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       const { app, drawingUid } = editor;
       const element = croppedImage(app);
       if (!element) {
-        toaster.show("Select exactly one cropped image", { kind: "error" });
+        toaster2.show("Select exactly one cropped image", { kind: "error" });
         return null;
       }
       if (element.angle) {
-        toaster.show("Rotated images are not supported", { kind: "error" });
+        toaster2.show("Rotated images are not supported", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
@@ -18017,7 +18143,7 @@ function createActions({
     insertEmbedFromClipboard: () => once("embed", async () => {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       const { app } = editor;
@@ -18027,13 +18153,13 @@ function createActions({
         text = await native.readClipboardText({ clipboard });
       } catch (error) {
         console.warn("[plexus] clipboard read failed", error);
-        toaster.show("Clipboard access was blocked. Allow paste in the browser, then try again", { kind: "error" });
+        toaster2.show("Clipboard access was blocked. Allow paste in the browser, then try again", { kind: "error" });
         return null;
       }
       if (native.activeEditor(doc)?.app !== app) return null;
       const parsed = parseEmbedRef(text);
       if (!parsed) {
-        toaster.show(hint, { kind: "error" });
+        toaster2.show(hint, { kind: "error" });
         return null;
       }
       let content = null;
@@ -18043,7 +18169,7 @@ function createActions({
         console.warn("[plexus] embed pull failed", error);
       }
       if (!content || disposed) {
-        if (!disposed) toaster.show("Could not find that block or page", { kind: "error" });
+        if (!disposed) toaster2.show("Could not find that block or page", { kind: "error" });
         return null;
       }
       const label = embedLabel(content.string || content.title || parsed.ref);
@@ -18053,10 +18179,10 @@ function createActions({
       const height = 200;
       const elements = makeEmbedAnchor({ ref: parsed.ref, label, x: c.x - width / 2, y: c.y - height / 2, width, height, idPrefix: "plexus-embed-" });
       if (!native.insertElements(app, elements, { select: true })) {
-        toaster.show("Could not embed block", { kind: "error" });
+        toaster2.show("Could not embed block", { kind: "error" });
         return null;
       }
-      toaster.show(`Embedded ${label}`);
+      toaster2.show(`Embedded ${label}`);
       return elements[0].id;
     }),
     presentDrawing: ({ drawingUid, from = "start", at } = {}) => runPresent((release) => presentOnce(drawingUid, release, { from, at })),
@@ -18064,7 +18190,7 @@ function createActions({
       const block = isId(regionUid) ? safe2(() => host.pullBlock(regionUid)) : null;
       const region = block ? parseRegion(block.string) : null;
       if (!region?.supported || !(region.kind === "frame" || region.kind === "cframe") || !region.frameId) {
-        toaster.show("Not a frame region", { kind: "error" });
+        toaster2.show("Not a frame region", { kind: "error" });
         return null;
       }
       return runPresent((release) => presentOnce(region.drawingUid, release, { from: region.frameId }));
@@ -18084,27 +18210,27 @@ function createActions({
       const scene = editor && editor.drawingUid === uid ? sceneElements(editor.app) : safe2(() => host.drawing(uid)?.elements) ?? [];
       const frame2 = scene.find((el) => el && !el.isDeleted && isFrameEl(el) && el.id === frameId2);
       if (!isId(uid) || !frame2) {
-        toaster.show("Select a frame first", { kind: "error" });
+        toaster2.show("Select a frame first", { kind: "error" });
         return null;
       }
       const added = [];
       const out = await addNotesForFrame(uid, frame2, added);
       afterPresent(added);
-      if (!out) toaster.show("Could not add notes", { kind: "error" });
-      else if (!added.length) toaster.show("Notes already exist: Outline › regions");
+      if (!out) toaster2.show("Could not add notes", { kind: "error" });
+      else if (!added.length) toaster2.show("Notes already exist: Outline › regions");
       return out;
     },
     createPlainImageRegion: (blockUid) => once("plain", async () => {
       const block = isId(blockUid) ? host.pullBlock(blockUid) : null;
       const refs = block ? parseImageRefs(block.string) : [];
       if (!refs.length) {
-        toaster.show("No image in this block", { kind: "error" });
+        toaster2.show("No image in this block", { kind: "error" });
         return null;
       }
       const ref = refs[0];
       const img = findRenderedImage(blockUid);
       if (!img) {
-        toaster.show("Show the image on screen first", { kind: "error" });
+        toaster2.show("Show the image on screen first", { kind: "error" });
         return null;
       }
       const imageRect = contentRect(img, doc.defaultView);
@@ -18124,10 +18250,10 @@ function createActions({
         try {
           const write = () => clipboard.writeText(`((${blockUid}))`);
           await (native.withClipboard ? native.withClipboard(write) : write());
-          toaster.show("Whole image: copied the image block ref. Hold Alt while releasing to make a region.");
+          toaster2.show("Whole image: copied the image block ref. Hold Alt while releasing to make a region.");
         } catch (error) {
           console.warn("[plexus] clipboard failed", error);
-          toaster.show("Clipboard access was blocked", { kind: "error" });
+          toaster2.show("Clipboard access was blocked", { kind: "error" });
         }
         return null;
       }
@@ -18156,15 +18282,15 @@ function createActions({
     async startMindMap() {
       const editor = native.activeEditor(doc);
       if (!editor || !mindmap) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
       if (mindmap.selectedNode(editor.app)) {
-        toaster.show("Use Tab / Enter to grow this map");
+        toaster2.show("Use Tab / Enter to grow this map");
         return null;
       }
       if (!editor.drawingUid) {
-        toaster.show("Could not identify this drawing", { kind: "error" });
+        toaster2.show("Could not identify this drawing", { kind: "error" });
         return null;
       }
       return mindmap.startRoot({ app: editor.app, drawingUid: editor.drawingUid });
@@ -18179,6 +18305,15 @@ function createActions({
       return !!(editor && selectedAnchor(editor.app));
     },
     editEmbed: () => once("edit-embed", editEmbedOnce),
+    // Same anchor selection as canEditEmbed. The embed editor does not have to be idle.
+    canRemoveEmbed() {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) return false;
+      return !!selectedAnchor(editor.app);
+    },
+    removeSelectedEmbed,
+    addCitedEmbed,
+    installAnchorLeaveWatch,
     openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
@@ -18211,7 +18346,7 @@ function createActions({
     copyDrawingRef() {
       const editor = native.activeEditor(doc);
       if (!isId(editor?.drawingUid)) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return Promise.resolve(false);
       }
       return copyText2(`((${editor.drawingUid}))`, "Drawing ref copied");
@@ -18219,7 +18354,7 @@ function createActions({
     copyDrawingEmbed() {
       const editor = native.activeEditor(doc);
       if (!isId(editor?.drawingUid)) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return Promise.resolve(false);
       }
       return copyText2(`{{[[embed]]: ((${editor.drawingUid}))}}`, "Drawing embed copied");
@@ -18227,7 +18362,7 @@ function createActions({
     selectTextOnly() {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return 0;
       }
       const { app } = editor;
@@ -18235,7 +18370,7 @@ function createActions({
       const ids = native.selectedElementIds(app);
       const pick3 = ids.length ? free.filter((e) => ids.includes(e.id)) : free;
       if (!pick3.length) {
-        toaster.show("No free text to select", { kind: "error" });
+        toaster2.show("No free text to select", { kind: "error" });
         return 0;
       }
       const selection = {};
@@ -18251,27 +18386,27 @@ function createActions({
     restoreBeforeLastPlexusChange() {
       const editor = native.activeEditor(doc);
       if (!editor?.drawingUid) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return 0;
       }
       try {
         const n = guard2.restoreLast(editor.app, editor.drawingUid);
-        if (guard2 === directGuard) toaster.show("Nothing to restore");
+        if (guard2 === directGuard) toaster2.show("Nothing to restore");
         return n;
       } catch (error) {
         console.warn("[plexus] restore failed", error);
-        toaster.show("Could not restore the drawing", { kind: "error" });
+        toaster2.show("Could not restore the drawing", { kind: "error" });
         return 0;
       }
     },
     async refreshCropsForOpenDrawing() {
       const editor = native.activeEditor(doc);
       if (!editor) {
-        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return 0;
       }
       const count = await refreshCrops(editor.drawingUid);
-      toaster.show(`Refreshed ${count} crop${count === 1 ? "" : "s"}`);
+      toaster2.show(`Refreshed ${count} crop${count === 1 ? "" : "s"}`);
       return count;
     },
     refreshCropsForDrawing: (uid) => refreshCrops(uid),
@@ -18285,7 +18420,7 @@ function createActions({
     async clearCache() {
       clearImageMemo();
       await cache.clear();
-      toaster.show("Crop cache cleared");
+      toaster2.show("Crop cache cleared");
     }
   };
   function copyText2(text, done2) {
@@ -18298,12 +18433,12 @@ function createActions({
     }
     return Promise.resolve(pending2).then(
       () => {
-        toaster.show(done2);
+        toaster2.show(done2);
         return true;
       },
       (error) => {
         console.warn("[plexus] clipboard failed", error);
-        toaster.show("Clipboard access was blocked", { kind: "error" });
+        toaster2.show("Clipboard access was blocked", { kind: "error" });
         return false;
       }
     );
@@ -18384,10 +18519,10 @@ function createActions({
       await host.updateRegionString(region.drawingUid, regionUid, next, { expect: block.string });
     } catch (error) {
       if (error?.code === "changed" || /changed elsewhere/.test(String(error?.message))) {
-        toaster.show("Region changed elsewhere; not updated", { kind: "error" });
+        toaster2.show("Region changed elsewhere; not updated", { kind: "error" });
       } else {
         console.warn("[plexus] region update failed", error);
-        toaster.show("Could not update region, try again", { kind: "error" });
+        toaster2.show("Could not update region, try again", { kind: "error" });
       }
       return false;
     }
@@ -18411,15 +18546,15 @@ function createActions({
   async function applyGeometryUpdate(regionUid, editor, block, region) {
     const r = geometryFromSelection(region, block.string, editor.app);
     if (r.error) {
-      toaster.show(r.error, { kind: "error" });
+      toaster2.show(r.error, { kind: "error" });
       return false;
     }
     if (r.same) {
-      toaster.show("Region already matches the selection");
+      toaster2.show("Region already matches the selection");
       return false;
     }
     const ok = await writeGeometry(regionUid, editor.app, block, region, r.next, r.region);
-    if (ok) toaster.show("Region updated");
+    if (ok) toaster2.show("Region updated");
     return ok;
   }
   function readRegion(regionUid) {
@@ -18430,11 +18565,11 @@ function createActions({
   async function updateRegionOnce(regionUid) {
     const { block, region } = readRegion(regionUid);
     if (!region?.supported) {
-      toaster.show("Region cannot be updated", { kind: "error" });
+      toaster2.show("Region cannot be updated", { kind: "error" });
       return false;
     }
     if (isImageKind2(region.kind)) {
-      toaster.show("Image regions cannot be updated from a selection", { kind: "error" });
+      toaster2.show("Image regions cannot be updated from a selection", { kind: "error" });
       return false;
     }
     const editor = native.activeEditor(doc);
@@ -18451,7 +18586,7 @@ function createActions({
     const editor = native.activeEditor(doc);
     if (!editor || editor.drawingUid !== region.drawingUid) return false;
     pendingUpdate = { uid: regionUid };
-    toaster.show("Select the new elements, then right-click → Plexus: Update region from selection");
+    toaster2.show("Select the new elements, then right-click → Plexus: Update region from selection");
     return true;
   }
   async function applyPendingOnce() {
@@ -18465,7 +18600,7 @@ function createActions({
     const editor = native.activeEditor(doc);
     if (!editor || editor.drawingUid !== region.drawingUid) {
       pendingUpdate = null;
-      toaster.show("Drawing is no longer open", { kind: "error" });
+      toaster2.show("Drawing is no longer open", { kind: "error" });
       return false;
     }
     const ok = await applyGeometryUpdate(uid, editor, block, region);
@@ -18491,7 +18626,7 @@ function createActions({
   async function selectRegionInner(regionUid, { quiet = false } = {}) {
     const { region } = readRegion(regionUid);
     if (!region?.supported || isImageKind2(region.kind)) {
-      if (!quiet) toaster.show(region?.supported ? "Select on drawing is for drawing regions" : "Region cannot be selected", { kind: "error" });
+      if (!quiet) toaster2.show(region?.supported ? "Select on drawing is for drawing regions" : "Region cannot be selected", { kind: "error" });
       return false;
     }
     let editor = native.activeEditor(doc);
@@ -18502,7 +18637,7 @@ function createActions({
     }
     const picked = selectionFor(region, sceneElements(editor.app));
     if (!picked) {
-      if (!quiet) toaster.show("Region elements are gone; use Repair region", { kind: "error" });
+      if (!quiet) toaster2.show("Region elements are gone; use Repair region", { kind: "error" });
       return false;
     }
     editor.app.updateScene({ appState: picked });
@@ -18514,7 +18649,7 @@ function createActions({
   async function repairRegionOnce(regionUid) {
     const { block, region } = readRegion(regionUid);
     if (!region?.supported || isImageKind2(region.kind)) {
-      toaster.show("Region cannot be repaired", { kind: "error" });
+      toaster2.show("Region cannot be repaired", { kind: "error" });
       return { fixed: false, reason: "unsupported" };
     }
     const editor = native.activeEditor(doc);
@@ -18522,12 +18657,12 @@ function createActions({
     const drawing = mounted ? null : safe2(() => host.drawing(region.drawingUid));
     const elements = mounted ? sceneElements(mounted.app) : drawing?.elements ?? null;
     if (!elements) {
-      toaster.show("Drawing not found", { kind: "error" });
+      toaster2.show("Drawing not found", { kind: "error" });
       return { fixed: false, reason: "no-drawing" };
     }
     const box = regionSceneBBox(region, elements, mounted ? mounted.app.state : drawing.appState);
     if (!box.error && !box.missing?.length) {
-      toaster.show("Region looks fine");
+      toaster2.show("Region looks fine");
       return { fixed: false, reason: "ok" };
     }
     if (region.kind === "area" && !box.error && box.missing.length) {
@@ -18536,19 +18671,19 @@ function createActions({
       const next = tokenReplaced(block.string, "ids", value);
       const check = next ? parseRegion(next) : null;
       if (!check?.supported || check.kind !== "area" || check.caption !== region.caption || check.drawingUid !== region.drawingUid) {
-        toaster.show("Could not repair region", { kind: "error" });
+        toaster2.show("Could not repair region", { kind: "error" });
         return { fixed: false, reason: "mismatch" };
       }
       if (mounted) {
         const ok = await writeGeometry(regionUid, mounted.app, block, region, next, check);
-        if (ok) toaster.show("Region repaired");
+        if (ok) toaster2.show("Region repaired");
         return { fixed: ok, reason: ok ? "dropped-missing" : "write-failed" };
       }
       try {
         await host.updateRegionString(region.drawingUid, regionUid, next, { expect: block.string });
       } catch (error) {
         console.warn("[plexus] region repair failed", error);
-        toaster.show(error?.code === "changed" ? "Region changed elsewhere; not updated" : "Could not repair region, try again", { kind: "error" });
+        toaster2.show(error?.code === "changed" ? "Region changed elsewhere; not updated" : "Could not repair region, try again", { kind: "error" });
         return { fixed: false, reason: "write-failed" };
       }
       emitChange(regionUid);
@@ -18557,7 +18692,7 @@ function createActions({
       } catch (error) {
         console.warn("[plexus] refresh after repair failed", error);
       }
-      toaster.show("Region repaired");
+      toaster2.show("Region repaired");
       return { fixed: true, reason: "dropped-missing" };
     }
     await armPending(regionUid, region);
@@ -18566,12 +18701,12 @@ function createActions({
   async function regionsForAllFramesOnce() {
     const editor = native.activeEditor(doc);
     if (!editor) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return null;
     }
     const { app, drawingUid } = editor;
     if (!isId(drawingUid)) {
-      toaster.show("Could not identify this drawing", { kind: "error" });
+      toaster2.show("Could not identify this drawing", { kind: "error" });
       return null;
     }
     const named = /* @__PURE__ */ new Set();
@@ -18580,7 +18715,7 @@ function createActions({
     }
     const todo = orderFrames(sceneElements(app)).filter((f) => !named.has(f.id) && isId(f.id));
     if (!todo.length) {
-      toaster.show("Every frame already has a region");
+      toaster2.show("Every frame already has a region");
       return { created: 0, uids: [] };
     }
     const batch = todo.slice(0, 50);
@@ -18590,27 +18725,27 @@ function createActions({
       uids = await host.createRegions(drawingUid, strings);
     } catch (error) {
       console.warn("[plexus] regions for all frames failed", error);
-      toaster.show("Could not create regions, try again", { kind: "error" });
+      toaster2.show("Could not create regions, try again", { kind: "error" });
       return null;
     }
     for (const uid of uids) emitChange(uid);
-    if (!uids.length) toaster.show("Could not create regions, try again", { kind: "error" });
-    else if (uids.length < batch.length) toaster.show(`Created ${uids.length} of ${batch.length} frame regions; run again for the rest`, { kind: "error" });
-    else if (todo.length > batch.length) toaster.show("Created 50; run again for the rest");
-    else toaster.show(`Created ${uids.length} frame region${uids.length === 1 ? "" : "s"}`);
+    if (!uids.length) toaster2.show("Could not create regions, try again", { kind: "error" });
+    else if (uids.length < batch.length) toaster2.show(`Created ${uids.length} of ${batch.length} frame regions; run again for the rest`, { kind: "error" });
+    else if (todo.length > batch.length) toaster2.show("Created 50; run again for the rest");
+    else toaster2.show(`Created ${uids.length} frame region${uids.length === 1 ? "" : "s"}`);
     return { created: uids.length, uids };
   }
   async function removeElementLinkOnce() {
     const editor = native.activeEditor(doc);
     if (!editor) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return 0;
     }
     const { app, drawingUid } = editor;
     const ids = new Set(native.selectedElementIds(app));
     const linked = sceneElements(app).filter((e) => e && !e.isDeleted && ids.has(e.id) && e.link);
     if (!linked.length) {
-      toaster.show("No links on the selection");
+      toaster2.show("No links on the selection");
       return 0;
     }
     const hit = new Set(linked.map((e) => e.id));
@@ -18624,11 +18759,11 @@ function createActions({
       });
     } catch (error) {
       console.warn("[plexus] remove link failed", error);
-      toaster.show("Could not remove the link", { kind: "error" });
+      toaster2.show("Could not remove the link", { kind: "error" });
       return 0;
     }
     if (!ok) return 0;
-    toaster.show(`Removed ${hit.size} link${hit.size === 1 ? "" : "s"}`);
+    toaster2.show(`Removed ${hit.size} link${hit.size === 1 ? "" : "s"}`);
     return hit.size;
   }
   async function auditRegionsOnce(scope) {
@@ -18640,7 +18775,7 @@ function createActions({
         pageUid = null;
       }
       if (!pageUid) {
-        toaster.show("Open a page first", { kind: "error" });
+        toaster2.show("Open a page first", { kind: "error" });
         return null;
       }
     }
@@ -18651,7 +18786,7 @@ function createActions({
       containers = host.containersForAudit(pageUid ? { pageUid } : {});
     } catch (error) {
       console.warn("[plexus] region audit query failed", error);
-      toaster.show("Could not scan for regions", { kind: "error" });
+      toaster2.show("Could not scan for regions", { kind: "error" });
       return null;
     }
     const containerOf = new Map(containers.map((c) => [c.uid, c]));
@@ -18782,14 +18917,14 @@ function createActions({
       const refs = block ? parseImageRefs(block.string) : [];
       const ref = refs.find((r) => r.index === (opts.index ?? refs[0]?.index));
       if (!ref) {
-        toaster.show("No image in this block", { kind: "error" });
+        toaster2.show("No image in this block", { kind: "error" });
         return null;
       }
       let imageRect = opts.imageRect;
       if (!imageRect) {
         const img = findRenderedImage(blockUid, refs.indexOf(ref));
         if (!img) {
-          toaster.show("Show the image on screen first", { kind: "error" });
+          toaster2.show("Show the image on screen first", { kind: "error" });
           return null;
         }
         imageRect = contentRect(img, doc.defaultView);
@@ -18798,18 +18933,18 @@ function createActions({
     }
     const editor = native.activeEditor(doc);
     if (!editor) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return null;
     }
     const { app } = editor;
     const ids = native.selectedElementIds(app);
     const element = opts?.element ?? (ids.length === 1 ? sceneElements(app).find((el) => el.id === ids[0] && !el.isDeleted) : null);
     if (!element || element.type !== "image") {
-      toaster.show("Select exactly one image", { kind: "error" });
+      toaster2.show("Select exactly one image", { kind: "error" });
       return null;
     }
     if (element.angle) {
-      toaster.show("Rotated images are not supported", { kind: "error" });
+      toaster2.show("Rotated images are not supported", { kind: "error" });
       return null;
     }
     const drawingUid = opts?.drawingUid ?? editor.drawingUid;
@@ -18827,7 +18962,7 @@ function createActions({
     const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
     const region = block ? parseRegion(block.string) : null;
     if (!region?.supported) {
-      toaster.show("Region cannot be named", { kind: "error" });
+      toaster2.show("Region cannot be named", { kind: "error" });
       return false;
     }
     const tail = String(text ?? "").replace(/\s+/g, " ").trim();
@@ -18835,14 +18970,14 @@ function createActions({
     const next = headPreservingString(block.string, tail);
     if (next == null) {
       console.warn("[plexus] name region round-trip mismatch", regionUid);
-      toaster.show("Could not name region", { kind: "error" });
+      toaster2.show("Could not name region", { kind: "error" });
       return false;
     }
     try {
       await host.updateRegionString(region.drawingUid, regionUid, next);
     } catch (error) {
       console.warn("[plexus] name region failed", error);
-      toaster.show("Could not name region, try again", { kind: "error" });
+      toaster2.show("Could not name region, try again", { kind: "error" });
       return false;
     }
     emitChange(regionUid);
@@ -18859,7 +18994,7 @@ function createActions({
       rows = host.allRegionBlocks?.() ?? [];
     } catch (error) {
       console.warn("[plexus] region scan failed", error);
-      toaster.show("Could not scan for regions", { kind: "error" });
+      toaster2.show("Could not scan for regions", { kind: "error" });
       return null;
     }
     const candidates = [];
@@ -18938,10 +19073,10 @@ function createActions({
           const write = () => clipboard.writeText(JSON.stringify(r, null, 2));
           try {
             await (native.withClipboard ? native.withClipboard(write) : write());
-            toaster.show("Report copied");
+            toaster2.show("Report copied");
           } catch (error) {
             console.warn("[plexus] clipboard failed", error);
-            toaster.show("Clipboard access was blocked", { kind: "error" });
+            toaster2.show("Clipboard access was blocked", { kind: "error" });
           }
         }
       });
@@ -18952,7 +19087,7 @@ function createActions({
   async function applyCleanupOnce(report) {
     const list = report?.candidates;
     if (!Array.isArray(list)) {
-      toaster.show("Run the cleanup dry run first", { kind: "error" });
+      toaster2.show("Run the cleanup dry run first", { kind: "error" });
       return null;
     }
     const changed = [];
@@ -18984,12 +19119,12 @@ function createActions({
     }
     if (changed.length) undoSlot = { changes: changed };
     const tail = `${skipped2.length ? `, ${skipped2.length} skipped` : ""}${failed.length ? `, ${failed.length} failed` : ""}`;
-    toaster.show(`Cleared ${changed.length} placeholder caption${changed.length === 1 ? "" : "s"}${tail}`, failed.length ? { kind: "error" } : void 0);
+    toaster2.show(`Cleared ${changed.length} placeholder caption${changed.length === 1 ? "" : "s"}${tail}`, failed.length ? { kind: "error" } : void 0);
     return { changed, skipped: skipped2, failed };
   }
   async function undoCleanupOnce() {
     if (!undoSlot) {
-      toaster.show("Nothing to undo");
+      toaster2.show("Nothing to undo");
       return null;
     }
     const { changes } = undoSlot;
@@ -19025,7 +19160,7 @@ function createActions({
       }
     }
     if (!failed.length && !disposed) undoSlot = null;
-    toaster.show(`Restored ${restored.length} caption${restored.length === 1 ? "" : "s"}${skipped2.length ? `, ${skipped2.length} skipped` : ""}${failed.length ? `, ${failed.length} failed` : ""}`, failed.length ? { kind: "error" } : void 0);
+    toaster2.show(`Restored ${restored.length} caption${restored.length === 1 ? "" : "s"}${skipped2.length ? `, ${skipped2.length} skipped` : ""}${failed.length ? `, ${failed.length} failed` : ""}`, failed.length ? { kind: "error" } : void 0);
     return { restored, skipped: skipped2, failed };
   }
   function cropPrepQuiet(regionUid) {
@@ -19051,7 +19186,7 @@ function createActions({
   function cropPrep(regionUid) {
     const { prep, message } = cropPrepQuiet(regionUid);
     if (!prep) {
-      toaster.show(message, { kind: "error" });
+      toaster2.show(message, { kind: "error" });
       return null;
     }
     return prep;
@@ -19140,14 +19275,14 @@ function createActions({
   }
   function clipboardWritable() {
     if (typeof ClipboardItemCtor !== "function" || typeof clipboard?.write !== "function") {
-      toaster.show("Copying images is not supported here", { kind: "error" });
+      toaster2.show("Copying images is not supported here", { kind: "error" });
       return false;
     }
     return true;
   }
   async function copyCropPngOnce(regionUid) {
     if (native.clipboardBusy?.()) {
-      toaster.show("Busy capturing a crop, try again", { kind: "error" });
+      toaster2.show("Busy capturing a crop, try again", { kind: "error" });
       return false;
     }
     if (!clipboardWritable()) return false;
@@ -19157,22 +19292,22 @@ function createActions({
       await clipboard.write([new ClipboardItemCtor({ "image/png": job.promise })]);
     } catch (error) {
       console.warn("[plexus] copy crop failed", error);
-      toaster.show("Could not copy the crop", { kind: "error" });
+      toaster2.show("Could not copy the crop", { kind: "error" });
       return false;
     }
-    toaster.show(job.lowRes ? "Copied at 1×; open the drawing for a sharper copy" : "Crop copied as PNG");
+    toaster2.show(job.lowRes ? "Copied at 1×; open the drawing for a sharper copy" : "Crop copied as PNG");
     return true;
   }
   async function copyCropSvgOnce(regionUid) {
     if (native.clipboardBusy?.()) {
-      toaster.show("Busy capturing a crop, try again", { kind: "error" });
+      toaster2.show("Busy capturing a crop, try again", { kind: "error" });
       return false;
     }
     if (!clipboardWritable()) return false;
     const prep = cropPrep(regionUid);
     if (!prep) return false;
     if (!prep.keys.svg) {
-      toaster.show("SVG copy is for drawing regions", { kind: "error" });
+      toaster2.show("SVG copy is for drawing regions", { kind: "error" });
       return false;
     }
     const mem = readEntry(cache.peek?.(prep.keys.svg));
@@ -19191,14 +19326,14 @@ function createActions({
     } catch (error) {
       const missing = await text.then(() => false, (e) => !!e?.noSvg);
       if (missing) {
-        toaster.show("Open the drawing to copy as SVG", { kind: "error" });
+        toaster2.show("Open the drawing to copy as SVG", { kind: "error" });
         return false;
       }
       console.warn("[plexus] copy svg failed", error);
-      toaster.show("Could not copy the crop", { kind: "error" });
+      toaster2.show("Could not copy the crop", { kind: "error" });
       return false;
     }
-    toaster.show("Crop copied as SVG");
+    toaster2.show("Crop copied as SVG");
     return true;
   }
   function stripBrackets(text) {
@@ -19215,7 +19350,7 @@ function createActions({
       blob = await job.promise;
     } catch (error) {
       console.warn("[plexus] download crop failed", error);
-      toaster.show("Could not render the crop", { kind: "error" });
+      toaster2.show("Could not render the crop", { kind: "error" });
       return false;
     }
     if (disposed) return false;
@@ -19231,7 +19366,7 @@ function createActions({
     } catch (error) {
       console.warn("[plexus] download crop failed", error);
       urls.revokeObjectURL(url);
-      toaster.show("Could not download the crop", { kind: "error" });
+      toaster2.show("Could not download the crop", { kind: "error" });
       return false;
     }
     const revoke = () => {
@@ -19242,17 +19377,17 @@ function createActions({
     const timer = setTimeout(revoke, revokeDelayMs);
     timer.unref?.();
     revokers.add(revoke);
-    toaster.show(job.lowRes ? "Downloaded at 1×; open the drawing for a sharper copy" : "Crop downloaded");
+    toaster2.show(job.lowRes ? "Downloaded at 1×; open the drawing for a sharper copy" : "Crop downloaded");
     return true;
   }
   async function insertCropImageOnce(regionUid, blockUid) {
     if (host.isEncrypted?.()) {
-      toaster.show("Insert crop is not available on encrypted graphs yet", { kind: "error" });
+      toaster2.show("Insert crop is not available on encrypted graphs yet", { kind: "error" });
       return null;
     }
     const target = isId(blockUid) ? host.pullBlock(blockUid) : null;
     if (!target) {
-      toaster.show("Could not find the block to insert after", { kind: "error" });
+      toaster2.show("Could not find the block to insert after", { kind: "error" });
       return null;
     }
     let at;
@@ -19264,11 +19399,11 @@ function createActions({
     const parent = [at?.[":block/_children"]].flat()[0];
     const parentUid = parent?.[":block/uid"];
     if (!parentUid) {
-      toaster.show("Could not find the block to insert after", { kind: "error" });
+      toaster2.show("Could not find the block to insert after", { kind: "error" });
       return null;
     }
     if (isContainerString(target.string) || isContainerString(parent[":block/string"])) {
-      toaster.show("Pick a block outside the regions container", { kind: "error" });
+      toaster2.show("Pick a block outside the regions container", { kind: "error" });
       return null;
     }
     const job = startPng(regionUid);
@@ -19286,7 +19421,7 @@ function createActions({
       markdown = `![${label}](${url})`;
     } catch (error) {
       console.warn("[plexus] insert crop upload failed", error);
-      toaster.show("Could not upload the crop", { kind: "error" });
+      toaster2.show("Could not upload the crop", { kind: "error" });
       return null;
     }
     if (disposed) return null;
@@ -19296,11 +19431,11 @@ function createActions({
         location: { "parent-uid": parentUid, order: (at[":block/order"] ?? 0) + 1 },
         block: { uid, string: markdown }
       });
-      toaster.show("Crop inserted as an image block");
+      toaster2.show("Crop inserted as an image block");
       return uid;
     } catch (error) {
       console.warn("[plexus] insert crop failed", error);
-      toaster.show("Could not insert the crop", { kind: "error" });
+      toaster2.show("Could not insert the crop", { kind: "error" });
       return null;
     }
   }
@@ -19308,7 +19443,7 @@ function createActions({
     const block = isId(regionUid) ? host.pullBlock(regionUid) : null;
     const region = block ? parseRegion(block.string) : null;
     if (!region?.supported) {
-      toaster.show("Region cannot be copied", { kind: "error" });
+      toaster2.show("Region cannot be copied", { kind: "error" });
       return false;
     }
     const label = stripBrackets(labelOf(region)) || "Region";
@@ -19317,10 +19452,10 @@ function createActions({
       await (native.withClipboard ? native.withClipboard(write) : write());
     } catch (error) {
       console.warn("[plexus] clipboard failed", error);
-      toaster.show("Clipboard access was blocked", { kind: "error" });
+      toaster2.show("Clipboard access was blocked", { kind: "error" });
       return false;
     }
-    toaster.show("Alias copied");
+    toaster2.show("Alias copied");
     return true;
   }
   async function refreshAfterCloseOnce(drawingUid, mountHash) {
@@ -19475,7 +19610,7 @@ function createActions({
   function requireEditor() {
     const editor = native.activeEditor(doc);
     if (!editor || !isId(editor.drawingUid)) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return null;
     }
     return editor;
@@ -19524,7 +19659,7 @@ function createActions({
     if (!editor) return null;
     const size = presetSize(preset);
     if (!size) {
-      toaster.show("Unknown frame size", { kind: "error" });
+      toaster2.show("Unknown frame size", { kind: "error" });
       return null;
     }
     const slot = placement === "next" ? nextSlideSlot(sceneElements(editor.app)) : null;
@@ -19532,7 +19667,7 @@ function createActions({
     const rect = slot ? { x: slot.x, y: slot.y, ...size } : { x: c.x - size.width / 2, y: c.y - size.height / 2, ...size };
     const created = insertFrames(editor, [rect], preset, "Add frame");
     if (!created) {
-      toaster.show("Could not add the frame", { kind: "error" });
+      toaster2.show("Could not add the frame", { kind: "error" });
       return null;
     }
     return created[0].id;
@@ -19542,12 +19677,12 @@ function createActions({
     if (!editor) return null;
     const rects = layoutFrames({ kind, preset, centre: viewCentre(editor.app) });
     if (!rects.length) {
-      toaster.show("Unknown frame layout", { kind: "error" });
+      toaster2.show("Unknown frame layout", { kind: "error" });
       return null;
     }
     const created = insertFrames(editor, rects, preset, "Add frames");
     if (!created) {
-      toaster.show("Could not add the frames", { kind: "error" });
+      toaster2.show("Could not add the frames", { kind: "error" });
       return null;
     }
     return created.map((f) => f.id);
@@ -19559,12 +19694,12 @@ function createActions({
     const id = selectedFrameOf(scene, native.selectedElementIds(editor.app));
     const target = id ? scene.find((el) => el?.id === id && !el.isDeleted) : null;
     if (!target) {
-      toaster.show("Select a frame first", { kind: "error" });
+      toaster2.show("Select a frame first", { kind: "error" });
       return null;
     }
     const rect = reformatRect(target, preset);
     if (!rect) {
-      toaster.show("Unknown frame size", { kind: "error" });
+      toaster2.show("Unknown frame size", { kind: "error" });
       return null;
     }
     const released = new Set(childrenOutside(scene, target, rect).map((el) => el.id));
@@ -19580,10 +19715,10 @@ function createActions({
       })
     });
     if (!ok) {
-      toaster.show("Could not reformat the frame", { kind: "error" });
+      toaster2.show("Could not reformat the frame", { kind: "error" });
       return null;
     }
-    if (released.size) toaster.show(`${released.size} element${released.size === 1 ? "" : "s"} left the frame`);
+    if (released.size) toaster2.show(`${released.size} element${released.size === 1 ? "" : "s"} left the frame`);
     return id;
   }
   function makeSlideOnce() {
@@ -19595,7 +19730,7 @@ function createActions({
     const byId = new Map(scene.map((el) => [el?.id, el]));
     const picked = ids.map((id) => byId.get(id)).filter((el) => el && !el.isDeleted);
     if (!picked.length || picked.some(isFrameEl)) {
-      toaster.show("Select elements that are not frames", { kind: "error" });
+      toaster2.show("Select elements that are not frames", { kind: "error" });
       return null;
     }
     const before = new Set(scene.filter(isFrameEl).map((el) => el.id));
@@ -19612,7 +19747,7 @@ function createActions({
     let resultId = null;
     let ok = false;
     if (wrap && !newFrameId) {
-      toaster.show("Could not make a slide", { kind: "error" });
+      toaster2.show("Could not make a slide", { kind: "error" });
       return null;
     }
     if (newFrameId) {
@@ -19652,7 +19787,7 @@ function createActions({
       });
     }
     if (!ok || !resultId) {
-      toaster.show("Could not make a slide", { kind: "error" });
+      toaster2.show("Could not make a slide", { kind: "error" });
       return null;
     }
     return resultId;
@@ -19787,25 +19922,25 @@ function createActions({
     if (!native.activeEditor(doc)) {
       safe2(() => host.openBlock?.(added[0], { sidebar: true }));
     } else {
-      toaster.show("Notes added: Outline › regions");
+      toaster2.show("Notes added: Outline › regions");
     }
   }
   async function presentOnce(requestedUid, release, { from = "start", at } = {}) {
     const editor = native.activeEditor(doc);
     const uid = requestedUid || editor?.drawingUid;
     if (!isId(uid) || !presenter) {
-      toaster.show("Could not identify this drawing", { kind: "error" });
+      toaster2.show("Could not identify this drawing", { kind: "error" });
       return null;
     }
     const mounted = editor && editor.drawingUid === uid ? editor : null;
     const drawing = host.drawing(uid);
     const frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
     if (!frames.length) {
-      toaster.show("No frames in this drawing", { kind: "error" });
+      toaster2.show("No frames in this drawing", { kind: "error" });
       return null;
     }
     if (!drawing) {
-      toaster.show("Drawing not found", { kind: "error" });
+      toaster2.show("Drawing not found", { kind: "error" });
       return null;
     }
     let start = 0;
@@ -19898,7 +20033,7 @@ function createActions({
   }
   async function presentOutlineOnce(blockUid, release, { start: startIndex = 0 } = {}) {
     if (!isId(blockUid) || !presenter) {
-      toaster.show("Could not identify this block", { kind: "error" });
+      toaster2.show("Could not identify this block", { kind: "error" });
       return null;
     }
     const block = safe2(() => host.pullBlock(blockUid));
@@ -19922,7 +20057,7 @@ function createActions({
       slides.push({ regionUid, prep, notes: isId(childUid2) ? { rootUid: childUid2 } : void 0, name: stripBrackets(labelOf(prep.region)) || `Slide ${slides.length + 1}`, url: null });
     }
     if (!slides.length) {
-      toaster.show("No region refs under this block", { kind: "error" });
+      toaster2.show("No region refs under this block", { kind: "error" });
       return null;
     }
     const bag = urlBag();
@@ -19983,28 +20118,28 @@ function createActions({
     const editor = native.activeEditor(doc);
     const uid = isId(drawingUid) ? drawingUid : editor?.drawingUid;
     if (!isId(uid)) {
-      toaster.show("Open a drawing or pick a drawing block", { kind: "error" });
+      toaster2.show("Open a drawing or pick a drawing block", { kind: "error" });
       return null;
     }
     const mounted = editor && editor.drawingUid === uid ? editor : null;
     const drawing = safe2(() => host.drawing(uid));
     let frames = orderFrames(mounted ? sceneElements(mounted.app) : drawing?.elements ?? []);
     if (!drawing && !mounted) {
-      toaster.show("Drawing not found", { kind: "error" });
+      toaster2.show("Drawing not found", { kind: "error" });
       return null;
     }
     if (!frames.length) {
-      toaster.show("No frames in this drawing", { kind: "error" });
+      toaster2.show("No frames in this drawing", { kind: "error" });
       return null;
     }
     if (frames.length > PRINT_CAP) {
-      toaster.show(`Using the first ${PRINT_CAP} of ${frames.length} frames`);
+      toaster2.show(`Using the first ${PRINT_CAP} of ${frames.length} frames`);
       frames = frames.slice(0, PRINT_CAP);
     }
     const defaults = printSettings();
     const pageSize = PRINT_SIZES2.includes(String(size).toLowerCase()) ? String(size).toLowerCase() : defaults.size;
     const pageMargin = Number.isFinite(Number(margin)) && margin !== null && margin !== void 0 ? Math.min(40, Math.max(0, Number(margin))) : defaults.margin;
-    toaster.show(`Preparing ${frames.length} page${frames.length === 1 ? "" : "s"}…`);
+    toaster2.show(`Preparing ${frames.length} page${frames.length === 1 ? "" : "s"}…`);
     const bag = urlBag();
     const job = { dispose: () => {
       bag.revoke();
@@ -20031,10 +20166,10 @@ function createActions({
       });
       if (disposed || printJob !== job) return null;
       if (!pages.length) {
-        toaster.show(result.renderFailed ? "Could not render this drawing" : "Could not render any frame", { kind: "error" });
+        toaster2.show(result.renderFailed ? "Could not render this drawing" : "Could not render any frame", { kind: "error" });
         return null;
       }
-      if (pages.length < frames.length) toaster.show(`${frames.length - pages.length} frame${frames.length - pages.length === 1 ? "" : "s"} could not be rendered`, { kind: "error" });
+      if (pages.length < frames.length) toaster2.show(`${frames.length - pages.length} frame${frames.length - pages.length === 1 ? "" : "s"} could not be rendered`, { kind: "error" });
       if (mode === "png") {
         active = printKit.downloadPngs({ doc, drawing: title, frames: pages.map(({ blob, name, index }) => ({ blob, name, index })), total: frames.length });
       } else {
@@ -20044,7 +20179,7 @@ function createActions({
       return { pages: pages.length, mode };
     } catch (error) {
       console.warn("[plexus] print failed", error);
-      if (!disposed) toaster.show(mode === "png" ? "Could not export the frames" : "Could not print the frames", { kind: "error" });
+      if (!disposed) toaster2.show(mode === "png" ? "Could not export the frames" : "Could not print the frames", { kind: "error" });
       return null;
     } finally {
       bag.revoke();
@@ -20137,20 +20272,20 @@ function createActions({
   }
   async function mindMapFromOutlineOnce(blockUid) {
     if (!mindmap || !isId(blockUid)) {
-      toaster.show("Click into a block first", { kind: "error" });
+      toaster2.show("Click into a block first", { kind: "error" });
       return null;
     }
     const info = mindmap.outlineInfo(blockUid);
     if (!info) {
-      toaster.show("Block not found", { kind: "error" });
+      toaster2.show("Block not found", { kind: "error" });
       return null;
     }
     if (isExcludedString(info.string)) {
-      toaster.show("Drawings cannot be a mind map root", { kind: "error" });
+      toaster2.show("Drawings cannot be a mind map root", { kind: "error" });
       return null;
     }
     if (info.visible >= mindmap.NODE_CAP) {
-      toaster.show(`Collapse some branches first (${info.total} blocks)`, { kind: "error" });
+      toaster2.show(`Collapse some branches first (${info.total} blocks)`, { kind: "error" });
       return null;
     }
     let drawingUid;
@@ -20165,13 +20300,13 @@ function createActions({
       });
     } catch (error) {
       console.warn("[plexus] mind map drawing create failed", error);
-      toaster.show("Could not create the drawing", { kind: "error" });
+      toaster2.show("Could not create the drawing", { kind: "error" });
       return null;
     }
     const opened = await openDrawingOnce(drawingUid);
     if (!opened || disposed) return null;
     const ok = await mindmap.showOutline({ app: opened.app, rootUid: blockUid });
-    if (!ok && !disposed) toaster.show("Could not build the mind map", { kind: "error" });
+    if (!ok && !disposed) toaster2.show("Could not build the mind map", { kind: "error" });
     return ok ? drawingUid : null;
   }
   function selectedAnchor(app) {
@@ -20185,18 +20320,18 @@ function createActions({
     const overlay = getEmbedOverlay();
     const editor = native.activeEditor(doc);
     if (!overlay || !editor) {
-      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
       return false;
     }
     if (overlay.editState?.() !== "idle") return false;
     const anchor = selectedAnchor(editor.app);
     if (!anchor) {
-      toaster.show("Select one embedded block first", { kind: "error" });
+      toaster2.show("Select one embedded block first", { kind: "error" });
       return false;
     }
     const ref = parseEmbedRef(anchor.customData.plexus.embed);
     if (!ref || ref.kind !== "block") {
-      toaster.show(ref?.kind === "today" ? "Today embeds are read-only" : "Page embeds are read-only for now");
+      toaster2.show(ref?.kind === "today" ? "Today embeds are read-only" : "Page embeds are read-only for now");
       return false;
     }
     const block = host.pullBlock(ref.uid);
@@ -20210,10 +20345,176 @@ function createActions({
       }
     }
     if (!block || ref.uid === editor.drawingUid || ancestor || NOT_EDITABLE_RE.test(block.string)) {
-      toaster.show("This block cannot be edited on the canvas", { kind: "error" });
+      toaster2.show("This block cannot be edited on the canvas", { kind: "error" });
       return false;
     }
     return overlay.edit(anchor.id);
+  }
+  function removeSelectedEmbed() {
+    const editor = native.activeEditor(doc);
+    const anchor = editor?.app ? selectedAnchor(editor.app) : null;
+    if (!anchor) return false;
+    const current6 = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
+    const ids = /* @__PURE__ */ new Set([anchor.id]);
+    for (const el of current6) if (el && el.containerId === anchor.id) ids.add(el.id);
+    for (const id of ids) leaveSilenced.add(id);
+    let ok = false;
+    try {
+      ok = guard2.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Remove embed",
+        captureUpdate: "IMMEDIATELY",
+        next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd5(), updated: Date.now() } : el)
+      }) === true;
+    } catch (error) {
+      console.warn("[plexus] remove embed failed", error);
+      ok = false;
+    }
+    if (!ok) {
+      for (const id of ids) leaveSilenced.delete(id);
+      return false;
+    }
+    toaster2.show(REMOVED_TOAST);
+    return true;
+  }
+  function blockCite(ref) {
+    const text = typeof ref === "string" ? ref : ref && typeof ref === "object" ? ref.ref || ref.uid || "" : "";
+    const parsed = parseEmbedRef(text);
+    if (!parsed || parsed.kind !== "block") return null;
+    return parsed.ref;
+  }
+  function citedLabel(cite) {
+    const uid = parseEmbedRef(cite)?.uid;
+    const textOf = (value) => {
+      if (value == null || typeof value.then === "function") return "";
+      if (typeof value === "string") return embedLabel(value);
+      if (typeof value === "object") return embedLabel(value.string || value.title || "");
+      return "";
+    };
+    for (const read of [
+      () => host.pullEmbedContent?.(cite),
+      () => host.pullBlock?.(uid),
+      () => host.labelSource?.(uid)
+    ]) {
+      try {
+        const label = textOf(read());
+        if (label) return label;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function addCitedEmbed({ elementId, bbox, ref } = {}) {
+    const editor = requireEditor();
+    if (!editor) return false;
+    const cite = blockCite(ref);
+    if (!cite || !Array.isArray(bbox) || !Number.isFinite(bbox[1]) || !Number.isFinite(bbox[2])) return false;
+    const elements = makeEmbedAnchor({ ref: cite, link: cite, label: citedLabel(cite), x: bbox[2] + 16, y: bbox[1] });
+    void elementId;
+    try {
+      return insertGuarded(editor.app, editor.drawingUid, elements, "Embed") === true;
+    } catch (error) {
+      console.warn("[plexus] cited embed failed", error);
+      return false;
+    }
+  }
+  function installAnchorLeaveWatch(app, drawingUid) {
+    if (!app || disposed) return () => {
+    };
+    const seenEmbed = /* @__PURE__ */ new Set();
+    const seenFrame = /* @__PURE__ */ new Set();
+    const toasted = /* @__PURE__ */ new Set();
+    let stopped = false;
+    let started = false;
+    let off = null;
+    const readElements = () => {
+      try {
+        const els = app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? [];
+        return Array.isArray(els) ? els : [];
+      } catch (error) {
+        console.warn("[plexus] anchor leave watch failed", error);
+        return null;
+      }
+    };
+    const listedFrameIds = () => {
+      const ids = /* @__PURE__ */ new Set();
+      const entries = safe2(() => host.regionsOf?.(drawingUid)) || [];
+      for (const entry of entries) {
+        const region = entry?.region;
+        if (!region || region.kind !== "frame" && region.kind !== "cframe") continue;
+        if (typeof region.frameId === "string" && region.frameId) ids.add(region.frameId);
+      }
+      return ids;
+    };
+    const scan2 = () => {
+      if (stopped || disposed) return;
+      const elements = readElements();
+      if (!elements) return;
+      const byId = /* @__PURE__ */ new Map();
+      for (const el of elements) if (el?.id) byId.set(el.id, el);
+      const liveEmbed = new Set(embedAnchors(elements).map((el) => el.id));
+      const listed = listedFrameIds();
+      const liveFrame = /* @__PURE__ */ new Set();
+      for (const id of listed) {
+        const el = byId.get(id);
+        if (el && !el.isDeleted) liveFrame.add(id);
+      }
+      if (!started) {
+        for (const id of liveEmbed) seenEmbed.add(id);
+        for (const id of liveFrame) seenFrame.add(id);
+        started = true;
+        return;
+      }
+      for (const id of liveEmbed) seenEmbed.add(id);
+      for (const id of liveFrame) seenFrame.add(id);
+      let hit = false;
+      const depart = (id) => {
+        if (toasted.has(id) || leaveSilenced.has(id)) return;
+        toasted.add(id);
+        hit = true;
+      };
+      for (const id of seenEmbed) {
+        const el = byId.get(id);
+        if (!el || el.isDeleted) depart(id);
+      }
+      for (const id of seenFrame) {
+        if (!listed.has(id)) continue;
+        const el = byId.get(id);
+        if (!el || el.isDeleted) depart(id);
+      }
+      if (!hit) return;
+      try {
+        toaster2.show(REMOVED_TOAST);
+      } catch (error) {
+        console.warn("[plexus] anchor leave watch failed", error);
+      }
+    };
+    scan2();
+    try {
+      const unsub = app.onChangeEmitter?.on?.(() => {
+        try {
+          scan2();
+        } catch (error) {
+          console.warn("[plexus] anchor leave watch failed", error);
+        }
+      });
+      if (typeof unsub === "function") off = unsub;
+    } catch (error) {
+      console.warn("[plexus] anchor leave watch failed", error);
+    }
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      leaveWatches.delete(stop);
+      try {
+        off?.();
+      } catch (error) {
+        console.warn("[plexus] unsubscribe failed", error);
+      }
+      off = null;
+    };
+    leaveWatches.add(stop);
+    return stop;
   }
   async function legacyDryRunOnce() {
     let rows;
@@ -20221,7 +20522,7 @@ function createActions({
       rows = rowsFromQuery(api.data.q(LEGACY_QUERY));
     } catch (error) {
       console.warn("[plexus] legacy query failed", error);
-      toaster.show("Could not scan for legacy drawings", { kind: "error" });
+      toaster2.show("Could not scan for legacy drawings", { kind: "error" });
       return null;
     }
     const summary = legacySummary(rows);
@@ -20234,10 +20535,10 @@ function createActions({
           const write = () => clipboard.writeText(JSON.stringify({ summary: sum, rows: list }, null, 2));
           try {
             await (native.withClipboard ? native.withClipboard(write) : write());
-            toaster.show("Report copied");
+            toaster2.show("Report copied");
           } catch (error) {
             console.warn("[plexus] clipboard failed", error);
-            toaster.show("Clipboard access was blocked", { kind: "error" });
+            toaster2.show("Clipboard access was blocked", { kind: "error" });
           }
         }
       });
@@ -20252,26 +20553,26 @@ function createActions({
   async function migrateLegacyOnce(legacyUid) {
     if (!isId(legacyUid)) return null;
     if (native.activeEditor(doc)) {
-      toaster.show("Close the open drawing first", { kind: "error" });
+      toaster2.show("Close the open drawing first", { kind: "error" });
       return null;
     }
     if (migrating) {
-      toaster.show("A migration is already running", { kind: "error" });
+      toaster2.show("A migration is already running", { kind: "error" });
       return null;
     }
     const block = host.pullBlock(legacyUid);
     if (!block || !isLegacyDrawingString(block.string)) {
-      toaster.show("Not a legacy drawing", { kind: "error" });
+      toaster2.show("Not a legacy drawing", { kind: "error" });
       return null;
     }
     const parsed = parseLegacyDrawing(block.string);
     if (parsed.error) {
-      toaster.show(`Cannot migrate: ${parsed.error}`, { kind: "error" });
+      toaster2.show(`Cannot migrate: ${parsed.error}`, { kind: "error" });
       return null;
     }
     const conv = legacyToElements(parsed.elements, { migratedFrom: legacyUid });
     if (!conv.elements.length) {
-      toaster.show("Nothing to migrate", { kind: "error" });
+      toaster2.show("Nothing to migrate", { kind: "error" });
       return null;
     }
     let ok = false;
@@ -20286,13 +20587,13 @@ function createActions({
     try {
       const lock = await withLockFn(lockName(host.graphName(), `migrate:${legacyUid}`), () => migrateBody(legacyUid, parsed, conv, run), { ifAvailable: true });
       if (!lock.acquired) {
-        toaster.show("Migration already running in another window", { kind: "error" });
+        toaster2.show("Migration already running in another window", { kind: "error" });
         return null;
       }
       return lock.value ?? null;
     } catch (error) {
       console.warn("[plexus] migration failed", error);
-      if (!disposed) toaster.show(migrationStoppedText(legacyUid, run, "Migration failed."), { kind: "error" });
+      if (!disposed) toaster2.show(migrationStoppedText(legacyUid, run, "Migration failed."), { kind: "error" });
       return null;
     } finally {
       migrating = false;
@@ -20310,11 +20611,11 @@ function createActions({
     const at = api.data.pull("[:block/order {:block/_children [:block/uid]}]", [":block/uid", legacyUid]);
     const parent = at?.[":block/_children"]?.[0]?.[":block/uid"];
     if (!parent) {
-      toaster.show("Could not find the legacy block's parent", { kind: "error" });
+      toaster2.show("Could not find the legacy block's parent", { kind: "error" });
       return null;
     }
     const already = () => {
-      toaster.show("Already migrated");
+      toaster2.show("Already migrated");
       return null;
     };
     const existing = host.pullBlock(target);
@@ -20322,13 +20623,13 @@ function createActions({
     let reuse = false;
     if (existing) {
       if (!DRAWING_BLOCK_RE.test(existing.string)) {
-        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        toaster2.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
         return null;
       }
       const d = host.drawing(target);
       if (liveTagged(d, legacyUid) > 0) return already();
       if ((d?.elements || []).some((e) => !e.isDeleted)) {
-        toaster.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
+        toaster2.show("The block below the legacy drawing changed; nothing was written", { kind: "error" });
         return null;
       }
       reuse = true;
@@ -20357,7 +20658,7 @@ function createActions({
     const editor = await openDrawingOnce(targetUid, {});
     if (disposed) return null;
     if (!editor) {
-      toaster.show(migrationStoppedText(legacyUid, run, "Migration stopped: the drawing did not open."), { kind: "error" });
+      toaster2.show(migrationStoppedText(legacyUid, run, "Migration stopped: the drawing did not open."), { kind: "error" });
       return null;
     }
     const app = editor.app;
@@ -20370,17 +20671,17 @@ function createActions({
     await frame();
     if (disposed) return null;
     if (!stillHere()) {
-      toaster.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
+      toaster2.show("Drawing closed before migration finished; run Migrate again", { kind: "error" });
       return null;
     }
     if (!loaded || app.state?.isLoading) {
-      toaster.show("Drawing is still loading; run Migrate again and the empty drawing will be reused", { kind: "error" });
+      toaster2.show("Drawing is still loading; run Migrate again and the empty drawing will be reused", { kind: "error" });
       return null;
     }
     const ids = native.addViaPaste(app, conv.elements);
     const N = ids.length;
     if (!N) {
-      toaster.show("Migration pasted no elements", { kind: "error" });
+      toaster2.show("Migration pasted no elements", { kind: "error" });
       return null;
     }
     try {
@@ -20404,19 +20705,19 @@ function createActions({
       await sleep(verifyPollMs);
     }
     if (!confirmed) {
-      toaster.show("Migration not confirmed yet. Reopen the drawing before running Migrate again", { kind: "error" });
+      toaster2.show("Migration not confirmed yet. Reopen the drawing before running Migrate again", { kind: "error" });
       return null;
     }
     const after = legacySnapshot(legacyUid);
     const unchanged = !!before && !!after && before.string === after.string && before.editTime === after.editTime;
     const skipped2 = M - N;
     const head = N === M ? `Migrated ${N} elements.` : `Migrated ${N} of ${M} elements (${skipped2} not migrated).`;
-    toaster.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
+    toaster2.show(`${head} ${unchanged ? "The legacy block is unchanged." : "The legacy block changed during migration (not by Plexus)."}`);
     return targetUid;
   }
   async function openDrawingOnce(uid, { sidebar = false, reuseIcon = false, placeholder = false, quiet = false } = {}) {
     const note = (message) => {
-      if (!quiet) toaster.show(message, { kind: "error" });
+      if (!quiet) toaster2.show(message, { kind: "error" });
     };
     const matches = () => {
       const ed = native.activeEditor(doc);
@@ -20459,7 +20760,7 @@ function createActions({
     const block = host.pullBlock(regionUid);
     const region = block ? parseRegion(block.string) : null;
     if (!region || !region.supported) {
-      toaster.show("Region cannot be opened", { kind: "error" });
+      toaster2.show("Region cannot be opened", { kind: "error" });
       return null;
     }
     const uid = region.drawingUid;
@@ -20468,7 +20769,7 @@ function createActions({
         await host.openBlock(uid, { sidebar });
       } catch (error) {
         console.warn("[plexus] open block failed", error);
-        toaster.show("Could not open image", { kind: "error" });
+        toaster2.show("Could not open image", { kind: "error" });
         return null;
       }
       const settled = (img2) => {
@@ -20515,7 +20816,7 @@ function createActions({
           await host.openBlock(uid, { sidebar });
         } catch (error) {
           console.warn("[plexus] open block failed", error);
-          toaster.show("Could not open drawing", { kind: "error" });
+          toaster2.show("Could not open drawing", { kind: "error" });
           return null;
         }
       }
@@ -20526,7 +20827,7 @@ function createActions({
         if (disposed) return null;
         if (!icon) {
           if (!dispatched) {
-            toaster.show("Could not find the drawing", { kind: "error" });
+            toaster2.show("Could not find the drawing", { kind: "error" });
             return null;
           }
           continue;
@@ -20542,7 +20843,7 @@ function createActions({
     if (!editor) editor = await waitFor(matches, Math.max(0, deadline - Date.now()), 50, aborted);
     if (!editor) {
       if (disposed) return null;
-      toaster.show("Drawing did not open", { kind: "error" });
+      toaster2.show("Drawing did not open", { kind: "error" });
       return null;
     }
     const { app } = editor;
@@ -20553,7 +20854,7 @@ function createActions({
     const box = regionSceneBBox(region, sceneElements(app), app.state);
     if (box.error) {
       if (select) return uid;
-      toaster.show(`Region unavailable (${box.error})`, { kind: "error" });
+      toaster2.show(`Region unavailable (${box.error})`, { kind: "error" });
       return null;
     }
     const settings = settingsNow();
@@ -21914,6 +22215,7 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     { id: "embed-picker", label: "Plexus: Embed page or block…", enabled: !!openPicker, kbd: kbd("embed"), run: call("embed-picker", () => openPicker(point)) },
     { id: "note", label: "Plexus: New note card", enabled: !!noteAt, kbd: kbd("note"), run: call("note", () => noteAt(point)) },
     { id: "edit-embed", label: "Plexus: Edit embed", enabled: can(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
+    { id: "remove-embed", label: "Plexus: Remove embed (block untouched)", enabled: can(() => actions.canRemoveEmbed()), run: call("remove-embed", () => actions.removeSelectedEmbed()) },
     { id: "present", label: "Plexus: Present", enabled: can(() => actions.hasFrames()), kbd: kbd("present"), run: call("present", () => actions.presentDrawing()) },
     { id: "present-here", label: "Plexus: Present from here", enabled: can(() => actions.hasFrames()), run: call("present-here", () => actions.presentDrawing({ from: "here", at: point && toScene ? toScene(point) : void 0 })) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
@@ -25044,6 +25346,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     await lifecycle.settingsPanel(extensionAPI, createSettingsPanel({ onChange: scheduleRefresh }));
     const getSettings = () => readSettings(extensionAPI);
     let actions = null;
+    let citeBacklinks = null;
     let audit = null;
     let toggleLayer = null;
     let backCommand = null;
@@ -25177,14 +25480,14 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         if (!m) return "";
         return (m[1] || m[2] || m[3] || "").trim();
       }, placeCards = function(app, drawingUid, cards, label) {
-        if (!Array.isArray(cards) || cards.length === 0) return void toaster.show("Nothing new to place");
+        if (!Array.isArray(cards) || cards.length === 0) return void toaster2.show("Nothing new to place");
         const ok = guard2.guardedWrite(app, {
           drawingUid,
           label,
           captureUpdate: "IMMEDIATELY",
           next: (current6) => [...Array.isArray(current6) ? current6 : [], ...cards]
         });
-        if (!ok) toaster.show("Could not place the cards", { kind: "error" });
+        if (!ok) toaster2.show("Could not place the cards", { kind: "error" });
       };
       const host = createRoamHost({ api });
       const settings = getSettings();
@@ -25198,8 +25501,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       lifecycle.add(() => cache.dispose());
       const cold = createColdRenderer({ api, doc });
       lifecycle.add(() => cold.dispose());
-      const toaster = createToaster({ doc });
-      lifecycle.add(() => toaster.dispose());
+      const toaster2 = createToaster({ doc });
+      lifecycle.add(() => toaster2.dispose());
       showInCompass = (uid) => {
         const compass = globalThis.window?.RoamCompass;
         let available = false;
@@ -25208,7 +25511,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         } catch (error) {
           console.warn("[plexus] compass unavailable", error);
         }
-        if (!available) return void toaster.show("Compass is not loaded");
+        if (!available) return void toaster2.show("Compass is not loaded");
         compass.focus(uid);
       };
       const emitter = createEmitter();
@@ -25247,7 +25550,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       });
       lifecycle.add(() => toolbar.dispose());
       const guard2 = createWriteGuard({
-        toaster,
+        toaster: toaster2,
         isActive: (app, uid) => {
           const editor = activeEditor(doc);
           return editor?.app === app && editor.drawingUid === uid;
@@ -25317,10 +25620,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             if (!navigateToTarget({ api, containerEl: current6.el, target, sidebar: !!sidebar })) return;
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
-            if (sidebar) toaster.show("Opened in sidebar");
+            if (sidebar) toaster2.show("Opened in sidebar");
           },
           addBlock: (rootUid) => actions.addOutlineBlock(rootUid),
-          toast: (message) => toaster.show(message, { kind: "error" })
+          toast: (message) => toaster2.show(message, { kind: "error" })
         });
         current6.dock = dock;
         dockOn = true;
@@ -25355,14 +25658,14 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       lifecycle.add(() => presenter.dispose());
       const mmWriter = createMmWriter({ api, graph: host.graphName() });
       const createLaneRegions = createLaneRegionMaker({ host, emit: (detail) => emitter.emit(detail) });
-      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3, createLaneRegions });
+      const mindmap = createMindMap({ doc, api, writer: mmWriter, measurer, native: native_exports, toaster: toaster2, guardedWrite: guard2.guardedWrite, getTagColors: () => getSettings().mmTagColors, zIndexFor: (outer) => outer ? baseZIndex(doc, outer) : 1e3, createLaneRegions });
       lifecycle.add(() => mindmap.dispose());
       actions = createActions({
         host,
         native: native_exports,
         cache,
         cold,
-        toaster,
+        toaster: toaster2,
         spotlight: showSpotlight,
         getSettings,
         doc,
@@ -25387,7 +25690,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         host,
         native: native_exports,
         api,
-        toaster,
+        toaster: toaster2,
         guardedWrite: guard2.guardedWrite,
         beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label),
         measure: scenes.measure,
@@ -25397,16 +25700,16 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         zIndexFor: (editor) => editor ? zIndexFor(editor.el) + 2 : 1e3
       });
       lifecycle.add(() => templates.dispose());
-      const arrange2 = createArrangeActions({ doc, native: native_exports, toaster, guardedWrite: guard2.guardedWrite, beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label) });
+      const arrange2 = createArrangeActions({ doc, native: native_exports, toaster: toaster2, guardedWrite: guard2.guardedWrite, beforeBulk: (app, uid, label) => scenes.beforeBulk(app, uid, label) });
       lifecycle.add(installCanvasPaste({
         win: doc.defaultView,
         doc,
-        toast: (message) => toaster.show(message),
+        toast: (message) => toaster2.show(message),
         blockUid: (node) => host.blockUidFromNode(node),
         createSibling: async ({ uid, strings }) => {
           const info = host.blockInfo(uid);
           if (!info?.parentUid) {
-            toaster.show("Could not add the remaining lines", { kind: "error" });
+            toaster2.show("Could not add the remaining lines", { kind: "error" });
             return;
           }
           for (let i = 0; i < strings.length; i += 1) {
@@ -25447,7 +25750,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const openPicker = async (point) => {
         try {
           const editor = activeEditor(doc);
-          if (!editor) return void toaster.show("Open a drawing first", { kind: "error" });
+          if (!editor) return void toaster2.show("Open a drawing first", { kind: "error" });
           const { app, el } = editor;
           let semantic = false;
           try {
@@ -25496,7 +25799,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       };
       const createPage = (title) => Promise.resolve().then(() => host.ensurePage(title)).catch((error) => {
         console.warn("[plexus] create page failed", error);
-        toaster.show("Could not create the page", { kind: "error" });
+        toaster2.show("Could not create the page", { kind: "error" });
       });
       const runAction = (name) => () => actions[name]();
       hotkeyHandlers.region = runAction("createAreaRegion");
@@ -25505,22 +25808,22 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       hotkeyHandlers.mindmap = () => mounted ? actions.startMindMap() : actions.mindMapFromOutline(api.ui?.getFocusedBlock?.()?.["block-uid"]);
       hotkeyHandlers.embed = () => openPicker();
       hotkeyHandlers.dock = () => {
-        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!mounted?.uid) return void toaster2.show("Open a drawing first", { kind: "error" });
         toggleDock();
       };
       showDockParent = () => {
-        if (!mounted?.uid) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!mounted?.uid) return void toaster2.show("Open a drawing first", { kind: "error" });
         const parent = host.parentOf(mounted.uid);
-        if (!parent || parent.isPage) return void toaster.show("This drawing sits directly on its page", { kind: "error" });
+        if (!parent || parent.isPage) return void toaster2.show("This drawing sits directly on its page", { kind: "error" });
         const dock = mounted.dock?.isOpen() ? mounted.dock : openDock();
         void Promise.resolve(dock?.setRoot("parent")).catch((error) => console.warn("[plexus] dock parent failed", error));
       };
       hotkeyHandlers.note = () => {
-        if (!mounted?.noteTool) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!mounted?.noteTool) return void toaster2.show("Open a drawing first", { kind: "error" });
         mounted.noteTool.arm();
       };
       const mac = /mac|iphone|ipad/i.test(String(doc.defaultView?.navigator?.platform ?? ""));
-      const outline = createOutlineActions({ host, native: native_exports, api, toaster, clipboard: globalThis.navigator?.clipboard, doc });
+      const outline = createOutlineActions({ host, native: native_exports, api, toaster: toaster2, clipboard: globalThis.navigator?.clipboard, doc });
       lifecycle.add(() => outline.dispose());
       let restoreHandle = null;
       let chartHandle = null;
@@ -25549,7 +25852,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const openEditor = () => {
         const editor = activeEditor(doc);
         if (!editor?.drawingUid) {
-          toaster.show("Open a drawing full-screen first", { kind: "error" });
+          toaster2.show("Open a drawing full-screen first", { kind: "error" });
           return null;
         }
         return editor;
@@ -25558,7 +25861,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         const { app, drawingUid } = editor;
         const live3 = () => activeEditor(doc)?.app === app && activeEditor(doc)?.drawingUid === drawingUid;
         const st = app.state ?? {};
-        if (st.editingTextElement || st.newElement || st.cursorButton === "down") return void toaster.show("Finish the current edit first", { kind: "error" });
+        if (st.editingTextElement || st.newElement || st.cursorButton === "down") return void toaster2.show("Finish the current edit first", { kind: "error" });
         const scheduler = mounted?.app === app ? mounted.scheduler : null;
         if (entry.kind === "session") {
           scheduler?.snapshotNow("before restore");
@@ -25566,8 +25869,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           return;
         }
         const snapshot = await snapshotStore.get(entry.key);
-        if (!snapshot) return void toaster.show("That version could not be read", { kind: "error" });
-        if (!live3()) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        if (!snapshot) return void toaster2.show("That version could not be read", { kind: "error" });
+        if (!live3()) return void toaster2.show("Drawing is no longer open", { kind: "error" });
         scheduler?.snapshotNow("before restore");
         const plan = planRestore({ current: app.getSceneElementsIncludingDeleted?.() ?? [], snapshot, files: app.files ?? app.getFiles?.() });
         const ok = guard2.guardedWrite(app, {
@@ -25578,8 +25881,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           force: true,
           appState: { selectedElementIds: {}, selectedGroupIds: {} }
         });
-        if (!ok) return void toaster.show("Could not restore the drawing", { kind: "error" });
-        toaster.show(`Restored · ${mac ? "Cmd" : "Ctrl"}+Z brings the current version back${plan.missingFiles ? ` · ${plan.missingFiles} images missing` : ""}`);
+        if (!ok) return void toaster2.show("Could not restore the drawing", { kind: "error" });
+        toaster2.show(`Restored · ${mac ? "Cmd" : "Ctrl"}+Z brings the current version back${plan.missingFiles ? ` · ${plan.missingFiles} images missing` : ""}`);
       };
       const restoreDialog = () => {
         const editor = openEditor();
@@ -25593,7 +25896,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           loadSaved: () => snapshotStore.isEnabled() ? snapshotStore.list(editor.drawingUid) : Promise.resolve(host.isEncrypted() ? { encrypted: true } : []),
           onRestore: (entry) => restoreEntry(editor, entry).catch((error) => {
             console.warn("[plexus] restore failed", error);
-            toaster.show("Could not restore the drawing", { kind: "error" });
+            toaster2.show("Could not restore the drawing", { kind: "error" });
           }),
           onClose: () => {
             restoreHandle = null;
@@ -25614,7 +25917,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             const scene = scenes.sceneOf(drawingUid);
             if (!scene) throw new Error("Drawing is not open");
             const out = scene.addChart(text, { layout });
-            toaster.show(`Chart inserted · ${out.ids.length} elements${out.skipped ? ` · ${out.skipped} skipped` : ""}`);
+            toaster2.show(`Chart inserted · ${out.ids.length} elements${out.skipped ? ` · ${out.skipped} skipped` : ""}`);
           },
           onClose: () => {
             chartHandle = null;
@@ -25626,14 +25929,14 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const outlineTarget = (ctx) => activeEditor(doc)?.drawingUid ?? ctx?.focusedUid ?? null;
       const withTarget = (ctx, fn) => {
         const uid = outlineTarget(ctx);
-        if (!uid) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
+        if (!uid) return void toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return Promise.resolve(fn(uid)).catch((error) => console.warn("[plexus] outline failed", error));
       };
       const mmEditor = () => {
         const editor = openEditor();
         if (!editor) return null;
         if (!mindmap.mapOptions(editor.app)) {
-          toaster.show("Select a mind-map node first", { kind: "error" });
+          toaster2.show("Select a mind-map node first", { kind: "error" });
           return null;
         }
         return editor;
@@ -25835,10 +26138,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       };
       const focusedUid = (ctx) => ctx?.focusedUid || api.ui?.getFocusedBlock?.()?.["block-uid"] || "";
       runFocusMode = () => {
-        if (typeof showFocusVeil !== "function" || typeof focusKeptIds !== "function") return void toaster.show("Focus mode is unavailable");
+        if (typeof showFocusVeil !== "function" || typeof focusKeptIds !== "function") return void toaster2.show("Focus mode is unavailable");
         const editor = activeEditor(doc);
-        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
-        if (!selectedElementIds(editor.app).length) return void toaster.show("Select some elements first", { kind: "error" });
+        if (!editor?.app) return void toaster2.show("Open a drawing first", { kind: "error" });
+        if (!selectedElementIds(editor.app).length) return void toaster2.show("Select some elements first", { kind: "error" });
         endTodo();
         const next = focusVeil?.alive === true ? focusIndex + 1 : 0;
         endFocus();
@@ -25854,16 +26157,16 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           }));
         } catch (error) {
           console.warn("[plexus] focus mode failed", error);
-          toaster.show("Focus mode is unavailable");
+          toaster2.show("Focus mode is unavailable");
           return;
         }
         focusIndex = next;
         focusVeil = veil;
       };
       runTodoMode = () => {
-        if (typeof showTodoVeil !== "function" || typeof todoKeptIds !== "function") return void toaster.show("Todo mode is unavailable");
+        if (typeof showTodoVeil !== "function" || typeof todoKeptIds !== "function") return void toaster2.show("Todo mode is unavailable");
         const editor = activeEditor(doc);
-        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!editor?.app) return void toaster2.show("Open a drawing first", { kind: "error" });
         endFocus();
         endTodo();
         const app = editor.app;
@@ -25886,41 +26189,41 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           }));
         } catch (error) {
           console.warn("[plexus] todo mode failed", error);
-          toaster.show("Todo mode is unavailable");
+          toaster2.show("Todo mode is unavailable");
         }
       };
       runEmbedQuery = async (ctx) => {
-        if (typeof cardsFromQuery !== "function") return void toaster.show("Embed query results is unavailable");
+        if (typeof cardsFromQuery !== "function") return void toaster2.show("Embed query results is unavailable");
         const editor = activeEditor(doc);
-        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!editor?.app) return void toaster2.show("Open a drawing first", { kind: "error" });
         const sourceUid = focusedUid(ctx);
-        if (!sourceUid) return void toaster.show("Click into a block first", { kind: "error" });
+        if (!sourceUid) return void toaster2.show("Click into a block first", { kind: "error" });
         const app = editor.app;
         let cards = [];
         try {
           cards = await cardsFromQuery({ api, sourceUid, existing: sceneElements(app), origin: viewOrigin(app) });
         } catch (error) {
           console.warn("[plexus] embed query failed", error);
-          toaster.show("Could not place the cards", { kind: "error" });
+          toaster2.show("Could not place the cards", { kind: "error" });
           return;
         }
-        if (activeEditor(doc)?.app !== app) return void toaster.show("Drawing is no longer open", { kind: "error" });
+        if (activeEditor(doc)?.app !== app) return void toaster2.show("Drawing is no longer open", { kind: "error" });
         placeCards(app, editor.drawingUid, cards, "Embed query results");
       };
       runEmbedChildren = (ctx) => {
-        if (typeof cardsFromChildren !== "function") return void toaster.show("Embed page children is unavailable");
+        if (typeof cardsFromChildren !== "function") return void toaster2.show("Embed page children is unavailable");
         const editor = activeEditor(doc);
-        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!editor?.app) return void toaster2.show("Open a drawing first", { kind: "error" });
         const uid = focusedUid(ctx);
-        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        if (!uid) return void toaster2.show("Click into a block first", { kind: "error" });
         const pageUid = host.blockInfo(uid)?.pageUid;
-        if (!pageUid) return void toaster.show("Could not find that page", { kind: "error" });
+        if (!pageUid) return void toaster2.show("Could not find that page", { kind: "error" });
         let children = [];
         try {
           children = host.pullBlock(pageUid)?.children ?? [];
         } catch (error) {
           console.warn("[plexus] embed children failed", error);
-          toaster.show("Could not place the cards", { kind: "error" });
+          toaster2.show("Could not place the cards", { kind: "error" });
           return;
         }
         let cards = [];
@@ -25928,18 +26231,18 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           cards = cardsFromChildren({ children, sourceUid: pageUid, existing: sceneElements(editor.app), origin: viewOrigin(editor.app) });
         } catch (error) {
           console.warn("[plexus] embed children failed", error);
-          toaster.show("Could not place the cards", { kind: "error" });
+          toaster2.show("Could not place the cards", { kind: "error" });
           return;
         }
         placeCards(editor.app, editor.drawingUid, cards, "Embed page children");
       };
       runLinkSelected = async () => {
         if (typeof relationPlan !== "function" || typeof withLock !== "function" || typeof lockName !== "function") {
-          toaster.show("Link selected is unavailable");
+          toaster2.show("Link selected is unavailable");
           return;
         }
         const editor = activeEditor(doc);
-        if (!editor?.app) return void toaster.show("Open a drawing first", { kind: "error" });
+        if (!editor?.app) return void toaster2.show("Open a drawing first", { kind: "error" });
         const byId = indexScene(sceneElements(editor.app));
         const selected = selectedElementIds(editor.app).map((id) => byId.get(id)).filter((el) => el && !el.isDeleted);
         const arrow = selected.find((el) => el.type === "arrow" && el.startBinding?.elementId && el.endBinding?.elementId);
@@ -25959,9 +26262,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           sourceUid = ids[0] || "";
           destUid = ids[1] || "";
         }
-        if (!sourceUid || !destUid) return void toaster.show("Select two cards, or an arrow between them", { kind: "error" });
+        if (!sourceUid || !destUid) return void toaster2.show("Select two cards, or an arrow between them", { kind: "error" });
         const plan = relationPlan({ sourceUid, destUid, strings: relationStrings(sourceUid) });
-        if (!plan) return void toaster.show("Already linked");
+        if (!plan) return void toaster2.show("Already linked");
         try {
           const held = await withLock(lockName(host.graphName(), sourceUid), async () => {
             const attrUid2 = await host.createBlock({ parentUid: plan.parentUid, order: "last", string: plan.attribute });
@@ -25977,9 +26280,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               throw error;
             }
           });
-          if (!held?.acquired || !held.value) return void toaster.show("Could not link those cards", { kind: "error" });
+          if (!held?.acquired || !held.value) return void toaster2.show("Could not link those cards", { kind: "error" });
           const { attrUid, childUid: childUid2 } = held.value;
-          toaster.show("Linked", {
+          toaster2.show("Linked", {
             action: {
               label: "Undo",
               run: () => {
@@ -26000,13 +26303,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           });
         } catch (error) {
           console.warn("[plexus] link selected failed", error);
-          toaster.show("Could not link those cards", { kind: "error" });
+          toaster2.show("Could not link those cards", { kind: "error" });
         }
       };
       runLockAction = (name) => {
         const app = mountedApp?.();
-        if (!app) return void toaster.show("Open a drawing full-screen first", { kind: "error" });
-        if (!runNamedAction(app, name)) toaster.show("That action is not in this Excalidraw build", { kind: "error" });
+        if (!app) return void toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        if (!runNamedAction(app, name)) toaster2.show("That action is not in this Excalidraw build", { kind: "error" });
       };
       runDiagnostics = async () => {
         const app = mountedApp?.();
@@ -26021,13 +26324,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           lockActions: names
         });
         const how = await copyText(text, { clipboard: globalThis.navigator?.clipboard, doc });
-        toaster.show(how === "none" ? "Could not copy diagnostics" : "Diagnostics copied", { kind: how === "none" ? "error" : void 0 });
+        toaster2.show(how === "none" ? "Could not copy diagnostics" : "Diagnostics copied", { kind: how === "none" ? "error" : void 0 });
       };
       runFilterTag = (ctx) => {
         const uid = focusedUid(ctx);
-        if (!uid) return void toaster.show("Click into a block first", { kind: "error" });
+        if (!uid) return void toaster2.show("Click into a block first", { kind: "error" });
         const setTagFilter = mounted?.layer?.setTagFilter;
-        if (typeof setTagFilter !== "function") return void toaster.show("Open a drawing first", { kind: "error" });
+        if (typeof setTagFilter !== "function") return void toaster2.show("Open a drawing first", { kind: "error" });
         let text = "";
         try {
           text = host.pullBlock(uid)?.string ?? "";
@@ -26035,12 +26338,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           console.warn("[plexus] tag filter failed", error);
         }
         const tag = tagIn(text);
-        if (!tag) return void toaster.show("No tag in this block");
+        if (!tag) return void toaster2.show("No tag in this block");
         try {
           setTagFilter(tag);
         } catch (error) {
           console.warn("[plexus] tag filter failed", error);
-          toaster.show("Could not filter regions", { kind: "error" });
+          toaster2.show("Could not filter regions", { kind: "error" });
         }
       };
       const unmountEditor = ({ unloading = false } = {}) => {
@@ -26166,7 +26469,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             app,
             containerEl: el,
             zIndex: outer ? baseZIndex(doc, outer) : 1e3,
-            toast: (message) => toaster.show(message, { kind: "error" }),
+            toast: (message) => toaster2.show(message, { kind: "error" }),
             onStateChange: () => toolbar.refresh(),
             onLoaded: () => actions.scheduleEmbedLabels(app)
           });
@@ -26223,7 +26526,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               debug: () => getSettings().debug,
               onSelect: (regionUid) => actions.selectRegionOnDrawing(regionUid),
               onOpenSidebar: (regionUid) => {
-                Promise.resolve(host.openBlock(regionUid, { sidebar: true })).then(() => toaster.show("Opened in sidebar")).catch((error) => console.warn("[plexus] open in sidebar failed", error));
+                Promise.resolve(host.openBlock(regionUid, { sidebar: true })).then(() => toaster2.show("Opened in sidebar")).catch((error) => console.warn("[plexus] open in sidebar failed", error));
               }
             });
             mounted.layer = layer;
@@ -26264,7 +26567,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               if (raw?.[":node/title"] != null) return { kind: "page", title: raw[":node/title"] };
               return raw?.[":block/string"] != null ? { kind: "block" } : null;
             },
-            toast: (message) => toaster.show(message, { kind: "error" }),
+            toast: (message) => toaster2.show(message, { kind: "error" }),
             onDrop: ({ items, mode, scenePoint }) => {
               Promise.resolve(actions.placeBlocks(items, { mode, scenePoint, app })).catch((error) => console.warn("[plexus] drop failed", error));
             }
@@ -26275,12 +26578,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             app,
             containerEl: el,
             zIndex: mountZ,
-            toast: (message) => toaster.show(message, { kind: "error" }),
+            toast: (message) => toaster2.show(message, { kind: "error" }),
             navigate: ({ target, sidebar } = {}) => {
               if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
               if (!sidebar) navigatedAt = Date.now();
               hover.hide();
-              if (sidebar) toaster.show("Opened in sidebar");
+              if (sidebar) toaster2.show("Opened in sidebar");
             }
           }));
           const own = mounted;
@@ -26317,6 +26620,14 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               toScene: (p) => sceneAt(app, p)
             })
           }));
+          if (mountUid) {
+            try {
+              const stopLeave = actions.installAnchorLeaveWatch(app, mountUid);
+              mounted.disposers.push(() => stopLeave?.());
+            } catch (error) {
+              console.warn("[plexus] anchor leave watch failed", error);
+            }
+          }
           if (mounted.uid && getSettings().showBacklinks) {
             backlinks = createCanvasBacklinks({
               doc,
@@ -26331,15 +26642,26 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
                 if (!navigateToTarget({ api, containerEl: el, target, sidebar: !!sidebar })) return;
                 if (!sidebar) navigatedAt = Date.now();
                 hover.hide();
-                if (sidebar) toaster.show("Opened in sidebar");
+                if (sidebar) toaster2.show("Opened in sidebar");
+              },
+              onAddToCanvas: (payload) => {
+                try {
+                  actions.addCitedEmbed(payload);
+                } catch (error) {
+                  console.warn("[plexus] add to canvas failed", error);
+                }
               }
             });
-            mounted.disposers.push(() => backlinks.dispose());
+            citeBacklinks = backlinks;
+            mounted.disposers.push(() => {
+              if (citeBacklinks === backlinks) citeBacklinks = null;
+              backlinks.dispose();
+            });
           }
           mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
             if (!sidebar) navigatedAt = Date.now();
             hover.hide();
-            if (sidebar) toaster.show("Opened in sidebar");
+            if (sidebar) toaster2.show("Opened in sidebar");
           } }));
         },
         onEditorUnmount: () => {
@@ -26451,6 +26773,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "lockSelection", label: "Lock or unlock selection", run: () => runLockAction("toggleElementLock") },
       { id: "unlockAll", label: "Unlock all", run: () => runLockAction("unlockAllElements") },
       { id: "copyDiagnostics", label: "Copy diagnostics", run: () => Promise.resolve(runDiagnostics()).catch((error) => console.warn("[plexus] diagnostics failed", error)) },
+      { id: "whereCited", label: "Where is this cited?", run: () => {
+        const editor = activeEditor(doc);
+        const ids = editor?.app ? selectedElementIds(editor.app) : [];
+        if (citeBacklinks?.cite?.(ids)) return;
+        toaster.show("Select a page link, region, or mind-map node");
+      } },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];

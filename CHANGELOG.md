@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.18.0]
+
+- A page link gets a badge with that page's reference count. Add to canvas inserts one embed beside the badge and no arrow. The citing block stays.
+- Where is this cited? is a command-list item. It opens that popover and writes nothing. The palette stays two entries.
+- Remove embed (block untouched) deletes only the anchor, then toasts that the block is unchanged. A region anchor that leaves toasts the same. Native Delete stays.
+- Cut: toolbar hint and 900 ms pulse.
+
 ## [0.17.0]
 
 - Show as gallery wraps a regions container. Show as list returns to bullets. The container text stays `{{[[plexus-regions]]}}`.

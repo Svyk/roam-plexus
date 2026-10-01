@@ -606,6 +606,7 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "embed-picker", label: "Plexus: Embed page or block\u2026", enabled: !!openPicker, kbd: kbd("embed"), run: call("embed-picker", () => openPicker(point)) },
     { id: "note", label: "Plexus: New note card", enabled: !!noteAt, kbd: kbd("note"), run: call("note", () => noteAt(point)) },
     { id: "edit-embed", label: "Plexus: Edit embed", enabled: can(() => actions.canEditEmbed()), run: call("edit-embed", () => actions.editEmbed()) },
+    { id: "remove-embed", label: "Plexus: Remove embed (block untouched)", enabled: can(() => actions.canRemoveEmbed()), run: call("remove-embed", () => actions.removeSelectedEmbed()) },
     { id: "present", label: "Plexus: Present", enabled: can(() => actions.hasFrames()), kbd: kbd("present"), run: call("present", () => actions.presentDrawing()) },
     { id: "present-here", label: "Plexus: Present from here", enabled: can(() => actions.hasFrames()), run: call("present-here", () => actions.presentDrawing({ from: "here", at: point && toScene ? toScene(point) : undefined })) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },

@@ -1,4 +1,5 @@
 import * as defaultNative from "../host/native.js";
+import { parseRoamLink } from "../model/links.js";
 import { elementBounds, liveElements, regionSceneBBox } from "../model/scene.js";
 import { isContainerString } from "../model/region.js";
 
@@ -24,6 +25,7 @@ export function createCanvasBacklinks({
   zIndex = 1000,
   native = defaultNative,
   openTarget = () => {},
+  onAddToCanvas,
   raf,
   caf,
   now = () => Date.now(),
@@ -39,11 +41,13 @@ export function createCanvasBacklinks({
 
   const badges = new Map();
   const refsByUid = new Map();
+  const refsByTitle = new Map();
   const watches = new Map();
   let regions = [];
   let regionsAt = -Infinity;
   let regionSig = "";
   let targets = [];
+  let pageLinks = [];
   let sceneSig = null;
   let pendingFrame = null;
   let unsubscribe = null;
@@ -55,10 +59,10 @@ export function createCanvasBacklinks({
 
   const excludedUids = () => new Set([drawingUid, ...regions.map((r) => r.uid)]);
 
-  function loadRefs(uid) {
+  function loadRefs(lookup) {
     let raw;
     try {
-      raw = api.data.pull(REFS_PATTERN, [":block/uid", uid]);
+      raw = api.data.pull(REFS_PATTERN, lookup);
     } catch (error) {
       warn("backlinks pull failed", error);
       return [];
@@ -139,30 +143,76 @@ export function createCanvasBacklinks({
     return [...byAnchor.values()].map((t) => ({ uids: [...t.uids], bbox: t.bbox }));
   }
 
-  function syncWatches(uids) {
-    const wanted = new Set(uids);
-    for (const [uid, entry] of [...watches]) {
-      if (wanted.has(uid)) continue;
-      removeWatch(uid, entry);
+  // One badge per live element whose link is a page title. Not merged by title or bbox.
+  function collectPageLinks() {
+    const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
+    const out = [];
+    const seen = new Set();
+    for (const el of liveElements(elements)) {
+      if (el.id == null || seen.has(el.id)) continue;
+      const parsed = parseRoamLink(el.link);
+      if (!parsed || parsed.type !== "page" || typeof parsed.title !== "string" || !parsed.title) continue;
+      let bbox;
+      try { bbox = elementBounds(el); } catch (error) { warn("backlinks page bbox failed", error); continue; }
+      if (!bbox) continue;
+      seen.add(el.id);
+      out.push({ elementId: el.id, title: parsed.title, bbox });
     }
-    for (const uid of uids) {
-      if (watches.has(uid)) continue;
+    return out;
+  }
+
+  function blockSpec(uid) {
+    return { key: `b:${uid}`, refKey: uid, kind: "block", lookup: [":block/uid", uid], eid: `[:block/uid "${uid}"]` };
+  }
+
+  function pageSpec(title) {
+    return { key: `p:${title}`, refKey: title, kind: "page", lookup: [":node/title", title], eid: `[:node/title ${JSON.stringify(title)}]` };
+  }
+
+  function watchSpecs() {
+    const specs = [];
+    const seen = new Set();
+    for (const uid of targets.flatMap((t) => t.uids)) {
+      if (seen.has(`b:${uid}`)) continue;
+      seen.add(`b:${uid}`);
+      specs.push(blockSpec(uid));
+    }
+    for (const { title } of pageLinks) {
+      if (seen.has(`p:${title}`)) continue;
+      seen.add(`p:${title}`);
+      specs.push(pageSpec(title));
+    }
+    return specs;
+  }
+
+  function storeRefs(spec, rows) {
+    if (spec.kind === "page") refsByTitle.set(spec.refKey, rows);
+    else refsByUid.set(spec.refKey, rows);
+  }
+
+  function syncWatches(specs) {
+    const wanted = new Set(specs.map((spec) => spec.key));
+    for (const [key, entry] of [...watches]) {
+      if (wanted.has(key)) continue;
+      removeWatch(key, entry);
+    }
+    for (const spec of specs) {
+      if (watches.has(spec.key)) continue;
       if (watches.size >= BACKLINK_WATCH_CAP) {
         if (!capLogged) { capLogged = true; console.warn(`[plexus] backlinks: more than ${BACKLINK_WATCH_CAP} targets, extra badges are not live`); }
         continue;
       }
-      const eid = `[:block/uid "${uid}"]`;
       const cb = () => {
         if (disposed) return;
         try {
-          refsByUid.set(uid, loadRefs(uid));
+          storeRefs(spec, loadRefs(spec.lookup));
           render();
           layout();
         } catch (error) { warn("backlinks watch failed", error); }
       };
       try {
-        api.data.addPullWatch(WATCH_PATTERN, eid, cb);
-        watches.set(uid, { eid, cb });
+        api.data.addPullWatch(WATCH_PATTERN, spec.eid, cb);
+        watches.set(spec.key, { eid: spec.eid, cb });
       } catch (error) { warn("backlinks watch failed", error); }
     }
   }
@@ -211,7 +261,7 @@ export function createCanvasBacklinks({
     el.addEventListener("click", onClick);
     layer.append(el);
     return {
-      key, el, uids: [], bbox: null, refs: [], x: 0, y: 0, hidden: false,
+      key, el, uids: [], elementId: null, bbox: null, refs: [], x: 0, y: 0, hidden: false,
       detach() {
         el.removeEventListener("pointerdown", stop);
         el.removeEventListener("mousedown", stop);
@@ -221,25 +271,34 @@ export function createCanvasBacklinks({
     };
   }
 
+  function putBadge(key, { refs, bbox, uids, elementId }) {
+    let badge = badges.get(key);
+    if (!badge) { badge = makeBadge(key); badges.set(key, badge); }
+    const changed = badge.refs.length !== refs.length || badge.refs.some((r, i) => r.uid !== refs[i].uid || r.string !== refs[i].string);
+    badge.uids = uids;
+    badge.elementId = elementId ?? null;
+    badge.bbox = bbox;
+    badge.refs = refs;
+    if (badge.count !== refs.length) {
+      badge.count = refs.length;
+      badge.el.textContent = String(refs.length);
+      badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
+    }
+    if (changed && popover?.key === key) repaintPopover();
+    return key;
+  }
+
   function render() {
-    const live = new Map();
+    const live = new Set();
     for (const g of groups()) {
       const refs = refsOf(g.uids);
       if (!refs.length) continue;
-      const key = g.uids.join("|");
-      let badge = badges.get(key);
-      if (!badge) { badge = makeBadge(key); badges.set(key, badge); }
-      const changed = badge.refs.length !== refs.length || badge.refs.some((r, i) => r.uid !== refs[i].uid || r.string !== refs[i].string);
-      badge.uids = g.uids;
-      badge.bbox = g.bbox;
-      badge.refs = refs;
-      if (badge.count !== refs.length) {
-        badge.count = refs.length;
-        badge.el.textContent = String(refs.length);
-        badge.el.title = `${refs.length} ${refs.length === 1 ? "reference" : "references"}`;
-      }
-      live.set(key, badge);
-      if (changed && popover?.key === key) repaintPopover();
+      live.add(putBadge(g.uids.join("|"), { refs, bbox: g.bbox, uids: g.uids, elementId: null }));
+    }
+    for (const p of pageLinks) {
+      const refs = refsByTitle.get(p.title) ?? [];
+      if (!refs.length) continue;
+      live.add(putBadge(`el:${p.elementId}`, { refs, bbox: p.bbox, uids: [], elementId: p.elementId }));
     }
     for (const [key, badge] of [...badges]) {
       if (live.has(key)) continue;
@@ -282,10 +341,14 @@ export function createCanvasBacklinks({
     if (regionsChanged || sig !== sceneSig) {
       sceneSig = sig;
       targets = collectTargets();
-      const uids = targets.flatMap((t) => t.uids);
-      syncWatches(uids);
-      for (const uid of uids) if (!refsByUid.has(uid) || regionsChanged) refsByUid.set(uid, loadRefs(uid));
-      for (const uid of [...refsByUid.keys()]) if (!uids.includes(uid)) refsByUid.delete(uid);
+      pageLinks = collectPageLinks();
+      const specs = watchSpecs();
+      syncWatches(specs);
+      for (const spec of specs) if ((spec.kind === "page" ? !refsByTitle.has(spec.refKey) : !refsByUid.has(spec.refKey)) || regionsChanged) storeRefs(spec, loadRefs(spec.lookup));
+      const uidSet = new Set(targets.flatMap((t) => t.uids));
+      for (const uid of [...refsByUid.keys()]) if (!uidSet.has(uid)) refsByUid.delete(uid);
+      const titleSet = new Set(pageLinks.map((p) => p.title));
+      for (const title of [...refsByTitle.keys()]) if (!titleSet.has(title)) refsByTitle.delete(title);
       render();
     }
     layout();
@@ -343,6 +406,29 @@ export function createCanvasBacklinks({
       const body = doc.createElement("div");
       body.className = "plexus-backlink-block";
       row.append(page, body);
+      let addButton = null;
+      if (typeof onAddToCanvas === "function") {
+        addButton = doc.createElement("button");
+        addButton.type = "button";
+        addButton.className = "plexus-backlink-add";
+        addButton.textContent = "Add to canvas";
+        const onAdd = (e) => {
+          e?.stopPropagation?.();
+          e?.stopImmediatePropagation?.();
+          e?.preventDefault?.();
+          const current = badges.get(key) ?? badge;
+          try {
+            onAddToCanvas({
+              elementId: current.elementId ?? null,
+              bbox: current.bbox ? [...current.bbox] : null,
+              ref: { uid: ref.uid, string: ref.string, page: ref.page },
+            });
+          } catch (error) { warn("backlinks add failed", error); }
+        };
+        addButton.addEventListener("click", onAdd);
+        row.append(addButton);
+        rowHandlers.push([addButton, onAdd]);
+      }
       el.append(row);
       hosts.push(body);
       try {
@@ -352,6 +438,10 @@ export function createCanvasBacklinks({
         body.textContent = ref.string;
       }
       const onClick = (e) => {
+        for (let n = e?.target; n; n = n.parentNode ?? n.parentElement) {
+          if (n === addButton) return;
+          if (n === row) break;
+        }
         e?.stopPropagation?.();
         e?.preventDefault?.();
         closePopover();
@@ -404,6 +494,7 @@ export function createCanvasBacklinks({
       sceneSig = null;
       targets = [];
       for (const uid of [...refsByUid.keys()]) refsByUid.delete(uid);
+      refsByTitle.clear();
       update();
     } catch (error) { warn("backlinks refresh failed", error); }
   }
@@ -419,7 +510,43 @@ export function createCanvasBacklinks({
     for (const badge of badges.values()) badge.detach();
     badges.clear();
     refsByUid.clear();
+    refsByTitle.clear();
     layer.remove();
+  }
+
+  function selectionIds(value) {
+    if (typeof value === "string") return value ? [value] : [];
+    if (!Array.isArray(value)) return [];
+    return value.filter((id) => typeof id === "string" && id);
+  }
+
+  function regionCovers(region, id, el) {
+    if (!region || IMAGE_KINDS.has(region.kind)) return false;
+    if (Array.isArray(region.ids) && region.ids.includes(id)) return true;
+    const frame = region.frameId ?? region.fr;
+    if (frame && id === frame) return true;
+    const group = region.groupId ?? region.g;
+    if (group && (id === group || (Array.isArray(el?.groupIds) && el.groupIds.includes(group)))) return true;
+    return false;
+  }
+
+  // Opens the popover for a selected page link, mind-map node, or region member. Writes nothing.
+  function cite(elementIds) {
+    if (disposed) return false;
+    const ids = selectionIds(elementIds);
+    if (!ids.length) return false;
+    const live = liveElements(app.getSceneElementsIncludingDeleted?.() ?? []);
+    const byId = new Map(live.map((el) => [el.id, el]));
+    const list = [...badges.values()];
+    const hit = list.find((b) => b.elementId && ids.includes(b.elementId))
+      ?? list.find((b) => ids.some((id) => {
+        const uid = byId.get(id)?.customData?.plexus?.mm?.uid;
+        return !!uid && b.uids.includes(uid);
+      }))
+      ?? list.find((b) => ids.some((id) => regions.some((entry) => b.uids.includes(entry.uid) && regionCovers(entry.region, id, byId.get(id)))));
+    if (!hit) return false;
+    openPopover(hit.key);
+    return true;
   }
 
   try {
@@ -427,5 +554,5 @@ export function createCanvasBacklinks({
   } catch (error) { warn("backlinks subscribe failed", error); }
   refresh();
 
-  return { refresh, dispose };
+  return { refresh, dispose, cite };
 }

@@ -43,6 +43,7 @@ const AUDIT_ROW_CAP = 2000;
 const AUDIT_YIELD_EVERY = 20;
 const REPAIR_OF = { partial: "auto", "no-elements": "reselect", "outside-crop": "reselect", "not-image": "reselect", rotated: "reselect", "not-frame": "reselect" };
 const BOX_PROBLEM = { "no-elements": "no-elements", "outside-crop": "outside-crop", "not-image": "not-image", "rotated-image": "rotated", "not-frame": "not-frame" };
+const REMOVED_TOAST = "Removed from the drawing. The block is unchanged.";
 
 // The exact current head plus " " + tail (or the bare head): the string is never re-serialized, so token order and
 // extras survive. Null when the result is not the same region with exactly that caption.
@@ -292,6 +293,9 @@ export function createActions({
   const closePolls = new Map();
   const revokers = new Set();
   let pendingUpdate = null;
+  // Anchor ids Remove embed just deleted. The leave watch must not toast those again.
+  const leaveSilenced = new Set();
+  const leaveWatches = new Set();
   const cameraTo = camera ?? {
     animateTo: async (app, bbox, { maxZoom } = {}) => {
       native.zoomTo(app, bbox, { maxZoom });
@@ -1013,6 +1017,8 @@ export function createActions({
       cards.clear();
       newDone.clear();
       for (const revoke of [...revokers]) revoke();
+      for (const stop of [...leaveWatches]) stop();
+      leaveSilenced.clear();
     },
 
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
@@ -1479,6 +1485,19 @@ export function createActions({
     },
 
     editEmbed: () => once("edit-embed", editEmbedOnce),
+
+    // Same anchor selection as canEditEmbed. The embed editor does not have to be idle.
+    canRemoveEmbed() {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) return false;
+      return !!selectedAnchor(editor.app);
+    },
+
+    removeSelectedEmbed,
+
+    addCitedEmbed,
+
+    installAnchorLeaveWatch,
 
     openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
 
@@ -3547,6 +3566,171 @@ export function createActions({
       return false;
     }
     return overlay.edit(anchor.id);
+  }
+
+  // Marks the selected embed anchor and its bound text deleted. No Roam block write.
+  function removeSelectedEmbed() {
+    const editor = native.activeEditor(doc);
+    const anchor = editor?.app ? selectedAnchor(editor.app) : null;
+    if (!anchor) return false;
+    const current = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
+    const ids = new Set([anchor.id]);
+    for (const el of current) if (el && el.containerId === anchor.id) ids.add(el.id);
+    for (const id of ids) leaveSilenced.add(id);
+    let ok = false;
+    try {
+      ok = guard.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Remove embed",
+        captureUpdate: "IMMEDIATELY",
+        next: (cur) => cur.map((el) => (el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd(), updated: Date.now() } : el)),
+      }) === true;
+    } catch (error) {
+      console.warn("[plexus] remove embed failed", error);
+      ok = false;
+    }
+    if (!ok) {
+      for (const id of ids) leaveSilenced.delete(id);
+      return false;
+    }
+    toaster.show(REMOVED_TOAST);
+    return true;
+  }
+
+  function blockCite(ref) {
+    const text = typeof ref === "string" ? ref : (ref && typeof ref === "object" ? (ref.ref || ref.uid || "") : "");
+    const parsed = parseEmbedRef(text);
+    if (!parsed || parsed.kind !== "block") return null;
+    return parsed.ref;
+  }
+
+  function citedLabel(cite) {
+    const uid = parseEmbedRef(cite)?.uid;
+    const textOf = (value) => {
+      if (value == null || typeof value.then === "function") return "";
+      if (typeof value === "string") return embedLabel(value);
+      if (typeof value === "object") return embedLabel(value.string || value.title || "");
+      return "";
+    };
+    for (const read of [
+      () => host.pullEmbedContent?.(cite),
+      () => host.pullBlock?.(uid),
+      () => host.labelSource?.(uid),
+    ]) {
+      try {
+        const label = textOf(read());
+        if (label) return label;
+      } catch { /* a failed read still inserts the anchor */ }
+    }
+    return "";
+  }
+
+  // One embed beside bbox. elementId is the citing element and is not bound; no arrow and no block write.
+  function addCitedEmbed({ elementId, bbox, ref } = {}) {
+    const editor = requireEditor();
+    if (!editor) return false;
+    const cite = blockCite(ref);
+    if (!cite || !Array.isArray(bbox) || !Number.isFinite(bbox[1]) || !Number.isFinite(bbox[2])) return false;
+    const elements = makeEmbedAnchor({ ref: cite, link: cite, label: citedLabel(cite), x: bbox[2] + 16, y: bbox[1] });
+    void elementId;
+    try {
+      return insertGuarded(editor.app, editor.drawingUid, elements, "Embed") === true;
+    } catch (error) {
+      console.warn("[plexus] cited embed failed", error);
+      return false;
+    }
+  }
+
+  // After start, one toast when a live embed anchor disappears, or a listed frame/cframe anchor becomes deleted.
+  function installAnchorLeaveWatch(app, drawingUid) {
+    if (!app || disposed) return () => {};
+    const seenEmbed = new Set();
+    const seenFrame = new Set();
+    const toasted = new Set();
+    let stopped = false;
+    let started = false;
+    let off = null;
+
+    const readElements = () => {
+      try {
+        const els = app.getSceneElementsIncludingDeleted?.() ?? app.getSceneElements?.() ?? [];
+        return Array.isArray(els) ? els : [];
+      } catch (error) {
+        console.warn("[plexus] anchor leave watch failed", error);
+        return null;
+      }
+    };
+
+    const listedFrameIds = () => {
+      const ids = new Set();
+      const entries = safe(() => host.regionsOf?.(drawingUid)) || [];
+      for (const entry of entries) {
+        const region = entry?.region;
+        if (!region || (region.kind !== "frame" && region.kind !== "cframe")) continue;
+        if (typeof region.frameId === "string" && region.frameId) ids.add(region.frameId);
+      }
+      return ids;
+    };
+
+    const scan = () => {
+      if (stopped || disposed) return;
+      const elements = readElements();
+      if (!elements) return;
+      const byId = new Map();
+      for (const el of elements) if (el?.id) byId.set(el.id, el);
+      const liveEmbed = new Set(embedAnchors(elements).map((el) => el.id));
+      const listed = listedFrameIds();
+      const liveFrame = new Set();
+      for (const id of listed) {
+        const el = byId.get(id);
+        if (el && !el.isDeleted) liveFrame.add(id);
+      }
+      if (!started) {
+        for (const id of liveEmbed) seenEmbed.add(id);
+        for (const id of liveFrame) seenFrame.add(id);
+        started = true;
+        return;
+      }
+      for (const id of liveEmbed) seenEmbed.add(id);
+      for (const id of liveFrame) seenFrame.add(id);
+      let hit = false;
+      const depart = (id) => {
+        if (toasted.has(id) || leaveSilenced.has(id)) return;
+        toasted.add(id);
+        hit = true;
+      };
+      for (const id of seenEmbed) {
+        const el = byId.get(id);
+        if (!el || el.isDeleted) depart(id);
+      }
+      for (const id of seenFrame) {
+        if (!listed.has(id)) continue;
+        const el = byId.get(id);
+        if (!el || el.isDeleted) depart(id);
+      }
+      if (!hit) return;
+      try { toaster.show(REMOVED_TOAST); } catch (error) { console.warn("[plexus] anchor leave watch failed", error); }
+    };
+
+    scan();
+    try {
+      const unsub = app.onChangeEmitter?.on?.(() => {
+        try { scan(); } catch (error) { console.warn("[plexus] anchor leave watch failed", error); }
+      });
+      if (typeof unsub === "function") off = unsub;
+    } catch (error) {
+      console.warn("[plexus] anchor leave watch failed", error);
+    }
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      leaveWatches.delete(stop);
+      try { off?.(); } catch (error) { console.warn("[plexus] unsubscribe failed", error); }
+      off = null;
+    };
+    leaveWatches.add(stop);
+    return stop;
   }
 
   async function legacyDryRunOnce() {
