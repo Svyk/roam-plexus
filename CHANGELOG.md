@@ -10,6 +10,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - A page card shows the attributes you name. Enter writes that attribute. An existing page is reused. Better Tasks attributes are shown and not written.
 - Hovering an embed draws lines to other embeds on this canvas that mention each other. Lines leave with the pointer. At most twelve.
 - The palette stays two entries. The command list is 67.
+- Typing, editor closed, five rounds: -0.038 ms/key. Loaded mean 11.903. Unloaded mean 11.941.
 
 ## [0.26.0]
 - Selected text becomes a page or a block. A prompt confirms the title. An existing title is reused. It becomes an embed or a link, and arrows follow. An image becomes a block and leaves the canvas. Turn back restores the text.

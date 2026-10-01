@@ -99,7 +99,7 @@ Shortlist of small, high-leverage items. Each row's full entry lives in its home
 | NAV-4 | Back to the previous view after a programmatic zoom | In-memory stack | P8 |
 | AUTH-11 | New drawing here / below / on page / on today, `/Sketch here` | `RoamPlexus.create` exists; no create command today | P9 |
 | AUTH-1 | Embed picker instead of clipboard-only embeds | Suggest infra measured at 11 ms pages, 136 ms blocks | P9 |
-| EMB-3 | Live `{{query}}` node | `renderString` already renders any string (liveness spike first) | Later (spike failed 2026-09-29) |
+| EMB-3 | Live `{{query}}` node | `renderString` already renders any string (liveness spike first) | 0.27.0 |
 | UX-1 | Default hotkeys and kbd hints | `default-hotkey` is supported and unused | P9 |
 | PRES-2 | Present from the selected frame | Index math | P11 |
 | PRES-6 | Laser and temporary pen in the presenter (Opus shortlist) | Dialog-local overlay, nothing persisted | P11 |
@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (26)
+### 6.1 Later (22)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -864,14 +864,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
 | AUTH-21 | Layer manager | Frames plus NAV-9 approximate it; emulated hide leaks into exports | Layered plant maps become frequent | park |
-| EMB-3 | Live `{{query}}` or component node | Spike failed 2026-09-29 (Readwisenotes, trusted CDP): a query rendered through `renderString` is a static snapshot. It showed 0 results, still 0 after a matching TODO was created and after 3 s, and still 0 after the TODO was marked DONE; a fresh `renderString` of the same string then showed 1 result. The P9 stop rule dropped it | A way to re-render on change (a pull watch on the query's refs, at the cost of watches the host bills for), or Roam ships live query components | |
-| EMB-2 | Page cards with chosen attributes, editable | Inline edits write the graph; `BT_attr*` display-only | After EMB-1 | |
-| EMB-5 | Task cards and checkboxes on the canvas | Better Tasks rules and glyph-swap risks; MM-8 and P5 embeds cover it | | |
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
 | NAV-6 | Canvas outline / regions panel | Duplicates the outline; NAV-7 is the Roam-native answer | Only as a host for a slide sorter | park |
 | NAV-11 | Drawings finder and gallery | Compass already shows drawing thumbnails in search; tiles are cold on encrypted graphs | A plain "Open drawing..." command may be enough | park |
 | GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
-| GRAPH-3 | Ref lines between embeds | Rated the biggest perf risk in the source plugin; duplicates Compass | A hovered-only minimal version | park |
 | GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
 | MM-4 | More mind-map layouts and a chooser | Five layouts exist | A map asks for both-sides or org chart | |
@@ -919,6 +915,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | GRAPH-6 | 0.26.0 | `381cab6` | Selected text becomes a page or a block. A prompt confirms the title. An existing title is reused. Arrows follow. An image leaves the canvas |
 | AUTH-14 | 0.26.0 | `381cab6` | This page lists images and drawings. Enter fits inside 480 by 360. Shift+Enter is pixel size or drawing bounds. The file address is reused. A drawing inserts an embed |
 | UX-6 | 0.26.0 | `381cab6` | One Name child, written or deleted by a prompt. Props stay. Mount shows the name |
+| EMB-5 | 0.27.0 | `ccc2996` | A task card embeds a to-do or done block. A checkbox swaps the macro. The rest of the text stays. Better Tasks attributes are shown and not written |
+| EMB-3 | 0.27.0 | `ccc2996` | A live query renders the query. A pull watch on each named page, at most four, repaints. A query with no page stays a snapshot |
+| EMB-2 | 0.27.0 | `ccc2996` | A page card shows the attributes you name. Enter writes that attribute. An existing page is reused. Better Tasks attributes are shown and not written |
+| GRAPH-3 | 0.27.0 | `ccc2996` | Hovering an embed draws lines to other embeds on this canvas that mention each other. Lines leave with the pointer. At most twelve |
 
 ### 6.2 Parked (17)
 
@@ -1099,10 +1099,10 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-20 | Inbox tray | Later |
 | AUTH-21 | Layer manager | Later |
 | EMB-1 | Embed display modes and polish | P16 |
-| EMB-2 | Page cards with attributes | Later |
-| EMB-3 | Live query node | Later (P9 spike failed) |
+| EMB-2 | Page cards with attributes | 0.27.0 |
+| EMB-3 | Live query node | 0.27.0 |
 | EMB-4 | Live "today" embed | P9 |
-| EMB-5 | Task cards on the canvas | Later |
+| EMB-5 | Task cards on the canvas | 0.27.0 |
 | EMB-6 | Embed text in exports and slides (Option C) | P11 |
 | EMB-7 | Text-element transclusion | Later |
 | EMB-8 | Link / bookmark cards | Parked |
@@ -1123,7 +1123,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | NAV-13 | Open in graph / mentions view | 0.19.0 |
 | GRAPH-1 | Arrows as typed relations | P15 |
 | GRAPH-2 | Expand neighbours | Later |
-| GRAPH-3 | Ref lines between embeds | Later |
+| GRAPH-3 | Ref lines between embeds | 0.27.0 |
 | GRAPH-4 | Graph analysis helpers | Rejected |
 | GRAPH-5 | Drawing to outline | P12 |
 | GRAPH-6 | Turn into page or block | 0.26.0 |
