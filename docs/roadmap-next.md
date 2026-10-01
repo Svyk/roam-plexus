@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (46)
+### 6.1 Later (43)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -881,11 +881,8 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | CMP-4 | Add related drawing from a Compass zone | Graph write with duplicate-title and placement questions; "New drawing" exists | After CMP-6 | |
 | CMP-5 | Snapshot a Compass neighbourhood into a drawing | Needs a mounted editor; every text ref adds backlinks | After API-1 | |
 | CMP-8 | Compass type chips and quick filter | Lenses were removed on purpose in Compass 0.2.0 | Chips only, if asked | park |
-| CMP-11 | Compass display settings | Settings sprawl | Only settings a user will notice | park |
 | CMP-13 | Compass cross-links among neighbours | Edge clutter | If asked | park |
-| CMP-14 | Hover highlight and modifier-gated previews | Cosmetic | If the 250 ms link preview annoys | |
 | CMP-17 | Empty (ghost) pages and URL nodes | Noise on link-heavy pages; the "Empty page" hover hint is the useful part | | park |
-| CMP-19 | Compass home entries in an empty search | Pleasant, marginal; graph-wide query | | park |
 | PRES-5 | Live-canvas slideshow with camera transitions (also EMB-6 Option A) | appState writes persist through Roam's save; the dialog presenter is robust | EMB-6 Option C (P11) proves too thin; after DATA-5 | |
 | PRES-7 | Stepwise reveal (builds) | One SVG export per build; needs the hot path | After REF-7 | |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | NAV-13 | 0.19.0 | `96cfe31` | Open in graph view and Show mentions open the block's page. No graph colouring |
 | UX-8 | 0.20.0 | `6e1bf04` | Selected words stay the alias. [[ and (( insert the closer. Empty [[ lists recent pages. # lists referenced pages. Ref counts on page rows. Related only when semantic search is on |
 | DATA-7 | 0.20.0 | `6e1bf04` | Quiet chip after the outline queue is busy for 2.5 s, and the failure text when the last write failed. No second save control |
+| CMP-19 | 0.21.0 | `50eb182` | Empty search lists pins, today, and eight recent pages. Cached until close. No shortcut rows |
+| CMP-14 | 0.21.0 | `50eb182` | Hover dims other nodes. Opacity only. Thumbnail only while Ctrl or Cmd is held. Plexus preview setting defaults off |
+| CMP-11 | 0.21.0 | `50eb182` | Sort by connections (default), name, last edited, or created. Name:: is the label. Tooltip keeps the title. No write |
 
 ### 6.2 Parked (17)
 
@@ -1144,15 +1144,15 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | CMP-8 | Type chips and quick filter | Later |
 | CMP-9 | Follow vs pinned | P14 |
 | CMP-10 | Centre as live embed / sidecar pane | Parked |
-| CMP-11 | Compass display settings | Later |
+| CMP-11 | Compass display settings | 0.21.0 |
 | CMP-12 | Two-level view | Rejected |
 | CMP-13 | Cross-links among neighbours | Later |
-| CMP-14 | Hover highlight, gated previews | Later |
+| CMP-14 | Hover highlight, gated previews | 0.21.0 |
 | CMP-15 | Larger hover thumbnail | P14 |
 | CMP-16 | Node styling by attribute | Parked |
 | CMP-17 | Ghost pages and URL nodes | Later |
 | CMP-18 | Relation editing from menus | Parked |
-| CMP-19 | Home entries in empty search | Later |
+| CMP-19 | Home entries in empty search | 0.21.0 |
 | PRES-1 | Speaker notes from blocks | P11 |
 | PRES-2 | Present from here | P11 (QW) |
 | PRES-3 | Slide authoring | P16 |

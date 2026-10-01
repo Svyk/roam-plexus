@@ -41,6 +41,7 @@ Standing constraints:
 | B3 | Someday batch 3: page badges and cite (REG-4), remove embed (UX-10) | Live gate (Readwisenotes) | done 2026-10-01, 0.18.0 (`e6e9ff4`); live: badge 2, one embed and no arrow, cite opens the popover and writes nothing, remove-embed toast exact; typing -0.054 ms/key |
 | B4 | Someday batch 4: card keys (NAV-10), graph and mentions (NAV-13) | Live gate (Readwisenotes) | done 2026-10-01, 0.19.0 (`96cfe31`); live: Alt+Right selected the next anchor and nothing moved, copy and sidebar block, cold Space left the key, plain arrow nudged 20px and was restored; graph and mentions opened the page; typing -0.096 ms/key |
 | B5 | Someday batch 5: picker alias and tags (UX-8), outline chip (DATA-7) | Live gate (Readwisenotes) | done 2026-10-01, 0.20.0 (`6e1bf04`); live: selected words became the alias, [[ paired with the caret inside, # listed tags, the chip was absent while idle; typing +0.077 ms/key |
+| B6 | Someday batch 6: empty Compass search (CMP-19), hover dim and gated preview (CMP-14), node sort and name label (CMP-11) | Live gate (Readwisenotes) | done 2026-10-01, 0.21.0 (`50eb182`), Compass 0.6.0 (`535dbab`); live: empty search listed today and recent pages, hover dimmed without moving, Ctrl showed the thumbnail, the name was the label and the tooltip kept the title; typing +0.133 ms/key |
 
 Resolved defaults (spec §12):
 - Text-element links do not get automatic region blocks; Roam's tail already makes them refs.

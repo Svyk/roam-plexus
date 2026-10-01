@@ -8,6 +8,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 - Setting "Preview links only while holding Ctrl/Cmd", off by default. Off keeps the 250 ms link preview. On shows that preview only while Ctrl or Cmd is held, and hides it when the key is released.
 - The palette stays two entries. The command list stays 53.
+- Typing, editor closed, five rounds: +0.133 ms/key. Loaded mean 11.793. Unloaded mean 11.660.
 
 ## [0.20.0]
 
