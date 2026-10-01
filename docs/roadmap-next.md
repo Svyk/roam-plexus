@@ -852,13 +852,12 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (37)
+### 6.1 Later (33)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
 | REF-9 | Region click chooser and second-order links | Adds a click to every region open; second-order links are Compass's job | Regions with many links become common | |
 | REF-13 | Multi-image blocks and rotated images | Rare; inverse rotation needs a 90-degree test | The image-index pick (S) can ship alone if needed | |
-| REF-16 | Image occlusion study cards | Reveal needs the hot path | After REF-7 | park |
 | AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
 | AUTH-13 | Styling helpers | Menu weight for marginal wins | The contrast rule can ride with mind-map colours | park |
@@ -877,15 +876,12 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | GRAPH-6 | Turn text into a page or block (and back) | AUTH-3 covers most of the need | After AUTH-3 | |
 | GRAPH-10 | Managed "Linked from this drawing" list | Contradicts spec §5.2; CMP-2 is the read-only alternative | Backlinks for non-text links become a felt gap | park |
 | GRAPH-11 | Two-way text sync for single-text regions | The full phase-4 echo matrix again; links cannot round-trip; little text left after REF-1 | | park |
-| PRES-5 | Live-canvas slideshow with camera transitions (also EMB-6 Option A) | appState writes persist through Roam's save; the dialog presenter is robust | EMB-6 Option C (P11) proves too thin; after DATA-5 | |
-| PRES-7 | Stepwise reveal (builds) | One SVG export per build; needs the hot path | After REF-7 | |
 | MM-3 | On-canvas "+" buttons and collapse badge | Keyboard already covers it | The "(+N)" suffix is judged ugly | |
 | MM-4 | More mind-map layouts and a chooser | Five layouts exist | A map asks for both-sides or org chart | |
 | MM-5 | Mind-map styling (shape, connector, palettes) | Arrow type changes rewrite points; styling is not the gap | | park |
 | MM-6 | Mind-map conversions and bulk input | Paste-indented-list-as-branch is the useful piece; the rest is heuristic | | |
 | MM-9 | Mind-map cross-links from block refs | Derived arrows ignore layout and cross badly | | |
 | MM-10 | Import a linked page's outline, submaps | Many writes; embed cap | After MM-1, MM-7, MM-8 settle | |
-| EXP-2 | Export dialog (scale, padding, theme, selection) | EXP-1 and EXP-3 cover daily needs; the native canvas menu has Copy as PNG/SVG (`phase6-contract.md:59`) | After REF-7 (P8) | |
 | EXP-4 | Scene JSON export and import | Good hygiene; DATA-1 covers restore | Opus: it is the durable backup on encrypted graphs, so first in line | |
 | EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
 | EXP-9 | Auto-synced export image block | Upload churn and orphan files | Mobile viewing becomes a habit | park |
@@ -919,6 +915,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | CMP-8 | 0.22.0 | `8ea9e6e` | Pages, blocks, drawings, regions, and a keyword. All on. Fade only. Compass `851eea4` |
 | CMP-13 | 0.22.0 | `8ea9e6e` | Cross links stay off until toggled. Faint edges, cap 40. Compass `851eea4` |
 | NAV-8 | 0.23.0 | `87398ee` | Corner map on a large full-screen drawing. Click or drag pans. A scene that fits hides it. The switch defaults on. No thumbnail |
+| PRES-7 | 0.24.0 | `77a3087` | Slide builds hide later steps. Next finishes those builds, then the next frame. Setting a step writes the elements |
+| REF-16 | 0.24.0 | `77a3087` | Occlusion covers a region until reveal. A flashcard tag is a child block, and only when chosen |
+| EXP-2 | 0.24.0 | `77a3087` | One export dialog: whole drawing or selection, scale, padding, and theme. Copy, download, or insert an image |
+| PRES-5 | 0.24.0 | `77a3087` | Live present tweens the open drawing between frames. Escape restores the view. The image slideshow stays |
 
 ### 6.2 Parked (17)
 
@@ -1070,7 +1070,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | REF-13 | Multi-image blocks, rotated images | Later |
 | REF-14 | Gallery layout for regions container | 0.17.0 |
 | REF-15 | Auto-caption quality | P7 (QW) |
-| REF-16 | Image occlusion study cards | Later |
+| REF-16 | Image occlusion study cards | 0.24.0 |
 | REF-17 | Pin-drop with caption prompt | P7 (QW) |
 | REG-1 | Regions layer and geometry editing | P8 |
 | REG-2 | Regions for all frames | P8 (QW) |
@@ -1157,9 +1157,9 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | PRES-2 | Present from here | P11 (QW) |
 | PRES-3 | Slide authoring | P16 |
 | PRES-4 | Outline-driven deck | P11 |
-| PRES-5 | Live-canvas slideshow | Later |
+| PRES-5 | Live-canvas slideshow | 0.24.0 |
 | PRES-6 | Laser and temporary pen | P11 (QW) |
-| PRES-7 | Stepwise reveal | Later |
+| PRES-7 | Stepwise reveal | 0.24.0 |
 | PRES-8 | Presenter second window | Parked |
 | PRES-9 | Slide timer and auto-advance | Parked |
 | PRES-10 | Narrated walkthrough | Rejected |
@@ -1176,7 +1176,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | MM-11 | Cause-and-effect / RCA builder | P12 |
 | MM-12 | Process flow / swimlane | P13 |
 | EXP-1 | Copy crop as PNG/SVG | P7 (QW) |
-| EXP-2 | Export dialog | Later |
+| EXP-2 | Export dialog | 0.24.0 |
 | EXP-3 | Frames as PDF pages | P11 |
 | EXP-4 | Scene JSON export/import | Later |
 | EXP-5 | Paste canvas elements into a block | P11 |
