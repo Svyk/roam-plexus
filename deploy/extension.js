@@ -1,4 +1,4 @@
-/* Plexus v0.30.0 | MIT | generated; edit src/ */
+/* Plexus v0.31.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -7509,13 +7509,24 @@ function navigate(api, containerEl, target, sidebar, window) {
   } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
   clearLinkTooltip(containerEl.ownerDocument);
 }
+function linkClickDecision(results, detail) {
+  if (detail?.cancelled) return false;
+  const list = Array.isArray(results) ? results : [];
+  if (list.some((value) => value === false)) return false;
+  const pending = list.filter((value) => value && typeof value.then === "function");
+  if (!pending.length) return void 0;
+  return Promise.all(pending).then((values) => {
+    if (detail?.cancelled) return false;
+    return values.some((value) => value === false) ? false : true;
+  });
+}
 function navigateToTarget({ api, containerEl, target, sidebar = false }) {
   const window = sidebar ? sidebarWindow(api, target) : null;
   if (sidebar && !window["block-uid"]) return false;
   navigate(api, containerEl, target, sidebar, window);
   return true;
 }
-function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
+function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, beforeNavigate, parse = parseRoamLink, now = () => Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id), linkWaitMs = 300 } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {
   };
   let down = null;
@@ -7559,8 +7570,43 @@ function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaA
       if (sidebar && !window["block-uid"]) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      navigate(api, containerEl, target, sidebar, window);
-      onNavigate?.({ target, sidebar });
+      const go = () => {
+        navigate(api, containerEl, target, sidebar, window);
+        onNavigate?.({ target, sidebar });
+      };
+      if (typeof beforeNavigate !== "function") {
+        go();
+        return;
+      }
+      let decision;
+      try {
+        decision = beforeNavigate(target);
+      } catch (error) {
+        console.warn("[plexus] link click hook failed", error);
+        go();
+        return;
+      }
+      if (decision === false) return;
+      if (decision && typeof decision.then === "function") {
+        let settled = false;
+        const timer = setTimer(() => {
+          if (settled) return;
+          settled = true;
+          go();
+        }, linkWaitMs);
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          try {
+            clearTimer(timer);
+          } catch {
+          }
+          if (value !== false) go();
+        };
+        decision.then(finish, () => finish(true));
+        return;
+      }
+      go();
     } catch (error) {
       console.warn("[plexus] link interception failed", error);
     }
@@ -10372,6 +10418,24 @@ function snapshotElements({ nodes = [], edges = [], mode = "plain" } = {}) {
 
 // src/api.js
 var API_VERSION = 6;
+var API_EVENTS = Object.freeze(["change", "editor-open", "editor-close", "scene", "paste", "drop", "link-click"]);
+var EVENT_TYPES = new Set(API_EVENTS);
+function sceneSignature(elements) {
+  const parts = [];
+  for (const el of elements || []) {
+    if (!el || el.isDeleted) continue;
+    parts.push(`${el.id}:${el.version || 0}`);
+  }
+  parts.sort();
+  return parts.join("|");
+}
+function nextSceneDetail(previous, elements, uid) {
+  const signature2 = sceneSignature(elements);
+  if (signature2 === previous) return { signature: signature2, detail: null };
+  let count = 0;
+  for (const el of elements || []) if (el && !el.isDeleted) count += 1;
+  return { signature: signature2, detail: { uid: uid ?? null, count } };
+}
 var GONE = "Scene is no longer open";
 var NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
 var FORBIDDEN_PATCH_KEYS = ["id", "type", "version", "versionNonce", "isDeleted", "index"];
@@ -10666,7 +10730,7 @@ function unsubscribe(emitter, type, cb) {
   return void 0;
 }
 function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure: measure3 } = {}) {
-  const listeners = /* @__PURE__ */ new Map();
+  const buckets = /* @__PURE__ */ new Map();
   const opening = /* @__PURE__ */ new Map();
   const api = {
     apiVersion: API_VERSION,
@@ -10817,24 +10881,43 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
       promise.then(done2, done2);
       return promise;
     },
+    spec() {
+      return {
+        apiVersion: API_VERSION,
+        events: [...API_EVENTS],
+        methods: Object.keys(api).filter((key) => typeof api[key] === "function").sort()
+      };
+    },
+    help() {
+      return "RoamPlexus apiVersion 6. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
+    },
+    validate(name, value) {
+      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 6" };
+      if (name === "event") return EVENT_TYPES.has(value) ? { ok: true, data: value } : { ok: false, error: "Unknown event" };
+      if (name === "method") return typeof api[value] === "function" ? { ok: true, data: value } : { ok: false, error: "Unknown method" };
+      return { ok: false, error: "Unknown name" };
+    },
     addEventListener(type, cb) {
-      if (type !== "change" || typeof cb !== "function" || listeners.has(cb)) return;
+      if (!EVENT_TYPES.has(type) || typeof cb !== "function") return;
+      if (!buckets.has(type)) buckets.set(type, /* @__PURE__ */ new Map());
+      const bag = buckets.get(type);
+      if (bag.has(cb)) return;
       const wrapped = (detail) => {
         try {
-          cb(detail);
+          return cb(detail);
         } catch (error) {
           console.error("[plexus] listener failed", error);
         }
       };
-      listeners.set(cb, wrapped);
-      subscribe(emitter, "change", wrapped);
+      bag.set(cb, wrapped);
+      subscribe(emitter, type, wrapped);
     },
     removeEventListener(type, cb) {
-      if (type !== "change") return;
-      const wrapped = listeners.get(cb);
+      const bag = buckets.get(type);
+      const wrapped = bag?.get(cb);
       if (!wrapped) return;
-      listeners.delete(cb);
-      unsubscribe(emitter, "change", wrapped);
+      bag.delete(cb);
+      unsubscribe(emitter, type, wrapped);
     }
   };
   return Object.freeze(api);
@@ -17119,7 +17202,7 @@ function createRegionsLayer({
     regionSig = sig;
     return changed;
   }
-  function sceneSignature() {
+  function sceneSignature2() {
     const nonce4 = app.scene?.getSceneNonce?.();
     if (nonce4 != null) return `n${nonce4}`;
     const elements = app.getSceneElementsIncludingDeleted?.() ?? [];
@@ -17425,7 +17508,7 @@ function createRegionsLayer({
     let changed = false;
     if (now() - regionsAt > REGION_REFETCH_MS2 && fetchRegions()) changed = true;
     if (!gestureActive()) {
-      const sig = sceneSignature();
+      const sig = sceneSignature2();
       if (changed || sig !== sceneSig) {
         sceneSig = sig;
         collect();
@@ -20098,6 +20181,383 @@ function stampElements({ x = 0, y = 0, n = 1, newId, measure: measure3 } = {}) {
   return b.elements();
 }
 
+// src/model/neighbours.js
+var CARD_W2 = 200;
+var CARD_H2 = 72;
+var EXPAND_ROLES = Object.freeze({
+  backlinks: { key: ":block/_refs", label: "backlink", pull: "[:block/uid {:block/_refs [:block/uid :block/string :node/title]}]" },
+  children: { key: ":block/children", label: "child", pull: "[:block/uid {:block/children [:block/uid :block/string :node/title]}]" },
+  refs: { key: ":block/refs", label: "ref", pull: "[:block/uid {:block/refs [:block/uid :block/string :node/title]}]" },
+  parents: { key: ":block/parents", label: "parent", pull: "[:block/uid {:block/parents [:block/uid :block/string :node/title]}]" }
+});
+function roamOf(value) {
+  const parsed = parseEmbedRef(value);
+  if (!parsed || parsed.kind !== "block" && parsed.kind !== "page") return null;
+  return parsed;
+}
+function cardElement(el, byId) {
+  if (!el || el.isDeleted) return null;
+  const node = el.type === "text" && el.containerId ? byId?.get(el.containerId) : el;
+  if (!node || node.isDeleted || node.type === "text" || node.type === "arrow") return null;
+  const mm2 = node.customData?.plexus?.mm;
+  if (mm2 && typeof mm2 === "object" && !mm2.edge && !mm2.boundary && typeof mm2.uid === "string" && mm2.uid) return node;
+  if (node.type !== "rectangle") return null;
+  if (roamOf(node.customData?.plexus?.embed) || roamOf(node.link)) return node;
+  return null;
+}
+function cardTarget(el, byId) {
+  const node = cardElement(el, byId);
+  if (!node) return null;
+  const mm2 = node.customData?.plexus?.mm;
+  if (mm2 && typeof mm2 === "object" && !mm2.edge && !mm2.boundary && typeof mm2.uid === "string" && mm2.uid) {
+    return { uid: mm2.uid, title: null, kind: "block", elementId: node.id };
+  }
+  const parsed = roamOf(node.customData?.plexus?.embed) || roamOf(node.link);
+  if (!parsed) return null;
+  if (parsed.kind === "page") return { uid: null, title: parsed.title, kind: "page", elementId: node.id };
+  return { uid: parsed.uid, title: null, kind: "block", elementId: node.id };
+}
+function selectedCard(elements, selectedIds) {
+  const list = elements || [];
+  const byId = new Map(list.filter(Boolean).map((el) => [el.id, el]));
+  const ids = selectedIds || [];
+  if (!ids.length) return null;
+  let element = null;
+  for (const id of ids) {
+    const resolved = cardElement(byId.get(id), byId);
+    if (!resolved) return null;
+    if (!element) element = resolved;
+    else if (element.id !== resolved.id) return null;
+  }
+  const target = cardTarget(element, byId);
+  return target ? { element, target } : null;
+}
+function presentUids(elements, pageUidOf2 = () => null) {
+  const list = elements || [];
+  const byId = new Map(list.filter(Boolean).map((el) => [el.id, el]));
+  const set = /* @__PURE__ */ new Set();
+  for (const el of list) {
+    const target = cardTarget(el, byId);
+    if (!target) continue;
+    if (target.uid) set.add(target.uid);
+    if (target.title) {
+      const uid = pageUidOf2(target.title);
+      if (uid) set.add(uid);
+    }
+  }
+  return set;
+}
+function neighbourRows(raw, key) {
+  const value = raw?.[key];
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  const rows = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const uid = item[":block/uid"];
+    if (typeof uid !== "string" || !uid) continue;
+    const title = item[":node/title"];
+    const string = item[":block/string"] ?? "";
+    const named = title != null && String(title).trim() !== "";
+    rows.push({
+      uid,
+      title: named ? String(title) : null,
+      string: String(string),
+      label: named ? String(title) : embedLabel(string) || uid
+    });
+  }
+  return rows;
+}
+function chooseNeighbours(rows, present, cap = 12) {
+  const have = present instanceof Set ? present : new Set(present || []);
+  const seen = /* @__PURE__ */ new Set();
+  const eligible = [];
+  for (const row of rows || []) {
+    const uid = row?.uid;
+    if (!uid || have.has(uid) || seen.has(uid)) continue;
+    seen.add(uid);
+    eligible.push(row);
+  }
+  const limit = Number.isFinite(cap) && cap >= 0 ? cap : 12;
+  return { picked: eligible.slice(0, limit), total: eligible.length };
+}
+function expandElements({ source, rows, role, newId } = {}) {
+  if (!source?.id || !rows?.length) return [];
+  const rootUid = source.uid || source.id;
+  const tree = {
+    uid: rootUid,
+    open: true,
+    children: rows.map((row) => ({ uid: row.uid, open: true, children: [] }))
+  };
+  const sizes = { [rootUid]: { width: source.width || CARD_W2, height: source.height || CARD_H2 } };
+  for (const row of rows) sizes[row.uid] = { width: CARD_W2, height: CARD_H2 };
+  const pos = layoutTree({
+    tree,
+    sizes,
+    layout: "right",
+    root: { x: source.x || 0, y: source.y || 0 }
+  });
+  let n = 0;
+  const seq2 = typeof newId === "function" ? newId : () => `plxexp${n++}`;
+  const elements = [];
+  for (const row of rows) {
+    const at = pos[row.uid];
+    if (!at) continue;
+    const ref = row.title ? `[[${row.title}]]` : `((${row.uid}))`;
+    const [rect, text] = makeEmbedAnchor({
+      ref,
+      label: row.label || row.uid,
+      x: at.x,
+      y: at.y,
+      width: CARD_W2,
+      height: CARD_H2,
+      idPrefix: "plxnb-"
+    });
+    const arrowId = String(seq2());
+    const labelId2 = String(seq2());
+    const x1 = (source.x || 0) + (source.width || CARD_W2);
+    const y1 = (source.y || 0) + (source.height || CARD_H2) / 2;
+    const x2 = rect.x;
+    const y2 = rect.y + rect.height / 2;
+    const arrow = baseElement(arrowId, "arrow", x1, y1, Math.max(1, x2 - x1), Math.max(1, Math.abs(y2 - y1)));
+    Object.assign(arrow, {
+      points: [[0, 0], [x2 - x1, y2 - y1]],
+      lastCommittedPoint: null,
+      startBinding: { elementId: source.id, focus: 0, gap: 4 },
+      endBinding: { elementId: rect.id, focus: 0, gap: 4 },
+      startArrowhead: null,
+      endArrowhead: "arrow",
+      elbowed: false,
+      boundElements: [{ id: labelId2, type: "text" }]
+    });
+    const label = baseElement(labelId2, "text", (x1 + x2) / 2, (y1 + y2) / 2, 48, 20);
+    Object.assign(label, {
+      text: role || "",
+      originalText: role || "",
+      fontSize: 16,
+      fontFamily: 1,
+      textAlign: "center",
+      verticalAlign: "middle",
+      containerId: arrowId,
+      autoResize: true,
+      lineHeight: 1.25
+    });
+    rect.boundElements = [...rect.boundElements || [], { id: arrowId, type: "arrow" }];
+    elements.push(rect, text, arrow, label);
+  }
+  return elements;
+}
+function appendExpanded(current7, added) {
+  const extra = /* @__PURE__ */ new Map();
+  for (const el of added || []) {
+    if (el?.type !== "arrow") continue;
+    for (const end of [el.startBinding, el.endBinding]) {
+      if (!end?.elementId) continue;
+      const list = extra.get(end.elementId) || [];
+      list.push({ id: el.id, type: "arrow" });
+      extra.set(end.elementId, list);
+    }
+  }
+  const patch = (el) => {
+    const more = el && extra.get(el.id);
+    if (!more) return el;
+    return {
+      ...el,
+      boundElements: [...el.boundElements || [], ...more],
+      version: (el.version || 0) + 1
+    };
+  };
+  return [...(current7 || []).map(patch), ...(added || []).map(patch)];
+}
+
+// src/model/flowchart.js
+var MERMAID_BLOCK = "{{[[mermaid]]}}";
+var ID = "([A-Za-z][A-Za-z0-9_]*)";
+var NODE = `${ID}(?:\\[([^\\]\\n]+)\\])?`;
+var NODE_ONLY = new RegExp(`^${ID}\\[([^\\]\\n]+)\\]$`);
+var EDGE2 = new RegExp(`^${NODE}\\s*-->\\s*(?:\\|([^|\\n]+)\\|\\s*)?${NODE}$`);
+function addNode(nodes, order, id, label) {
+  if (!id) return;
+  if (!nodes.has(id)) {
+    nodes.set(id, label || id);
+    order.push(id);
+    return;
+  }
+  if (label && nodes.get(id) === id) nodes.set(id, label);
+}
+function parseLine(line) {
+  const edge = EDGE2.exec(line);
+  if (edge) {
+    return {
+      kind: "edge",
+      from: edge[1],
+      fromLabel: edge[2] || null,
+      label: edge[3] ? edge[3].trim() : "",
+      to: edge[4],
+      toLabel: edge[5] || null
+    };
+  }
+  const node = NODE_ONLY.exec(line);
+  if (node) return { kind: "node", id: node[1], label: node[2] };
+  return null;
+}
+function parseFlowchart(text) {
+  const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const head = /^flowchart\s+(TD|LR)$/i.exec(lines[0]);
+  if (!head) return null;
+  const dir = head[1].toUpperCase();
+  const nodes = /* @__PURE__ */ new Map();
+  const order = [];
+  const edges = [];
+  for (const line of lines.slice(1)) {
+    const parsed = parseLine(line);
+    if (!parsed) return null;
+    if (parsed.kind === "node") addNode(nodes, order, parsed.id, parsed.label);
+    else {
+      addNode(nodes, order, parsed.from, parsed.fromLabel);
+      addNode(nodes, order, parsed.to, parsed.toLabel);
+      if (parsed.from !== parsed.to) edges.push({ from: parsed.from, to: parsed.to, label: parsed.label });
+    }
+  }
+  if (!order.length) return null;
+  return {
+    dir,
+    layout: dir === "LR" ? "right" : "down",
+    nodes: order.map((id) => ({ id, label: nodes.get(id) })),
+    edges
+  };
+}
+function flowchartTree(parsed) {
+  const ids = parsed.nodes.map((node) => node.id);
+  const kids2 = new Map(ids.map((id) => [id, []]));
+  const incoming = new Map(ids.map((id) => [id, 0]));
+  for (const edge of parsed.edges) {
+    if (!kids2.has(edge.from) || !kids2.has(edge.to) || edge.from === edge.to) continue;
+    if (kids2.get(edge.from).includes(edge.to)) continue;
+    kids2.get(edge.from).push(edge.to);
+    incoming.set(edge.to, incoming.get(edge.to) + 1);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const build = (id) => {
+    if (seen.has(id)) return { uid: id, open: true, children: [] };
+    seen.add(id);
+    const node = { uid: id, open: true, children: [] };
+    for (const child of kids2.get(id)) {
+      if (seen.has(child)) continue;
+      node.children.push(build(child));
+    }
+    return node;
+  };
+  const roots = ids.filter((id) => incoming.get(id) === 0);
+  const tree = build(roots[0] || ids[0]);
+  for (const id of ids) if (!seen.has(id)) tree.children.push(build(id));
+  return tree;
+}
+function flowchartElements(parsed, { measure: measure3, newId, origin = { x: 0, y: 0 } } = {}) {
+  if (!parsed?.nodes?.length) return [];
+  const builder = createBuilder({ measure: measure3, newId });
+  const ids = /* @__PURE__ */ new Map();
+  for (const node of parsed.nodes) ids.set(node.id, builder.box(node.label || node.id, { x: 0, y: 0 }));
+  for (const edge of parsed.edges) {
+    const from = ids.get(edge.from);
+    const to = ids.get(edge.to);
+    if (!from || !to || edge.from === edge.to) continue;
+    builder.arrow(from, to, edge.label ? { label: edge.label } : {});
+  }
+  const sizes = {};
+  for (const node of parsed.nodes) sizes[node.id] = builder.size(ids.get(node.id));
+  const pos = layoutTree({ tree: flowchartTree(parsed), sizes, layout: parsed.layout, root: origin });
+  for (const node of parsed.nodes) {
+    const at = pos[node.id];
+    if (at) builder.place(ids.get(node.id), at.x, at.y);
+  }
+  return builder.elements();
+}
+function cleanLabel(value, fallback) {
+  const text = String(value ?? "").replace(/[\r\n|[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return text || fallback;
+}
+function cardLabel(el, byId) {
+  for (const child of byId.values()) {
+    if (!child || child.isDeleted || child.type !== "text" || child.containerId !== el.id) continue;
+    const text = child.originalText || child.text;
+    if (text && String(text).trim()) return String(text);
+  }
+  const embed = el.customData?.plexus?.embed;
+  if (typeof embed === "string" && embed.trim()) return embed;
+  if (typeof el.link === "string" && el.link.trim()) return el.link;
+  return "card";
+}
+function pickCards(elements, selectedIds) {
+  const live3 = (elements || []).filter((el) => el && !el.isDeleted);
+  const byId = new Map(live3.map((el) => [el.id, el]));
+  const selected = new Set(selectedIds || []);
+  const take = (ids) => {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const el of live3) {
+      if (ids && !ids.has(el.id)) continue;
+      const card = cardElement(el, byId);
+      if (!card || seen.has(card.id)) continue;
+      seen.add(card.id);
+      out.push(card);
+    }
+    return out;
+  };
+  const picked = selected.size ? take(selected) : [];
+  const cards = picked.length ? picked : take(null);
+  cards.sort((a, b) => a.y - b.y || a.x - b.x || String(a.id).localeCompare(String(b.id)));
+  return { cards, byId };
+}
+function boundEnds(arrow, byId, index) {
+  const endOf = (binding) => {
+    const el = binding?.elementId ? byId.get(binding.elementId) : null;
+    const card = cardElement(el, byId);
+    return card ? index.get(card.id) || null : null;
+  };
+  return { from: endOf(arrow.startBinding), to: endOf(arrow.endBinding) };
+}
+function flowchartFromCards(elements, selectedIds) {
+  const { cards, byId } = pickCards(elements, selectedIds);
+  if (!cards.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const card of cards) {
+    minX = Math.min(minX, card.x);
+    minY = Math.min(minY, card.y);
+    maxX = Math.max(maxX, card.x + (card.width || 0));
+    maxY = Math.max(maxY, card.y + (card.height || 0));
+  }
+  const dir = maxX - minX > maxY - minY ? "LR" : "TD";
+  const index = /* @__PURE__ */ new Map();
+  const lines = [`flowchart ${dir}`];
+  cards.forEach((card, i) => {
+    const nodeId2 = `n${i + 1}`;
+    index.set(card.id, nodeId2);
+    lines.push(`${nodeId2}[${cleanLabel(cardLabel(card, byId), "card")}]`);
+  });
+  const seen = /* @__PURE__ */ new Set();
+  for (const el of byId.values()) {
+    if (el.type !== "arrow") continue;
+    const ends = boundEnds(el, byId, index);
+    if (!ends.from || !ends.to || ends.from === ends.to) continue;
+    const key = `${ends.from}>${ends.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let label = "";
+    for (const child of byId.values()) {
+      if (child.type === "text" && child.containerId === el.id && !child.isDeleted) {
+        label = cleanLabel(child.originalText || child.text, "");
+        if (label) break;
+      }
+    }
+    lines.push(label ? `${ends.from} -->|${label}| ${ends.to}` : `${ends.from}-->${ends.to}`);
+  }
+  return lines.join("\n");
+}
+
 // src/actions.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var noop = () => {
@@ -20611,6 +21071,17 @@ function createActions({
       return null;
     }
     return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
+  }
+  function mermaidChildText(uid) {
+    if (!uid || typeof host.blockInfo !== "function") return null;
+    const info = host.blockInfo(uid);
+    if (!info) return null;
+    if (String(info.string ?? "").trim() === MERMAID_BLOCK) {
+      const child = host.pullBlock?.(uid)?.children?.[0];
+      return child ? String(child.string ?? "") : "";
+    }
+    if (String(info.parentString ?? "").trim() === MERMAID_BLOCK) return String(info.string ?? "");
+    return null;
   }
   function insertGuarded(app, drawingUid, elements, label) {
     const selectedElementIds2 = {};
@@ -22674,6 +23145,138 @@ function createActions({
         }
         return finishWith(region, plainCachePut(region, ref));
       }
+    }),
+    exportMermaid: () => once("mermaid-export", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster2.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const text = flowchartFromCards(sceneElements(editor.app), native.selectedElementIds(editor.app));
+      if (!text) {
+        toaster2.show("Nothing to export");
+        return null;
+      }
+      try {
+        const parent = await host.createBlock({ parentUid: editor.drawingUid, string: MERMAID_BLOCK });
+        await host.createBlock({ parentUid: parent, string: text });
+        toaster2.show("Exported mermaid");
+        return parent;
+      } catch (error) {
+        console.warn("[plexus] mermaid export failed", error);
+        toaster2.show("Could not write the mermaid block", { kind: "error" });
+        return null;
+      }
+    }),
+    importMermaid: (focusedUid) => once("mermaid-import", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster2.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const text = mermaidChildText(focusedUid);
+      if (text == null) {
+        toaster2.show("Focus a mermaid block");
+        return null;
+      }
+      const parsed = parseFlowchart(text);
+      if (!parsed) {
+        toaster2.show("Only a flowchart");
+        return null;
+      }
+      let n = 0;
+      const centre = viewCentre(editor.app);
+      const elements = flowchartElements(parsed, { measure: measure3, newId: () => `plxmd${n++}`, origin: centre });
+      if (!elements.length) {
+        toaster2.show("Only a flowchart");
+        return null;
+      }
+      if (!insertGuarded(editor.app, editor.drawingUid, elements, "Import mermaid")) {
+        toaster2.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      return elements.filter((el) => el.type === "rectangle").map((el) => el.id);
+    }),
+    expandNeighbours: (role) => once(`expand-${role}`, async () => {
+      const spec = EXPAND_ROLES[role];
+      if (!spec) return null;
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster2.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const elements = sceneElements(editor.app);
+      const card = selectedCard(elements, native.selectedElementIds(editor.app));
+      if (!card?.target) {
+        toaster2.show("Select one card");
+        return null;
+      }
+      let uid = card.target.uid;
+      if (!uid && card.target.title) uid = host.pageUidByTitle?.(card.target.title) || null;
+      if (!uid) {
+        toaster2.show("That card is not in the graph");
+        return null;
+      }
+      let raw = null;
+      try {
+        raw = api?.data?.pull?.(spec.pull, [":block/uid", uid]);
+      } catch (error) {
+        console.warn("[plexus] expand pull failed", error);
+        raw = null;
+      }
+      const rows = neighbourRows(raw, spec.key);
+      const present = presentUids(elements, (title) => host.pageUidByTitle?.(title) || null);
+      present.add(uid);
+      const { picked, total } = chooseNeighbours(rows, present, 12);
+      if (!picked.length) {
+        toaster2.show("Nothing to expand");
+        return null;
+      }
+      let n = 0;
+      const added = expandElements({
+        source: {
+          id: card.element.id,
+          uid,
+          x: card.element.x,
+          y: card.element.y,
+          width: card.element.width,
+          height: card.element.height
+        },
+        rows: picked,
+        role: spec.label,
+        newId: () => `plxexp${n++}`
+      });
+      if (!added.length) {
+        toaster2.show("Nothing to expand");
+        return null;
+      }
+      const selectedElementIds2 = {};
+      for (const el of added) if (el.type === "rectangle") selectedElementIds2[el.id] = true;
+      const ok = guard2.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Expand",
+        captureUpdate: "IMMEDIATELY",
+        next: (current7) => appendExpanded(current7, added),
+        appState: { selectedElementIds: selectedElementIds2, selectedGroupIds: {} }
+      });
+      if (!ok) {
+        toaster2.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      if (total > picked.length) toaster2.show(`${picked.length} of ${total}`);
+      return added.filter((el) => el.type === "rectangle").map((el) => el.id);
     }),
     stickyNote: () => once("sticky", () => placeBuilt("Sticky note", (c, newId) => stickyElements({
       x: c.x - 100,
@@ -26978,6 +27581,12 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     only = [];
   }
   const single = only.length === 1 ? only[0] : null;
+  let card = null;
+  try {
+    card = selectedCard(app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [], selectedIds());
+  } catch {
+    card = null;
+  }
   const freeOne = !!(single && single.type === "text" && !single.containerId);
   const imageOne = !!(single && single.type === "image");
   const embedOne = !!(single && single.type === "rectangle" && typeof single.customData?.plexus?.embed === "string");
@@ -27018,6 +27627,10 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     { id: "drawing-name", label: "Plexus: Drawing name…", enabled: can(() => !!drawingUid), run: call("drawing-name", () => actions.setDrawingName(drawingUid)) },
     { id: "task-card", label: "Plexus: Task card…", enabled: can(() => !!drawingUid), run: call("task-card", () => actions.taskCard?.()) },
     { id: "page-card", label: "Plexus: Page card…", enabled: can(() => !!drawingUid), run: call("page-card", () => actions.pageCard?.()) },
+    { id: "expand-backlinks", label: "Plexus: Expand backlinks", enabled: !!card, run: call("expand-backlinks", () => actions.expandNeighbours?.("backlinks")) },
+    { id: "expand-children", label: "Plexus: Expand children", enabled: !!card, run: call("expand-children", () => actions.expandNeighbours?.("children")) },
+    { id: "expand-refs", label: "Plexus: Expand outgoing refs", enabled: !!card, run: call("expand-refs", () => actions.expandNeighbours?.("refs")) },
+    { id: "expand-parents", label: "Plexus: Expand parents", enabled: !!card, run: call("expand-parents", () => actions.expandNeighbours?.("parents")) },
     { id: "live-query", label: "Plexus: Live query…", enabled: can(() => !!drawingUid), run: call("live-query", () => actions.liveQuery?.()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
@@ -30397,18 +31010,31 @@ var DOCK_SETTLE_MS = 150;
 var TOOLBAR_PRESETS = { a4: "A4", letter: "Letter", "16:9": "16:9", "4:3": "4:3", "1:1": "1:1", mobile: "Mobile" };
 var presetOf = (id) => TOOLBAR_PRESETS[id] ?? id;
 var LAYOUT_KINDS2 = { "2x2": "grid", strip: "strip" };
+var EMIT_TYPES = new Set(API_EVENTS);
 function createEmitter() {
   const listeners = /* @__PURE__ */ new Map();
   return {
     on(type, cb) {
+      if (!EMIT_TYPES.has(type) || typeof cb !== "function") return;
       if (!listeners.has(type)) listeners.set(type, /* @__PURE__ */ new Set());
       listeners.get(type).add(cb);
     },
     off(type, cb) {
       listeners.get(type)?.delete(cb);
     },
-    emit(detail) {
-      for (const cb of [...listeners.get("change") ?? []]) cb(detail);
+    emit(detailOrType, maybeDetail) {
+      const typed = typeof detailOrType === "string";
+      const type = typed ? detailOrType : "change";
+      const detail = typed ? maybeDetail : detailOrType;
+      const results = [];
+      for (const cb of [...listeners.get(type) ?? []]) {
+        try {
+          results.push(cb(detail));
+        } catch (error) {
+          console.error("[plexus] listener failed", error);
+        }
+      }
+      return results;
     },
     clear() {
       listeners.clear();
@@ -31681,6 +32307,11 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         }
         const finish = () => {
           if (current7.app && mounted?.app !== current7.app) scenes.release(current7.app);
+          try {
+            emitter.emit("editor-close", { uid: current7.uid ?? null });
+          } catch (error) {
+            console.warn("[plexus] editor-close failed", error);
+          }
           if (current7.uid) {
             emitter.emit({ uid: current7.uid, kind: "drawing" });
             warmThumbnails(current7.uid);
@@ -31728,6 +32359,11 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           const history = createViewHistory({ onChange: () => toolbar.refresh() });
           const mountZ = outer ? baseZIndex(doc, outer) : 1e3;
           mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
+          try {
+            emitter.emit("editor-open", { uid: mountUid });
+          } catch (error) {
+            console.warn("[plexus] editor-open failed", error);
+          }
           try {
             const prefs = getSettings();
             const before = captureView(app);
@@ -31809,6 +32445,33 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           } catch (error) {
             console.warn("[plexus] toolbar refresh subscribe failed", error);
           }
+          let sceneSig = sceneSignature(app.getSceneElementsIncludingDeleted?.() ?? []);
+          const onScene = () => {
+            const els = app.getSceneElementsIncludingDeleted?.() ?? [];
+            const step = nextSceneDetail(sceneSig, els, mountUid);
+            sceneSig = step.signature;
+            if (!step.detail) return;
+            try {
+              emitter.emit("scene", step.detail);
+            } catch (error) {
+              console.warn("[plexus] scene emit failed", error);
+            }
+          };
+          try {
+            const offScene = app.onChangeEmitter?.on?.(onScene);
+            if (typeof offScene === "function") mounted.disposers.push(offScene);
+          } catch (error) {
+            console.warn("[plexus] scene subscribe failed", error);
+          }
+          const onPasteNotify = () => {
+            try {
+              emitter.emit("paste", { uid: mountUid });
+            } catch (error) {
+              console.warn("[plexus] paste emit failed", error);
+            }
+          };
+          el.addEventListener("paste", onPasteNotify, true);
+          mounted.disposers.push(() => el.removeEventListener("paste", onPasteNotify, true));
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const cardText = /* @__PURE__ */ new Map();
@@ -32061,6 +32724,11 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             },
             toast: (message) => toaster2.show(message, { kind: "error" }),
             onDrop: ({ items, mode, scenePoint }) => {
+              try {
+                emitter.emit("drop", { uid: mountUid, count: items?.length ?? 0 });
+              } catch (error) {
+                console.warn("[plexus] drop emit failed", error);
+              }
               Promise.resolve(actions.placeBlocks(items, { mode, scenePoint, app })).catch((error) => console.warn("[plexus] drop failed", error));
             }
           }));
@@ -32151,11 +32819,35 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               backlinks.dispose();
             });
           }
-          mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
-            if (!sidebar) navigatedAt = Date.now();
-            hover.hide();
-            if (sidebar) toaster2.show("Opened in sidebar");
-          } }));
+          mounted.disposers.push(installLinkInterception({
+            app,
+            containerEl: el,
+            api,
+            getSettings,
+            beforeNavigate: (target) => {
+              const detail = {
+                uid: target?.uid ?? null,
+                title: target?.title ?? null,
+                cancelled: false,
+                preventDefault() {
+                  this.cancelled = true;
+                }
+              };
+              let results = [];
+              try {
+                results = emitter.emit("link-click", detail) || [];
+              } catch (error) {
+                console.warn("[plexus] link-click failed", error);
+                return void 0;
+              }
+              return linkClickDecision(results, detail);
+            },
+            onNavigate: ({ sidebar } = {}) => {
+              if (!sidebar) navigatedAt = Date.now();
+              hover.hide();
+              if (sidebar) toaster2.show("Opened in sidebar");
+            }
+          }));
         },
         onEditorUnmount: () => {
           toolbar.hide();
@@ -32356,6 +33048,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "stackSelection", label: "Stack", run: () => actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection") },
       { id: "drawingGallery", label: "Drawing gallery", run: () => openGallery() },
       { id: "frameList", label: "Frame list", run: () => openFrames() },
+      { id: "exportMermaid", label: "Export mermaid", run: (ctx) => actions ? Promise.resolve(actions.exportMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] export mermaid failed", error)) : unavailable("exportMermaid") },
+      { id: "importMermaid", label: "Import mermaid", run: (ctx) => actions ? Promise.resolve(actions.importMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] import mermaid failed", error)) : unavailable("importMermaid") },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
     let commandListHandle = null;

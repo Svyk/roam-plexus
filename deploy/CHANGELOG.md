@@ -4,6 +4,12 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.31.0]
+- Export mermaid writes one mermaid block under the drawing. Its one child starts with flowchart. Import mermaid lays out rectangles and arrows from that child. Other diagrams are left alone. Paste leaves the scene empty. No mermaid library is loaded.
+- Expand on a card adds at most twelve backlinks, children, outgoing refs, or parents. Both parents count. Cards already on the canvas are skipped. New cards sit to the right, with a labelled arrow.
+- Listeners cover editor open and close, a scene change, paste, drop, and a cancelable link click. spec, help, and validate describe the current API. apiVersion stays 6.
+- The palette stays two entries. The command list is 82.
+
 ## [0.30.0]
 - Drawing gallery lists at most forty drawings, newest first. A tile uses the crop cache only. A miss stays blank. Choosing a row opens that drawing.
 - Frame list shows the open drawing's frames. Choosing one scrolls to it. The outline dock stays the Roam children.

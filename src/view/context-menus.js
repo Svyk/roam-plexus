@@ -5,6 +5,7 @@ import { isImageKind } from "../model/label.js";
 import { hotkeyFor } from "../settings.js";
 import { resolveRegionTarget } from "./regionref.js";
 import { ARRANGE_OPS } from "../model/arrange.js";
+import { selectedCard } from "../model/neighbours.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const PLEXUS_START = /^\s*\{\{\[\[plexus-/;
@@ -619,6 +620,9 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
   let only = [];
   try { only = selectedElements(); } catch { only = []; }
   const single = only.length === 1 ? only[0] : null;
+  let card = null;
+  try { card = selectedCard(app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [], selectedIds()); }
+  catch { card = null; }
   const freeOne = !!(single && single.type === "text" && !single.containerId);
   const imageOne = !!(single && single.type === "image");
   const embedOne = !!(single && single.type === "rectangle" && typeof single.customData?.plexus?.embed === "string");
@@ -660,6 +664,10 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "drawing-name", label: "Plexus: Drawing name\u2026", enabled: can(() => !!drawingUid), run: call("drawing-name", () => actions.setDrawingName(drawingUid)) },
     { id: "task-card", label: "Plexus: Task card\u2026", enabled: can(() => !!drawingUid), run: call("task-card", () => actions.taskCard?.()) },
     { id: "page-card", label: "Plexus: Page card\u2026", enabled: can(() => !!drawingUid), run: call("page-card", () => actions.pageCard?.()) },
+    { id: "expand-backlinks", label: "Plexus: Expand backlinks", enabled: !!card, run: call("expand-backlinks", () => actions.expandNeighbours?.("backlinks")) },
+    { id: "expand-children", label: "Plexus: Expand children", enabled: !!card, run: call("expand-children", () => actions.expandNeighbours?.("children")) },
+    { id: "expand-refs", label: "Plexus: Expand outgoing refs", enabled: !!card, run: call("expand-refs", () => actions.expandNeighbours?.("refs")) },
+    { id: "expand-parents", label: "Plexus: Expand parents", enabled: !!card, run: call("expand-parents", () => actions.expandNeighbours?.("parents")) },
     { id: "live-query", label: "Plexus: Live query\u2026", enabled: can(() => !!drawingUid), run: call("live-query", () => actions.liveQuery?.()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },

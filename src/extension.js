@@ -21,8 +21,8 @@ import { cardsFromQuery, cardsFromChildren } from "./query-cards.js";
 import { relationPlan } from "./relations.js";
 import { lockName, withLock } from "./host/locks.js";
 import { createHoverPreview } from "./view/hover-preview.js";
-import { clearLinkTooltip, installLinkInterception, navigateToTarget } from "./host/links.js";
-import { createPublicApi, createSceneRegistry, installPublicApi, uninstallPublicApi } from "./api.js";
+import { clearLinkTooltip, installLinkInterception, linkClickDecision, navigateToTarget } from "./host/links.js";
+import { API_EVENTS, createPublicApi, createSceneRegistry, installPublicApi, nextSceneDetail, sceneSignature, uninstallPublicApi } from "./api.js";
 import { createMindMap } from "./view/mindmap.js";
 import { createMmWriter } from "./host/mmwrites.js";
 import { createWriteGuard } from "./host/guard.js";
@@ -80,16 +80,27 @@ const TOOLBAR_PRESETS = { a4: "A4", letter: "Letter", "16:9": "16:9", "4:3": "4:
 const presetOf = (id) => TOOLBAR_PRESETS[id] ?? id;
 const LAYOUT_KINDS = { "2x2": "grid", strip: "strip" };
 
+const EMIT_TYPES = new Set(API_EVENTS);
+
 function createEmitter() {
   const listeners = new Map();
   return {
     on(type, cb) {
+      if (!EMIT_TYPES.has(type) || typeof cb !== "function") return;
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type).add(cb);
     },
     off(type, cb) { listeners.get(type)?.delete(cb); },
-    emit(detail) {
-      for (const cb of [...(listeners.get("change") ?? [])]) cb(detail);
+    emit(detailOrType, maybeDetail) {
+      const typed = typeof detailOrType === "string";
+      const type = typed ? detailOrType : "change";
+      const detail = typed ? maybeDetail : detailOrType;
+      const results = [];
+      for (const cb of [...(listeners.get(type) ?? [])]) {
+        try { results.push(cb(detail)); }
+        catch (error) { console.error("[plexus] listener failed", error); }
+      }
+      return results;
     },
     clear() { listeners.clear(); },
   };
@@ -1159,6 +1170,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         }
         const finish = () => {
           if (current.app && mounted?.app !== current.app) scenes.release(current.app);
+          try { emitter.emit("editor-close", { uid: current.uid ?? null }); }
+          catch (error) { console.warn("[plexus] editor-close failed", error); }
           if (current.uid) {
             emitter.emit({ uid: current.uid, kind: "drawing" });
             warmThumbnails(current.uid);
@@ -1199,6 +1212,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           const history = camera.createViewHistory({ onChange: () => toolbar.refresh() });
           const mountZ = outer ? baseZIndex(doc, outer) : 1000;
           mounted = { uid: mountUid, app, el, outer, z: mountZ, disposers: [], overlay: null, hash: mountHash, history, layer: null, dock: null };
+          try { emitter.emit("editor-open", { uid: mountUid }); }
+          catch (error) { console.warn("[plexus] editor-open failed", error); }
           try {
             const prefs = getSettings();
             const before = captureView(app);
@@ -1267,6 +1282,25 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             const off = app.onChangeEmitter?.on?.(() => toolbar.refresh());
             if (typeof off === "function") mounted.disposers.push(off);
           } catch (error) { console.warn("[plexus] toolbar refresh subscribe failed", error); }
+          let sceneSig = sceneSignature(app.getSceneElementsIncludingDeleted?.() ?? []);
+          const onScene = () => {
+            const els = app.getSceneElementsIncludingDeleted?.() ?? [];
+            const step = nextSceneDetail(sceneSig, els, mountUid);
+            sceneSig = step.signature;
+            if (!step.detail) return;
+            try { emitter.emit("scene", step.detail); }
+            catch (error) { console.warn("[plexus] scene emit failed", error); }
+          };
+          try {
+            const offScene = app.onChangeEmitter?.on?.(onScene);
+            if (typeof offScene === "function") mounted.disposers.push(offScene);
+          } catch (error) { console.warn("[plexus] scene subscribe failed", error); }
+          const onPasteNotify = () => {
+            try { emitter.emit("paste", { uid: mountUid }); }
+            catch (error) { console.warn("[plexus] paste emit failed", error); }
+          };
+          el.addEventListener("paste", onPasteNotify, true);
+          mounted.disposers.push(() => el.removeEventListener("paste", onPasteNotify, true));
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
           const cardText = new Map();
@@ -1470,6 +1504,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
             },
             toast: (message) => toaster.show(message, { kind: "error" }),
             onDrop: ({ items, mode, scenePoint }) => {
+              try { emitter.emit("drop", { uid: mountUid, count: items?.length ?? 0 }); }
+              catch (error) { console.warn("[plexus] drop emit failed", error); }
               Promise.resolve(actions.placeBlocks(items, { mode, scenePoint, app }))
                 .catch((error) => console.warn("[plexus] drop failed", error));
             },
@@ -1531,11 +1567,26 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
               backlinks.dispose();
             });
           }
-          mounted.disposers.push(installLinkInterception({ app, containerEl: el, api, getSettings, onNavigate: ({ sidebar } = {}) => {
-            if (!sidebar) navigatedAt = Date.now();
-            hover.hide();
-            if (sidebar) toaster.show("Opened in sidebar");
-          } }));
+          mounted.disposers.push(installLinkInterception({
+            app, containerEl: el, api, getSettings,
+            beforeNavigate: (target) => {
+              const detail = {
+                uid: target?.uid ?? null,
+                title: target?.title ?? null,
+                cancelled: false,
+                preventDefault() { this.cancelled = true; },
+              };
+              let results = [];
+              try { results = emitter.emit("link-click", detail) || []; }
+              catch (error) { console.warn("[plexus] link-click failed", error); return undefined; }
+              return linkClickDecision(results, detail);
+            },
+            onNavigate: ({ sidebar } = {}) => {
+              if (!sidebar) navigatedAt = Date.now();
+              hover.hide();
+              if (sidebar) toaster.show("Opened in sidebar");
+            },
+          }));
         },
         onEditorUnmount: () => {
           toolbar.hide();
@@ -1725,6 +1776,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "stackSelection", label: "Stack", run: () => (actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection")) },
       { id: "drawingGallery", label: "Drawing gallery", run: () => openGallery() },
       { id: "frameList", label: "Frame list", run: () => openFrames() },
+      { id: "exportMermaid", label: "Export mermaid", run: (ctx) => (actions ? Promise.resolve(actions.exportMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] export mermaid failed", error)) : unavailable("exportMermaid")) },
+      { id: "importMermaid", label: "Import mermaid", run: (ctx) => (actions ? Promise.resolve(actions.importMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] import mermaid failed", error)) : unavailable("importMermaid")) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;

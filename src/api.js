@@ -9,6 +9,26 @@ import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport, viewport
 import { snapshotElements } from "./model/snapshot.js";
 
 export const API_VERSION = 6;
+export const API_EVENTS = Object.freeze(["change", "editor-open", "editor-close", "scene", "paste", "drop", "link-click"]);
+const EVENT_TYPES = new Set(API_EVENTS);
+
+export function sceneSignature(elements) {
+  const parts = [];
+  for (const el of elements || []) {
+    if (!el || el.isDeleted) continue;
+    parts.push(`${el.id}:${el.version || 0}`);
+  }
+  parts.sort();
+  return parts.join("|");
+}
+
+export function nextSceneDetail(previous, elements, uid) {
+  const signature = sceneSignature(elements);
+  if (signature === previous) return { signature, detail: null };
+  let count = 0;
+  for (const el of elements || []) if (el && !el.isDeleted) count += 1;
+  return { signature, detail: { uid: uid ?? null, count } };
+}
 
 const GONE = "Scene is no longer open";
 const NOT_OPEN = "Drawing is not open; call RoamPlexus.whenOpen(uid) first";
@@ -280,7 +300,7 @@ function unsubscribe(emitter, type, cb) {
 // Wraps host + actions into the frozen window.RoamPlexus object. Nothing here throws into a caller's event loop
 // for listener errors; API calls themselves reject/throw normally.
 export function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure } = {}) {
-  const listeners = new Map();
+  const buckets = new Map();
   const opening = new Map();
 
   const api = {
@@ -408,20 +428,39 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
       promise.then(done, done);
       return promise;
     },
-    addEventListener(type, cb) {
-      if (type !== "change" || typeof cb !== "function" || listeners.has(cb)) return;
-      const wrapped = (detail) => {
-        try { cb(detail); } catch (error) { console.error("[plexus] listener failed", error); }
+    spec() {
+      return {
+        apiVersion: API_VERSION,
+        events: [...API_EVENTS],
+        methods: Object.keys(api).filter((key) => typeof api[key] === "function").sort(),
       };
-      listeners.set(cb, wrapped);
-      subscribe(emitter, "change", wrapped);
+    },
+    help() {
+      return "RoamPlexus apiVersion 6. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
+    },
+    validate(name, value) {
+      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 6" };
+      if (name === "event") return EVENT_TYPES.has(value) ? { ok: true, data: value } : { ok: false, error: "Unknown event" };
+      if (name === "method") return typeof api[value] === "function" ? { ok: true, data: value } : { ok: false, error: "Unknown method" };
+      return { ok: false, error: "Unknown name" };
+    },
+    addEventListener(type, cb) {
+      if (!EVENT_TYPES.has(type) || typeof cb !== "function") return;
+      if (!buckets.has(type)) buckets.set(type, new Map());
+      const bag = buckets.get(type);
+      if (bag.has(cb)) return;
+      const wrapped = (detail) => {
+        try { return cb(detail); } catch (error) { console.error("[plexus] listener failed", error); }
+      };
+      bag.set(cb, wrapped);
+      subscribe(emitter, type, wrapped);
     },
     removeEventListener(type, cb) {
-      if (type !== "change") return;
-      const wrapped = listeners.get(cb);
+      const bag = buckets.get(type);
+      const wrapped = bag?.get(cb);
       if (!wrapped) return;
-      listeners.delete(cb);
-      unsubscribe(emitter, "change", wrapped);
+      bag.delete(cb);
+      unsubscribe(emitter, type, wrapped);
     },
   };
   return Object.freeze(api);

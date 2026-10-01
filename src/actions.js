@@ -32,6 +32,8 @@ import { attrWrite, chosenAttrs, parseAttr } from "./model/page-card.js";
 import { queryPageTitles } from "./model/query-live.js";
 import { openInsertPicker } from "./view/insert-picker.js";
 import { nextStampNumber, stackCopies, stampElements, stickyElements } from "./model/stamps.js";
+import { MERMAID_BLOCK, flowchartElements, flowchartFromCards, parseFlowchart } from "./model/flowchart.js";
+import { EXPAND_ROLES, appendExpanded, chooseNeighbours, expandElements, neighbourRows, presentUids, selectedCard } from "./model/neighbours.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const noop = () => {};
@@ -599,6 +601,18 @@ export function createActions({
       return null;
     }
     return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
+  }
+
+  function mermaidChildText(uid) {
+    if (!uid || typeof host.blockInfo !== "function") return null;
+    const info = host.blockInfo(uid);
+    if (!info) return null;
+    if (String(info.string ?? "").trim() === MERMAID_BLOCK) {
+      const child = host.pullBlock?.(uid)?.children?.[0];
+      return child ? String(child.string ?? "") : "";
+    }
+    if (String(info.parentString ?? "").trim() === MERMAID_BLOCK) return String(info.string ?? "");
+    return null;
   }
 
   function insertGuarded(app, drawingUid, elements, label) {
@@ -2653,6 +2667,137 @@ export function createActions({
       }
       return finishWith(region, plainCachePut(region, ref));
       }
+    }),
+
+    exportMermaid: () => once("mermaid-export", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const text = flowchartFromCards(sceneElements(editor.app), native.selectedElementIds(editor.app));
+      if (!text) {
+        toaster.show("Nothing to export");
+        return null;
+      }
+      try {
+        const parent = await host.createBlock({ parentUid: editor.drawingUid, string: MERMAID_BLOCK });
+        await host.createBlock({ parentUid: parent, string: text });
+        toaster.show("Exported mermaid");
+        return parent;
+      } catch (error) {
+        console.warn("[plexus] mermaid export failed", error);
+        toaster.show("Could not write the mermaid block", { kind: "error" });
+        return null;
+      }
+    }),
+
+    importMermaid: (focusedUid) => once("mermaid-import", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const text = mermaidChildText(focusedUid);
+      if (text == null) {
+        toaster.show("Focus a mermaid block");
+        return null;
+      }
+      const parsed = parseFlowchart(text);
+      if (!parsed) {
+        toaster.show("Only a flowchart");
+        return null;
+      }
+      let n = 0;
+      const centre = viewCentre(editor.app);
+      const elements = flowchartElements(parsed, { measure, newId: () => `plxmd${n++}`, origin: centre });
+      if (!elements.length) {
+        toaster.show("Only a flowchart");
+        return null;
+      }
+      if (!insertGuarded(editor.app, editor.drawingUid, elements, "Import mermaid")) {
+        toaster.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      return elements.filter((el) => el.type === "rectangle").map((el) => el.id);
+    }),
+
+    expandNeighbours: (role) => once(`expand-${role}`, async () => {
+      const spec = EXPAND_ROLES[role];
+      if (!spec) return null;
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const elements = sceneElements(editor.app);
+      const card = selectedCard(elements, native.selectedElementIds(editor.app));
+      if (!card?.target) {
+        toaster.show("Select one card");
+        return null;
+      }
+      let uid = card.target.uid;
+      if (!uid && card.target.title) uid = host.pageUidByTitle?.(card.target.title) || null;
+      if (!uid) {
+        toaster.show("That card is not in the graph");
+        return null;
+      }
+      let raw = null;
+      try { raw = api?.data?.pull?.(spec.pull, [":block/uid", uid]); }
+      catch (error) { console.warn("[plexus] expand pull failed", error); raw = null; }
+      const rows = neighbourRows(raw, spec.key);
+      const present = presentUids(elements, (title) => host.pageUidByTitle?.(title) || null);
+      present.add(uid);
+      const { picked, total } = chooseNeighbours(rows, present, 12);
+      if (!picked.length) {
+        toaster.show("Nothing to expand");
+        return null;
+      }
+      let n = 0;
+      const added = expandElements({
+        source: {
+          id: card.element.id,
+          uid,
+          x: card.element.x,
+          y: card.element.y,
+          width: card.element.width,
+          height: card.element.height,
+        },
+        rows: picked,
+        role: spec.label,
+        newId: () => `plxexp${n++}`,
+      });
+      if (!added.length) {
+        toaster.show("Nothing to expand");
+        return null;
+      }
+      const selectedElementIds = {};
+      for (const el of added) if (el.type === "rectangle") selectedElementIds[el.id] = true;
+      const ok = guard.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Expand",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => appendExpanded(current, added),
+        appState: { selectedElementIds, selectedGroupIds: {} },
+      });
+      if (!ok) {
+        toaster.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      if (total > picked.length) toaster.show(`${picked.length} of ${total}`);
+      return added.filter((el) => el.type === "rectangle").map((el) => el.id);
     }),
 
     stickyNote: () => once("sticky", () => placeBuilt("Sticky note", (c, newId) => stickyElements({

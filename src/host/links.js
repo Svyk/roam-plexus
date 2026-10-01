@@ -47,6 +47,19 @@ function navigate(api, containerEl, target, sidebar, window) {
   clearLinkTooltip(containerEl.ownerDocument);
 }
 
+// false cancels. A promise is raced by the caller. Undefined means navigate now.
+export function linkClickDecision(results, detail) {
+  if (detail?.cancelled) return false;
+  const list = Array.isArray(results) ? results : [];
+  if (list.some((value) => value === false)) return false;
+  const pending = list.filter((value) => value && typeof value.then === "function");
+  if (!pending.length) return undefined;
+  return Promise.all(pending).then((values) => {
+    if (detail?.cancelled) return false;
+    return values.some((value) => value === false) ? false : true;
+  });
+}
+
 // Same navigation as link interception: minimize the full-screen editor, then open; sidebar opens a window instead.
 export function navigateToTarget({ api, containerEl, target, sidebar = false }) {
   const window = sidebar ? sidebarWindow(api, target) : null;
@@ -57,7 +70,7 @@ export function navigateToTarget({ api, containerEl, target, sidebar = false }) 
 
 // Capture-phase pointerdown/up on the editor container. Only trusted, short, still clicks on an element whose
 // link is a Roam link are taken over; everything else falls through to Excalidraw.
-export function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
+export function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, beforeNavigate, parse = parseRoamLink, now = () => Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id), linkWaitMs = 300 } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {};
   let down = null;
 
@@ -105,8 +118,39 @@ export function installLinkInterception({ app, containerEl, api = globalThis.roa
       if (sidebar && !window["block-uid"]) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      navigate(api, containerEl, target, sidebar, window);
-      onNavigate?.({ target, sidebar });
+      const go = () => {
+        navigate(api, containerEl, target, sidebar, window);
+        onNavigate?.({ target, sidebar });
+      };
+      if (typeof beforeNavigate !== "function") {
+        go();
+        return;
+      }
+      let decision;
+      try { decision = beforeNavigate(target); }
+      catch (error) {
+        console.warn("[plexus] link click hook failed", error);
+        go();
+        return;
+      }
+      if (decision === false) return;
+      if (decision && typeof decision.then === "function") {
+        let settled = false;
+        const timer = setTimer(() => {
+          if (settled) return;
+          settled = true;
+          go();
+        }, linkWaitMs);
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          try { clearTimer(timer); } catch { /* already fired */ }
+          if (value !== false) go();
+        };
+        decision.then(finish, () => finish(true));
+        return;
+      }
+      go();
     } catch (error) {
       console.warn("[plexus] link interception failed", error);
     }
