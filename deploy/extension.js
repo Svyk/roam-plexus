@@ -1,4 +1,4 @@
-/* Plexus v0.21.0 | MIT | generated; edit src/ */
+/* Plexus v0.22.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -8053,7 +8053,7 @@ function visualTree(tree, { attrEdges = false } = {}) {
   }
   return conv(tree);
 }
-function wrapLines2(text, maxWidth, measure2) {
+function wrapLines2(text, maxWidth, measure3) {
   const out = [];
   for (const para of String(text).split("\n")) {
     if (para === "") {
@@ -8067,18 +8067,18 @@ function wrapLines2(text, maxWidth, measure2) {
     };
     for (const word of para.split(" ")) {
       const cand = line === "" ? word : `${line} ${word}`;
-      if (measure2(cand) <= maxWidth) {
+      if (measure3(cand) <= maxWidth) {
         line = cand;
         continue;
       }
       if (line !== "") flush();
-      if (measure2(word) <= maxWidth) {
+      if (measure3(word) <= maxWidth) {
         line = word;
         continue;
       }
       let chunk = "";
       for (const ch of Array.from(word)) {
-        if (chunk !== "" && measure2(chunk + ch) > maxWidth) {
+        if (chunk !== "" && measure3(chunk + ch) > maxWidth) {
           out.push(chunk);
           chunk = ch;
         } else chunk += ch;
@@ -8089,8 +8089,8 @@ function wrapLines2(text, maxWidth, measure2) {
   }
   return out;
 }
-function nodeSize(text, fontSize, measure2, maxWidth = MAX_TEXT_WIDTH) {
-  const m = (s) => measure2(s, fontSize);
+function nodeSize(text, fontSize, measure3, maxWidth = MAX_TEXT_WIDTH) {
+  const m = (s) => measure3(s, fontSize);
   const lines = wrapLines2(text, maxWidth, m);
   let tw = 0;
   for (const l of lines) tw = Math.max(tw, m(l));
@@ -8305,7 +8305,7 @@ var need2 = (v, name) => {
   if (!isNum(v)) throw new Error(`${name} must be a finite number`);
   return v;
 };
-function createBuilder({ style: initial, measure: measure2, newId } = {}) {
+function createBuilder({ style: initial, measure: measure3, newId } = {}) {
   const st = { ...DEFAULT_STYLE };
   const setStyle = (patch) => {
     if (!patch || typeof patch !== "object") return;
@@ -8327,7 +8327,7 @@ function createBuilder({ style: initial, measure: measure2, newId } = {}) {
     if (byId.has(id)) throw new Error(`Duplicate id ${id}`);
     return id;
   };
-  const measurer = (fontSize, family) => (s) => family === 5 && typeof measure2 === "function" ? measure2(s, fontSize) : String(s).length * 0.6 * fontSize;
+  const measurer = (fontSize, family) => (s) => family === 5 && typeof measure3 === "function" ? measure3(s, fontSize) : String(s).length * 0.6 * fontSize;
   function fit(text, fontSize, family, maxWidth) {
     const m = measurer(fontSize, family);
     const lines = maxWidth == null ? String(text).split("\n") : wrapLines2(text, maxWidth, m);
@@ -8818,12 +8818,12 @@ function translateElements(elements, dx, dy) {
   }
   return elements;
 }
-function chartToElements(input, { layout = "tree", origin = { x: 0, y: 0 }, measure: measure2, newId, random = Math.random } = {}) {
+function chartToElements(input, { layout = "tree", origin = { x: 0, y: 0 }, measure: measure3, newId, random = Math.random } = {}) {
   if (!CE_LAYOUTS.includes(layout)) throw new Error(`Unknown layout ${layout}`);
   const { nodes, edges, connections, root, skipped: skipped2 } = parseChart(input);
   const chartId = `ce-${Array.from({ length: 8 }, () => Math.floor(random() * 16).toString(16)).join("")}`;
   const mark = (extra) => ({ plexus: { ce: { chart: chartId, ...extra } } });
-  const b = createBuilder({ measure: measure2, newId, style: { fontSize: FONT, fontFamily: 5, roughness: 0 } });
+  const b = createBuilder({ measure: measure3, newId, style: { fontSize: FONT, fontFamily: 5, roughness: 0 } });
   const pent = layout === "pentagon";
   const gid = `g${chartId}`;
   const boxes = /* @__PURE__ */ new Map();
@@ -8908,6 +8908,227 @@ function chartToElements(input, { layout = "tree", origin = { x: 0, y: 0 }, meas
   return { chart: chartId, elements, ids: elements.map((e) => e.id), skipped: skipped2, layout };
 }
 
+// src/model/snapshot.js
+var FILLS = Object.freeze({
+  center: "#f1f3f5",
+  north: "#d0ebff",
+  south: "#d3f9d8",
+  west: "#fff3bf",
+  east: "#ffd8a8",
+  siblings: "#e9ecef"
+});
+var FONT_SIZE = 20;
+var LINE_HEIGHT3 = 1.25;
+var CHAR_W = 0.6;
+var PAD_X2 = 16;
+var PAD_Y2 = 10;
+var GAP4 = 80;
+var BIND_GAP = 4;
+var rnd3 = () => Math.floor(Math.random() * 2 ** 31);
+var seq = 0;
+var nid = (prefix) => `${prefix}${Math.random().toString(36).slice(2, 10)}${(seq++).toString(36)}`;
+function shownText(title, mode) {
+  const text = title == null ? "" : String(title);
+  if (mode === "links" && !text.includes("[") && !text.includes("]")) return `[[${text}]]`;
+  return text;
+}
+function measure2(text) {
+  const lines = String(text).split("\n");
+  let textWidth = 1;
+  for (const line of lines) textWidth = Math.max(textWidth, Math.ceil(line.length * FONT_SIZE * CHAR_W) || 1);
+  const textHeight = Math.ceil(lines.length * FONT_SIZE * LINE_HEIGHT3) || 1;
+  return { textWidth, textHeight, width: textWidth + PAD_X2 * 2, height: textHeight + PAD_Y2 * 2 };
+}
+function zoneOf(zone) {
+  return Object.hasOwn(FILLS, zone) ? zone : "siblings";
+}
+function shell(id, type, x, y, width, height, groupId) {
+  return {
+    id,
+    type,
+    x,
+    y,
+    width,
+    height,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "solid",
+    roughness: 1,
+    opacity: 100,
+    groupIds: [groupId],
+    seed: rnd3(),
+    version: 1,
+    versionNonce: rnd3(),
+    isDeleted: false,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    frameId: null,
+    index: null,
+    roundness: null,
+    customData: { plexus: { snapshot: true } }
+  };
+}
+function centeredLeft(items, midX) {
+  const total = items.reduce((sum, item) => sum + item.width, 0) + GAP4 * Math.max(0, items.length - 1);
+  return midX - total / 2;
+}
+function placeRow(items, pos, left, y) {
+  let x = left;
+  for (const item of items) {
+    pos.set(item, { x, y });
+    x += item.width + GAP4;
+  }
+}
+function placeCol(items, pos, midY, xOf) {
+  const total = items.reduce((sum, item) => sum + item.height, 0) + GAP4 * Math.max(0, items.length - 1);
+  let y = midY - total / 2;
+  for (const item of items) {
+    pos.set(item, { x: xOf(item), y });
+    y += item.height + GAP4;
+  }
+}
+function placeAll(items) {
+  const byZone = { center: [], north: [], south: [], west: [], east: [], siblings: [] };
+  for (const item of items) byZone[item.zone].push(item);
+  const pos = /* @__PURE__ */ new Map();
+  let anchor = { x: 0, y: 0, width: 0, height: 0 };
+  let below = 0;
+  if (byZone.center.length) {
+    const first = byZone.center[0];
+    pos.set(first, { x: 0, y: 0 });
+    anchor = { x: 0, y: 0, width: first.width, height: first.height };
+    below = first.height;
+    let y = first.height + GAP4;
+    for (const extra of byZone.center.slice(1)) {
+      pos.set(extra, { x: 0, y });
+      below = y + extra.height;
+      y += extra.height + GAP4;
+    }
+  }
+  const midX = anchor.x + anchor.width / 2;
+  const midY = anchor.y + anchor.height / 2;
+  if (byZone.north.length) {
+    const h = byZone.north.reduce((m, item) => Math.max(m, item.height), 0);
+    const top = anchor.y - GAP4 - h;
+    let x = centeredLeft(byZone.north, midX);
+    for (const item of byZone.north) {
+      pos.set(item, { x, y: top + (h - item.height) });
+      x += item.width + GAP4;
+    }
+  }
+  if (byZone.south.length) placeRow(byZone.south, pos, centeredLeft(byZone.south, midX), below + GAP4);
+  if (byZone.west.length) placeCol(byZone.west, pos, midY, (item) => anchor.x - GAP4 - item.width);
+  if (byZone.east.length) placeCol(byZone.east, pos, midY, () => anchor.x + anchor.width + GAP4);
+  if (byZone.siblings.length) {
+    let floor = below;
+    for (const [item, at] of pos) floor = Math.max(floor, at.y + item.height);
+    placeRow(byZone.siblings, pos, anchor.x, floor + GAP4);
+  }
+  return pos;
+}
+function arrowGeometry(from, to) {
+  const ax = from.x + from.width / 2;
+  const ay = from.y + from.height / 2;
+  const bx = to.x + to.width / 2;
+  const by = to.y + to.height / 2;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dist = Math.hypot(dx, dy);
+  let p0 = { x: ax, y: ay };
+  let p1 = { x: bx, y: by };
+  if (dist > 0) {
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const exit = (box) => Math.min(
+      Math.abs(ux) > 1e-9 ? box.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 1e-9 ? box.height / 2 / Math.abs(uy) : Infinity
+    );
+    const s0 = exit(from) + BIND_GAP;
+    const s1 = exit(to) + BIND_GAP;
+    if (s0 + s1 < dist) {
+      p0 = { x: ax + ux * s0, y: ay + uy * s0 };
+      p1 = { x: bx - ux * s1, y: by - uy * s1 };
+    }
+  }
+  return {
+    x: p0.x,
+    y: p0.y,
+    width: Math.abs(p1.x - p0.x),
+    height: Math.abs(p1.y - p0.y),
+    points: [[0, 0], [p1.x - p0.x, p1.y - p0.y]]
+  };
+}
+function snapshotElements({ nodes = [], edges = [], mode = "plain" } = {}) {
+  void edges;
+  if (!Array.isArray(nodes) || nodes.length === 0) return [];
+  const prepared = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const shown = shownText(node.title, mode);
+    prepared.push({ zone: zoneOf(node.zone), shown, ...measure2(shown) });
+  }
+  if (!prepared.length) return [];
+  const sourceAt = Math.max(0, prepared.findIndex((item) => item.zone === "center"));
+  const pos = placeAll(prepared);
+  const groupId = nid("g");
+  const built = prepared.map((item) => {
+    const at = pos.get(item);
+    const rectId = nid("r");
+    const textId2 = nid("t");
+    const rect = shell(rectId, "rectangle", at.x, at.y, item.width, item.height, groupId);
+    rect.backgroundColor = FILLS[item.zone];
+    rect.boundElements = [{ id: textId2, type: "text" }];
+    const text = shell(
+      textId2,
+      "text",
+      at.x + (item.width - item.textWidth) / 2,
+      at.y + (item.height - item.textHeight) / 2,
+      item.textWidth,
+      item.textHeight,
+      groupId
+    );
+    text.strokeWidth = 1;
+    Object.assign(text, {
+      text: item.shown,
+      originalText: item.shown,
+      fontSize: FONT_SIZE,
+      fontFamily: 5,
+      textAlign: "center",
+      verticalAlign: "middle",
+      autoResize: true,
+      lineHeight: LINE_HEIGHT3,
+      containerId: rectId
+    });
+    return { rect, text };
+  });
+  const elements = [];
+  for (const item of built) elements.push(item.rect, item.text);
+  const source = built[sourceAt];
+  for (let i = 0; i < built.length; i++) {
+    if (i === sourceAt) continue;
+    const target = built[i];
+    const geom = arrowGeometry(source.rect, target.rect);
+    const arrow = shell(nid("a"), "arrow", geom.x, geom.y, geom.width, geom.height, groupId);
+    Object.assign(arrow, {
+      points: geom.points,
+      lastCommittedPoint: null,
+      startBinding: { elementId: source.rect.id, focus: 0, gap: BIND_GAP },
+      endBinding: { elementId: target.rect.id, focus: 0, gap: BIND_GAP },
+      startArrowhead: null,
+      endArrowhead: "arrow",
+      elbowed: false
+    });
+    source.rect.boundElements.push({ id: arrow.id, type: "arrow" });
+    target.rect.boundElements.push({ id: arrow.id, type: "arrow" });
+    elements.push(arrow);
+  }
+  return elements;
+}
+
 // src/api.js
 var API_VERSION = 6;
 var GONE = "Scene is no longer open";
@@ -8923,7 +9144,7 @@ function invisible(el) {
   if (el.type === "text") return !el.text;
   return el.width === 0 && el.height === 0;
 }
-function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard, beforeBulk: initialBeforeBulk, measure: measure2 } = {}) {
+function createSceneRegistry({ native, doc = globalThis.document, raf = globalThis.requestAnimationFrame, guard: writeGuard = directGuard, beforeBulk: initialBeforeBulk, measure: measure3 } = {}) {
   let disposed = false;
   let beforeBulk = typeof initialBeforeBulk === "function" ? initialBeforeBulk : null;
   const runBeforeBulk = (app, uid, label) => {
@@ -9058,7 +9279,7 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
         guard2();
         const st = app.state || {};
         const centre = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
-        const chart = chartToElements(json, { layout, origin: centre, measure: measure2 });
+        const chart = chartToElements(json, { layout, origin: centre, measure: measure3 });
         commitNew(app, uid, chart.elements, "Chart");
         return { chart: chart.chart, ids: chart.ids, skipped: chart.skipped };
       },
@@ -9143,7 +9364,7 @@ function createSceneRegistry({ native, doc = globalThis.document, raf = globalTh
       const ed = native.activeEditor(doc);
       return ed?.app && ed.drawingUid === uid ? registry.sceneFor(ed.app, uid) : null;
     },
-    measure: measure2,
+    measure: measure3,
     setBeforeBulk(fn) {
       beforeBulk = typeof fn === "function" ? fn : null;
     },
@@ -9203,7 +9424,7 @@ function unsubscribe(emitter, type, cb) {
   if (typeof emitter?.removeEventListener === "function") return emitter.removeEventListener(type, cb);
   return void 0;
 }
-function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure: measure2 } = {}) {
+function createPublicApi({ host, actions, emitter, version, scenes, openDrawing, measure: measure3 } = {}) {
   const listeners = /* @__PURE__ */ new Map();
   const opening = /* @__PURE__ */ new Map();
   const api = {
@@ -9224,6 +9445,13 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
         console.warn("[plexus] change emit failed", error);
       }
       return result;
+    },
+    dropSubgraph(payload) {
+      const elements = snapshotElements(payload || {});
+      if (!elements.length) throw new Error("Nothing to commit");
+      if (!scenes?.commit) throw new Error("Scenes unavailable");
+      scenes.commit(elements, { label: "Snapshot" });
+      return elements.length;
     },
     open(uid, { region, frame, sidebar = false } = {}) {
       const frameId2 = typeof frame === "string" ? frame.trim() : "";
@@ -9294,7 +9522,7 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
       return scenes?.sceneOf?.(uid) ?? null;
     },
     build({ style } = {}) {
-      const builder = createBuilder({ style, measure: measure2 ?? scenes?.measure });
+      const builder = createBuilder({ style, measure: measure3 ?? scenes?.measure });
       let committed = false;
       const pub = {};
       for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(builder))) {
@@ -9498,7 +9726,7 @@ var chipTextId = (root, uid, n) => `${chipId(root, uid, n)}-t`;
 var mergeId = (root, tailUid) => `pmm-${root}-${tailUid}-m`;
 var loopId = (root, refUid) => `pmm-${root}-${refUid}-l`;
 var CHIP_FILLS = Object.freeze({ ccp: "#ffc9c9", hazard: "#ffd8a8" });
-var rnd3 = () => Math.floor(Math.random() * 2147483646) + 1;
+var rnd4 = () => Math.floor(Math.random() * 2147483646) + 1;
 var mmOf = (el) => el && el.customData && el.customData.plexus && el.customData.plexus.mm || void 0;
 function withMM(customData, mm2) {
   const cd = customData && typeof customData === "object" ? customData : {};
@@ -9514,7 +9742,7 @@ function withoutMM(customData) {
   return Object.keys(cd).length ? cd : null;
 }
 function bump2(el, patch) {
-  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd3(), updated: Date.now() };
+  return { ...el, ...patch, version: (el.version || 0) + 1, versionNonce: rnd4(), updated: Date.now() };
 }
 function patchMarker(el, mmPatch) {
   const next = { ...mmOf(el) || {}, ...mmPatch };
@@ -9541,9 +9769,9 @@ function base(id, type, x, y, width, height, extra) {
     frameId: null,
     index: null,
     roundness: null,
-    seed: rnd3(),
+    seed: rnd4(),
     version: 1,
-    versionNonce: rnd3(),
+    versionNonce: rnd4(),
     isDeleted: false,
     boundElements: null,
     updated: Date.now(),
@@ -9725,7 +9953,7 @@ function containerDimension(dimension, type) {
   if (type === "diamond") return 2 * (d + 10);
   return d + 10;
 }
-var makeSizer = (measure2) => (text, fontSize, _uid, maxWidth) => nodeSize(text, fontSize, measure2, maxWidth);
+var makeSizer = (measure3) => (text, fontSize, _uid, maxWidth) => nodeSize(text, fontSize, measure3, maxWidth);
 var close = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= TOL;
 function stable(v) {
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
@@ -9926,7 +10154,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
   const addLabels = [];
   const doEdge = ({ eid, parentUid, childUid: childUid2, g, wantEdgeMM, via, boneStart, arrow = false, dashed = false, labelUid = null }) => {
     const pid = nodeId(root, parentUid);
-    const nid = nodeId(root, childUid2);
+    const nid2 = nodeId(root, childUid2);
     const e = byId.get(eid);
     const [, [dx, dy]] = g.points;
     const lid = labelId(root, childUid2);
@@ -9981,7 +10209,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
       if (boneStart) {
         if (e.startBinding) ep.startBinding = null;
       } else if (!e.startBinding || e.startBinding.elementId !== pid) ep.startBinding = { elementId: pid, focus: 0, gap: EDGE_GAP };
-      if (!e.endBinding || e.endBinding.elementId !== nid) ep.endBinding = { elementId: nid, focus: 0, gap: EDGE_GAP };
+      if (!e.endBinding || e.endBinding.elementId !== nid2) ep.endBinding = { elementId: nid2, focus: 0, gap: EDGE_GAP };
       const curFlow = (mmOf(e) || {}).flow;
       if (arrow) {
         if (curFlow === void 0 || !same(curFlow, wantEdgeMM.flow)) {
@@ -9998,17 +10226,17 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
     const uid = v.node.uid;
     const i = info.get(uid);
     const rect = finalRect.get(uid);
-    const nid = nodeId(root, uid);
+    const nid2 = nodeId(root, uid);
     const isRoot = v.depth === 0;
     const branch = isRoot || flow ? void 0 : v.branch;
     const st = flow ? flow.struct.byUid.get(uid) : null;
     const frameWant = st && st.lane !== "" ? laneId(root, st.lane) : void 0;
-    const txtEl = textByContainer.get(nid);
+    const txtEl = textByContainer.get(nid2);
     const tid = txtEl ? txtEl.id : textId(root, uid);
-    desiredIds.add(nid);
+    desiredIds.add(nid2);
     desiredIds.add(tid);
     if (frameWant !== void 0) {
-      desiredFrame.set(nid, frameWant);
+      desiredFrame.set(nid2, frameWant);
       desiredFrame.set(tid, frameWant);
     }
     const ownBound = [{ id: tid, type: "text" }];
@@ -10066,7 +10294,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
       );
     } else {
       const el = i.el;
-      const p = patchOf(nid);
+      const p = patchOf(nid2);
       if (el.isDeleted) p.isDeleted = false;
       for (const k of ["x", "y", "width", "height"]) if (!close(el[k], rect[k])) p[k] = rect[k];
       if (Math.abs(el.angle || 0) > 1e-6) p.angle = 0;
@@ -10099,7 +10327,7 @@ function reconcile({ elements, tree, sizes, layout = "right", textOf, rootPos, t
         if (txtEl.fontSize !== want.fontSize) tp.fontSize = want.fontSize;
         if (txtEl.fontFamily !== FONT_FAMILY) tp.fontFamily = FONT_FAMILY;
         if (Math.abs((txtEl.lineHeight ?? 0) - LINE_HEIGHT) > 1e-3) tp.lineHeight = LINE_HEIGHT;
-        if (txtEl.containerId !== nid) tp.containerId = nid;
+        if (txtEl.containerId !== nid2) tp.containerId = nid2;
         if (frameWant !== void 0 && txtEl.frameId !== frameWant) tp.frameId = frameWant;
         if (i.done && curMM.done !== true) tp.opacity = 50;
         else if (!i.done && curMM.done === true && txtEl.opacity === 50) tp.opacity = 100;
@@ -13329,7 +13557,7 @@ function createOutlineActions({
 }
 
 // src/model/templates.js
-var rnd4 = () => Math.floor(Math.random() * 2 ** 31);
+var rnd5 = () => Math.floor(Math.random() * 2 ** 31);
 var rid2 = () => `${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 13)}`.padEnd(21, "0").slice(0, 21);
 var isFrameLike2 = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
 var SLIDE = FRAME_PRESETS2["16:9"];
@@ -13478,9 +13706,9 @@ var STARTERS = Object.freeze([
   { id: "swab-site-map", name: "Swab-site map", build: swabSiteMap },
   { id: "slide-16x9", name: "16:9 slide", build: slide16x9 }
 ].map((s) => Object.freeze(s)));
-function buildStarter(starter, { measure: measure2 = null, origin = { x: 0, y: 0 } } = {}) {
+function buildStarter(starter, { measure: measure3 = null, origin = { x: 0, y: 0 } } = {}) {
   let n = 0;
-  const builder = createBuilder({ measure: measure2, newId: () => `tpl-${starter.id}-${++n}` });
+  const builder = createBuilder({ measure: measure3, newId: () => `tpl-${starter.id}-${++n}` });
   starter.build(builder, { origin });
   return builder.elements();
 }
@@ -13523,9 +13751,9 @@ function remapForInsert(elements, { centre = null, newId = rid2, now = Date.now(
     if (data) c.customData = data;
     else delete c.customData;
     c.index = null;
-    c.seed = rnd4();
+    c.seed = rnd5();
     c.version = 1;
-    c.versionNonce = rnd4();
+    c.versionNonce = rnd5();
     c.updated = now;
     c.isDeleted = false;
     return c;
@@ -13929,7 +14157,7 @@ function createTemplateActions({
   guardedWrite,
   beforeBulk = () => {
   },
-  measure: measure2 = null,
+  measure: measure3 = null,
   openDrawing,
   newDrawing,
   thumbnail = null,
@@ -14077,7 +14305,7 @@ function createTemplateActions({
         fail2("That starter is gone");
         return null;
       }
-      return { elements: buildStarter(starter, { measure: measure2 }), appState: null };
+      return { elements: buildStarter(starter, { measure: measure3 }), appState: null };
     }
     const drawing = host.drawing(item.drawingUid);
     const elements = liveElements(drawing?.elements);
@@ -15634,7 +15862,7 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
   let disposed = false;
   let lastHash = null;
   let navType = null;
-  let seq = 0;
+  let seq2 = 0;
   const enabled = () => {
     try {
       return !!getSettings()?.regionLanding;
@@ -15688,11 +15916,11 @@ function installRegionLanding({ doc, win = doc?.defaultView, api, host, getSetti
     const name = graphName();
     if (!name || graph !== name) return;
     const uid = m[3];
-    const mine = ++seq;
+    const mine = ++seq2;
     try {
       const block = await host.pullBlock(uid);
-      if (disposed || mine !== seq || !parseRegion(block?.string ?? "")?.supported) return;
-      if (!await settled(uid) || disposed || mine !== seq || (win?.location?.hash ?? "") !== hash) return;
+      if (disposed || mine !== seq2 || !parseRegion(block?.string ?? "")?.supported) return;
+      if (!await settled(uid) || disposed || mine !== seq2 || (win?.location?.hash ?? "") !== hash) return;
       if (activeEditor(doc)) return;
       await openRegion(uid);
     } catch (error) {
@@ -15904,7 +16132,7 @@ function createMeasurer({ doc = globalThis.document } = {}) {
     }
     return ctx;
   }
-  function measure2(text, fontSize) {
+  function measure3(text, fontSize) {
     const str = String(text ?? "");
     const font = fontString(fontSize);
     const key = `${font}|${str}`;
@@ -15943,7 +16171,7 @@ function createMeasurer({ doc = globalThis.document } = {}) {
     }
     return false;
   }
-  return { measure: measure2, ensureFonts, clear: () => memo3.clear(), size: () => memo3.size };
+  return { measure: measure3, ensureFonts, clear: () => memo3.clear(), size: () => memo3.size };
 }
 
 // src/model/edn.js
@@ -16382,7 +16610,7 @@ function captionRefsInfo(elements, ids, { frameName, words = true } = {}) {
   const bound = [];
   const free = [];
   const seenRefs = /* @__PURE__ */ new Set();
-  let seq = 0;
+  let seq2 = 0;
   for (const el of elements) {
     if (!el || el.isDeleted) continue;
     const isText = el.type === "text";
@@ -16394,13 +16622,13 @@ function captionRefsInfo(elements, ids, { frameName, words = true } = {}) {
     if (ref) {
       if (!seenRefs.has(ref)) {
         seenRefs.add(ref);
-        refs.push({ value: ref, box, seq: seq++ });
+        refs.push({ value: ref, box, seq: seq2++ });
       }
       continue;
     }
     if (!isText || !words) continue;
     const text = firstSentence(cleanText2(el.originalText ?? el.text));
-    if (text) (live3 ? bound : free).push({ value: text, box, seq: seq++ });
+    if (text) (live3 ? bound : free).push({ value: text, box, seq: seq2++ });
   }
   const name = words ? cleanText2(frameName) : "";
   let wordParts;
@@ -17257,7 +17485,7 @@ function createActions({
   camera = null,
   motionOk: motionOk2 = () => false,
   viewHistory = () => null,
-  measure: measure2 = null,
+  measure: measure3 = null,
   ensureFonts = null,
   printKit = { printPages, downloadPngs },
   printWin = (win) => win?.print?.(),
@@ -17511,7 +17739,7 @@ function createActions({
   const newDone = /* @__PURE__ */ new Map();
   const cards = /* @__PURE__ */ new Map();
   let pending = null;
-  const rnd5 = () => Math.floor(Math.random() * 2 ** 31);
+  const rnd6 = () => Math.floor(Math.random() * 2 ** 31);
   const refText = (ref) => ref && typeof ref === "object" ? ref.ref : ref;
   const isValidDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
   const todayTitle2 = () => api.util.dateToPageTitle(/* @__PURE__ */ new Date());
@@ -17761,9 +17989,9 @@ function createActions({
       groupIds: [],
       frameId: null,
       roundness: null,
-      seed: rnd5(),
+      seed: rnd6(),
       version: 1,
-      versionNonce: rnd5(),
+      versionNonce: rnd6(),
       isDeleted: false,
       boundElements: null,
       updated: Date.now(),
@@ -17846,7 +18074,7 @@ function createActions({
         }
       }
       nodes = texts.map((t, i) => {
-        const w = measure2 ? Math.ceil(measure2(t, LINK_FONT)) : Math.ceil(t.length * LINK_FONT * 0.6);
+        const w = measure3 ? Math.ceil(measure3(t, LINK_FONT)) : Math.ceil(t.length * LINK_FONT * 0.6);
         return { w: Math.max(10, w), h: Math.ceil(LINK_FONT * LINK_LINE), build: (x, y) => [textNode(t, x, y, Math.max(10, w), mode === "label" ? null : list[i].ref)] };
       });
     } else {
@@ -17977,7 +18205,7 @@ function createActions({
             drawingUid: card.drawingUid,
             label: "Discard note",
             captureUpdate: "NEVER",
-            next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd5(), updated: Date.now() } : el)
+            next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd6(), updated: Date.now() } : el)
           });
         } catch (error) {
           console.warn("[plexus] card anchor removal failed", error);
@@ -20488,7 +20716,7 @@ function createActions({
         drawingUid: editor.drawingUid,
         label: "Remove embed",
         captureUpdate: "IMMEDIATELY",
-        next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd5(), updated: Date.now() } : el)
+        next: (cur) => cur.map((el) => el && ids.has(el.id) && !el.isDeleted ? { ...el, isDeleted: true, version: (el.version || 0) + 1, versionNonce: rnd6(), updated: Date.now() } : el)
       }) === true;
     } catch (error) {
       console.warn("[plexus] remove embed failed", error);
@@ -21305,7 +21533,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
     let items = [];
     let status = "hint";
     let active = 0;
-    let seq = 0;
+    let seq2 = 0;
     let timer = null;
     let liveTimer = null;
     let root = null;
@@ -21364,7 +21592,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       rows = [];
     }
     function close2() {
-      seq++;
+      seq2++;
       clearTimers();
       trigger = null;
       items = [];
@@ -21601,7 +21829,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
           found = (res || []).map((r) => ({ kind: "page", title: r[":node/title"] ?? r.title, uid: r[":block/uid"] ?? r.uid }));
           found = await pageRows(q, found);
         }
-        if (mine !== seq || dead) return;
+        if (mine !== seq2 || dead) return;
         if (!connected()) {
           detach();
           return;
@@ -21611,7 +21839,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         active = 0;
         render();
       } catch (error) {
-        if (mine !== seq || dead) return;
+        if (mine !== seq2 || dead) return;
         warn3("search", error);
         items = [];
         status = "error";
@@ -21648,7 +21876,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         const fn = api.data?.async?.semanticSearch;
         if (typeof fn !== "function") return;
         const res = await fn.call(api.data.async, { "search-str": q, limit: 5 });
-        if (mine !== seq || dead) return;
+        if (mine !== seq2 || dead) return;
         if (!connected()) {
           detach();
           return;
@@ -21671,7 +21899,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
     }
     function setTrigger(next) {
       const kindChanged = !trigger || trigger.kind !== next.kind;
-      seq++;
+      seq2++;
       if (timer != null) {
         clearT(timer);
         timer = null;
@@ -21687,7 +21915,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
         items = [];
         destroyRoot();
       }
-      const mine = seq;
+      const mine = seq2;
       const trimmed = next.query.trim();
       const delay = next.kind === "block" ? debounce.block ?? 150 : debounce.page ?? 60;
       if (!trimmed) {
@@ -21705,7 +21933,7 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       status = "loading";
       timer = setT(() => {
         timer = null;
-        if (mine !== seq || dead) return;
+        if (mine !== seq2 || dead) return;
         if (!connected()) {
           detach();
           return;
@@ -21714,10 +21942,10 @@ function createLinkSuggest({ doc, api, createPage, onEmbedPick, now = () => /* @
       }, delay);
       if (next.kind === "page") {
         const arm = (on) => {
-          if (!on || mine !== seq || dead || relatedTimer != null) return;
+          if (!on || mine !== seq2 || dead || relatedTimer != null) return;
           relatedTimer = setT(() => {
             relatedTimer = null;
-            if (mine !== seq || dead) return;
+            if (mine !== seq2 || dead) return;
             relatedSearch(trimmed, mine);
           }, RELATED_MS);
         };
@@ -22999,7 +23227,7 @@ function openEmbedPicker({
   let items = [];
   let status = "hint";
   let active = 0;
-  let seq = 0;
+  let seq2 = 0;
   let timer = null;
   let retakeTimer = null;
   let related = [];
@@ -23062,7 +23290,7 @@ function openEmbedPicker({
   function close2() {
     if (dead) return;
     dead = true;
-    seq++;
+    seq2++;
     if (timer != null) clearT(timer);
     if (retakeTimer != null) clearT(retakeTimer);
     timer = retakeTimer = null;
@@ -23240,7 +23468,7 @@ function openEmbedPicker({
         } catch {
         }
       }
-      if (mine !== seq || dead) return;
+      if (mine !== seq2 || dead) return;
       const pageRows = wantPages ? buildPageRows({ query: q, results: foundPages, dateTitle, canCreate: false, exists }) : [];
       const list = [];
       if (wantPages && todayRow(q)) list.push({ kind: "today" });
@@ -23257,7 +23485,7 @@ function openEmbedPicker({
       render();
       if (semantic === true && wantBlocks) semanticSection(q, mine, /* @__PURE__ */ new Set([...seen, ...foundBlocks.map((b) => b.uid)]));
     } catch (error) {
-      if (mine !== seq || dead) return;
+      if (mine !== seq2 || dead) return;
       warn4("search", error);
       items = [];
       related = [];
@@ -23270,7 +23498,7 @@ function openEmbedPicker({
       const fn = api.data?.async?.semanticSearch;
       if (typeof fn !== "function") return;
       const res = await withTimeout(Promise.resolve(fn.call(api.data.async, { "search-str": q, limit: 5 })));
-      if (mine !== seq || dead) return;
+      if (mine !== seq2 || dead) return;
       const out = [];
       for (const r of res || []) {
         const uid = r[":block/uid"] ?? r.uid;
@@ -23287,7 +23515,7 @@ function openEmbedPicker({
     if (dead) return;
     const raw = String(input.value ?? "").trim();
     const q = raw.replace(/^\(\(|^\[\[/, "").replace(/\)\)$|\]\]$/, "").trim();
-    seq++;
+    seq2++;
     if (timer != null) {
       clearT(timer);
       timer = null;
@@ -23304,10 +23532,10 @@ function openEmbedPicker({
     items = !raw.startsWith("((") && !raw.startsWith("[[") && todayRow(raw) ? [{ kind: "today" }] : [];
     status = items.length ? "results" : "loading";
     render();
-    const mine = seq;
+    const mine = seq2;
     timer = setT(() => {
       timer = null;
-      if (mine !== seq || dead) return;
+      if (mine !== seq2 || dead) return;
       search(raw, mine);
     }, raw.startsWith("[[") ? debounce.page ?? 60 : debounce.block ?? 150);
   }
@@ -25227,7 +25455,7 @@ function createFontMeasurer({ doc = globalThis.document } = {}) {
     }
     return ctx;
   };
-  return function measure2(text, font) {
+  return function measure3(text, font) {
     const str = String(text ?? "");
     const key = `${font}|${str}`;
     if (memo3.has(key)) {
@@ -25254,11 +25482,11 @@ var layouts = /* @__PURE__ */ new WeakMap();
 function tokenTarget(token) {
   return token.kind === "block" ? { type: "block", uid: token.uid } : { type: "page", title: token.title };
 }
-function layoutOf(element, measure2) {
-  let byId = layouts.get(measure2);
+function layoutOf(element, measure3) {
+  let byId = layouts.get(measure3);
   if (!byId) {
     byId = /* @__PURE__ */ new Map();
-    layouts.set(measure2, byId);
+    layouts.set(measure3, byId);
   }
   const cached = byId.get(element.id);
   if (cached && cached.version === element.version && cached.text === element.text && cached.original === element.originalText) return cached;
@@ -25270,7 +25498,7 @@ function layoutOf(element, measure2) {
   const boxes = [];
   let at = 0;
   lines.forEach((line, i) => {
-    const w = measure2(line, font);
+    const w = measure3(line, font);
     const left = align === "center" ? element.x + (element.width - w) / 2 : align === "right" ? element.x + element.width - w : element.x;
     boxes.push({ line, start: at, left, top: element.y + i * lhPx, height: lhPx });
     at += line.length + 1;
@@ -25288,8 +25516,8 @@ function layoutOf(element, measure2) {
         }
       }
       if (a < 0) continue;
-      const x1 = b.left + measure2(b.line.slice(0, a), font);
-      const x2 = b.left + measure2(b.line.slice(0, z), font);
+      const x1 = b.left + measure3(b.line.slice(0, a), font);
+      const x2 = b.left + measure3(b.line.slice(0, z), font);
       segs.push({ x1, x2, y1: b.top, y2: b.top + b.height });
     }
     return segs;
@@ -25305,8 +25533,8 @@ function layoutOf(element, measure2) {
     boxes.forEach((b) => {
       for (const tok of findTokens(b.line, { nested: true })) {
         const seg = {
-          x1: b.left + measure2(b.line.slice(0, tok.start), font),
-          x2: b.left + measure2(b.line.slice(0, tok.end), font),
+          x1: b.left + measure3(b.line.slice(0, tok.start), font),
+          x2: b.left + measure3(b.line.slice(0, tok.end), font),
           y1: b.top,
           y2: b.top + b.height
         };
@@ -25332,12 +25560,12 @@ function toLocal(element, point) {
   return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
 }
 var inBox = (el, p) => p.x >= el.x && p.x <= el.x + el.width && p.y >= el.y && p.y <= el.y + el.height;
-function hitToken({ element, point, measure: measure2 } = {}) {
+function hitToken({ element, point, measure: measure3 } = {}) {
   if (!element || element.type !== "text" || !point) return null;
-  measure2 = measure2 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
+  measure3 = measure3 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
   const p = toLocal(element, point);
   let best = null;
-  for (const tok of layoutOf(element, measure2).nested) {
+  for (const tok of layoutOf(element, measure3).nested) {
     if (!tok.segs.some((s) => p.x >= s.x1 && p.x <= s.x2 && p.y >= s.y1 && p.y <= s.y2)) continue;
     if (!best || tok.end - tok.start < best.end - best.start) best = tok;
   }
@@ -25345,10 +25573,10 @@ function hitToken({ element, point, measure: measure2 } = {}) {
   const { segs, ...token } = best;
   return token;
 }
-function elementTokens({ element, measure: measure2 } = {}) {
+function elementTokens({ element, measure: measure3 } = {}) {
   if (!element || element.type !== "text") return [];
-  measure2 = measure2 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
-  return layoutOf(element, measure2).flat.map((t) => ({ ...t }));
+  measure3 = measure3 || (defaultMeasure || (defaultMeasure = createFontMeasurer()));
+  return layoutOf(element, measure3).flat.map((t) => ({ ...t }));
 }
 function topmostText(elements, point) {
   const byId = /* @__PURE__ */ new Map();
@@ -25374,7 +25602,7 @@ function installTextLinks({
   toast,
   zIndex = 0,
   mac = /mac|iphone|ipad/i.test(String(doc?.defaultView?.navigator?.platform ?? "")),
-  measure: measure2,
+  measure: measure3,
   now = () => Date.now(),
   raf = (fn) => (doc?.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame)(fn),
   caf = (id) => (doc?.defaultView?.cancelAnimationFrame ?? globalThis.cancelAnimationFrame)?.(id)
@@ -25382,7 +25610,7 @@ function installTextLinks({
   if (!app || !containerEl?.addEventListener) return () => {
   };
   const win = doc?.defaultView ?? null;
-  const measurer = measure2 || createFontMeasurer({ doc });
+  const measurer = measure3 || createFontMeasurer({ doc });
   let down = null;
   let chooser = null;
   let hoverOn = false;

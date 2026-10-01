@@ -6,6 +6,7 @@ import { createBuilder } from "./model/build.js";
 import { chartToElements } from "./model/ce.js";
 import { parseRegion } from "./model/region.js";
 import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport, viewportToScene } from "./model/scene.js";
+import { snapshotElements } from "./model/snapshot.js";
 
 export const API_VERSION = 6;
 
@@ -292,6 +293,13 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
       const result = await host.createDrawing(args || {});
       try { emitter?.emit?.({ uid: result?.uid, kind: "drawing" }); } catch (error) { console.warn("[plexus] change emit failed", error); }
       return result;
+    },
+    dropSubgraph(payload) {
+      const elements = snapshotElements(payload || {});
+      if (!elements.length) throw new Error("Nothing to commit");
+      if (!scenes?.commit) throw new Error("Scenes unavailable");
+      scenes.commit(elements, { label: "Snapshot" });
+      return elements.length;
     },
     open(uid, { region, frame, sidebar = false } = {}) {
       const frameId = typeof frame === "string" ? frame.trim() : "";

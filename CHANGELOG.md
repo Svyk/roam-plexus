@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.22.0]
+
+- `dropSubgraph` appends a neighborhood snapshot to the open drawing. Plain text is the default. Links mode writes a page ref. A closed drawing is refused and is not opened. apiVersion stays 6.
+- The palette stays two entries. The command list stays 53.
+
 ## [0.21.0]
 
 - Setting "Preview links only while holding Ctrl/Cmd", off by default. Off keeps the 250 ms link preview. On shows that preview only while Ctrl or Cmd is held, and hides it when the key is released.
