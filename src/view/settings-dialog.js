@@ -42,6 +42,7 @@ const FIELDS = [
   { id: SETTING_IDS.cardCopy, label: "Card copy link", type: "checkbox", fallback: true },
   { id: SETTING_IDS.cardSidebar, label: "Card open in sidebar", type: "checkbox", fallback: true },
   { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.previewModifier, label: "Preview links only while holding Ctrl/Cmd", type: "checkbox", fallback: false },
 ];
 
 // Read-only. Native keys are listed only once measured (spec section 13); at present none are.

@@ -1,4 +1,4 @@
-/* Plexus v0.20.0 | MIT | generated; edit src/ */
+/* Plexus v0.21.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -235,7 +235,8 @@ var SETTING_IDS = Object.freeze({
   cardParent: "card-parent",
   cardCopy: "card-copy",
   cardSidebar: "card-sidebar",
-  cardQuickLook: "card-quick-look"
+  cardQuickLook: "card-quick-look",
+  previewModifier: "preview-modifier"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -271,7 +272,8 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.cardParent]: true,
   [SETTING_IDS.cardCopy]: true,
   [SETTING_IDS.cardSidebar]: true,
-  [SETTING_IDS.cardQuickLook]: true
+  [SETTING_IDS.cardQuickLook]: true,
+  [SETTING_IDS.previewModifier]: false
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -356,7 +358,8 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardParent, name: "Card Shift+Tab", description: "Selects the parent card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cardCopy, name: "Card copy link", description: "Copies the card's block link. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cardSidebar, name: "Card open in sidebar", description: "Opens the card block in the sidebar. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
-      { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) }
+      { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.previewModifier, name: "Preview links only while holding Ctrl/Cmd", description: "Show a link preview only while Ctrl or Cmd is held. Off keeps the preview after a short hover.", action: wrap({ type: "switch" }) }
     ]
   };
 }
@@ -426,7 +429,8 @@ function readSettings(extensionAPI) {
     cardParent: get(SETTING_IDS.cardParent) !== false && get(SETTING_IDS.cardParent) !== "false",
     cardCopy: get(SETTING_IDS.cardCopy) !== false && get(SETTING_IDS.cardCopy) !== "false",
     cardSidebar: get(SETTING_IDS.cardSidebar) !== false && get(SETTING_IDS.cardSidebar) !== "false",
-    cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false"
+    cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false",
+    previewModifier: get(SETTING_IDS.previewModifier) === true || get(SETTING_IDS.previewModifier) === "true"
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -6893,7 +6897,9 @@ function createHoverPreview({
   raf = globalThis.requestAnimationFrame?.bind(globalThis),
   caf = globalThis.cancelAnimationFrame?.bind(globalThis),
   delayMs = 250,
-  parse = parseRoamLink
+  parse = parseRoamLink,
+  requireModifier = () => false,
+  keyTarget
 } = {}) {
   let portal = null;
   let body = null;
@@ -6985,9 +6991,10 @@ function createHoverPreview({
       };
       let last = null;
       let frame = null;
+      let hoverAllowed = true;
       const probe = () => {
         frame = null;
-        if (!last) return;
+        if (!last || !hoverAllowed) return;
         const { x, y } = last;
         try {
           const box = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
@@ -7007,23 +7014,48 @@ function createHoverPreview({
           console.warn("[plexus] hover probe failed", error);
         }
       };
+      const arm = () => {
+        if (frame != null) return;
+        frame = raf ? raf(probe) : (probe(), null);
+      };
       const onMove = (e) => {
         if (e.buttons || !isCanvasEvent(e)) {
           if (last || portal) onHide();
           return;
         }
         last = { x: e.clientX, y: e.clientY };
-        if (frame != null) return;
-        frame = raf ? raf(probe) : (probe(), null);
+        hoverAllowed = !requireModifier() || !!(e.ctrlKey || e.metaKey);
+        if (!hoverAllowed) {
+          hide();
+          return;
+        }
+        arm();
       };
       const onHide = () => {
         last = null;
         hide();
       };
+      const onKeyDown = (e) => {
+        if (e.key !== "Control" && e.key !== "Meta") return;
+        if (!requireModifier() || !last) return;
+        hoverAllowed = true;
+        arm();
+      };
+      const onKeyUp = (e) => {
+        if (e.key !== "Control" && e.key !== "Meta") return;
+        if (!requireModifier()) return;
+        hoverAllowed = false;
+        hide();
+      };
+      const listenKeys = !!keyTarget?.addEventListener;
       containerEl.addEventListener("pointermove", onMove, { capture: true });
       containerEl.addEventListener("pointerleave", onHide);
       containerEl.addEventListener("pointerdown", onHide, { capture: true });
       containerEl.addEventListener("wheel", onHide, { capture: true, passive: true });
+      if (listenKeys) {
+        keyTarget.addEventListener("keydown", onKeyDown);
+        keyTarget.addEventListener("keyup", onKeyUp);
+      }
       const dispose = () => {
         if (detachCurrent !== dispose) return;
         detachCurrent = null;
@@ -7031,6 +7063,10 @@ function createHoverPreview({
         containerEl.removeEventListener("pointerleave", onHide);
         containerEl.removeEventListener("pointerdown", onHide, { capture: true });
         containerEl.removeEventListener("wheel", onHide, { capture: true });
+        if (listenKeys) {
+          keyTarget.removeEventListener("keydown", onKeyDown);
+          keyTarget.removeEventListener("keyup", onKeyUp);
+        }
         if (frame != null && caf) caf(frame);
         frame = null;
         last = null;
@@ -22774,7 +22810,8 @@ var FIELDS = [
   { id: SETTING_IDS.cardParent, label: "Card Shift+Tab", type: "checkbox", fallback: true },
   { id: SETTING_IDS.cardCopy, label: "Card copy link", type: "checkbox", fallback: true },
   { id: SETTING_IDS.cardSidebar, label: "Card open in sidebar", type: "checkbox", fallback: true },
-  { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true }
+  { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.previewModifier, label: "Preview links only while holding Ctrl/Cmd", type: "checkbox", fallback: false }
 ];
 var NATIVE_SHORTCUTS = [["Back", "Alt+←"], ["Edit embed", "F2"]];
 function openSettingsDialog({ doc, get = () => void 0, set = () => {
@@ -26602,7 +26639,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       const suggest = createLinkSuggest({ doc, api, zIndexFor, createPage, onEmbedPick });
       lifecycle.add(() => suggest.dispose());
       lifecycle.add(installSuggestAutoAttach({ doc, suggest }));
-      const hover = createHoverPreview({ doc, api });
+      const hover = createHoverPreview({ doc, api, requireModifier: () => getSettings().previewModifier === true, keyTarget: doc });
       lifecycle.add(() => hover.dispose());
       const thumbTimers = /* @__PURE__ */ new Set();
       let thumbsOff = false;

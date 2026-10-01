@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.21.0]
+
+- Setting "Preview links only while holding Ctrl/Cmd", off by default. Off keeps the 250 ms link preview. On shows that preview only while Ctrl or Cmd is held, and hides it when the key is released.
+- The palette stays two entries. The command list stays 53.
+
 ## [0.20.0]
 
 - Typing `[[` or `((` inserts the closer and leaves the caret inside. Selected words stay the alias, and a page pick writes `[words]([[Title]])`. An empty `[[` lists recent pages. A `#` lists referenced pages. Page rows show the ref count. Related appears only when semantic search is enabled.

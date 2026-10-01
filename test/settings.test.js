@@ -251,3 +251,15 @@ test("card key settings default on, stored false is off, and the panel has the f
     assert.equal(SETTING_IDS[fields[i]], id);
   });
 });
+
+test("previewModifier id, default off, stored true and \"false\", and the panel switch", () => {
+  assert.equal(SETTING_IDS.previewModifier, "preview-modifier");
+  assert.equal(readSettings(fakeApi()).previewModifier, false);
+  assert.equal(readSettings(fakeApi({ "preview-modifier": true })).previewModifier, true);
+  assert.equal(readSettings(fakeApi({ "preview-modifier": "true" })).previewModifier, true);
+  assert.equal(readSettings(fakeApi({ "preview-modifier": false })).previewModifier, false);
+  assert.equal(readSettings(fakeApi({ "preview-modifier": "false" })).previewModifier, false);
+  const item = createSettingsPanel().settings.find((x) => x.id === "preview-modifier");
+  assert.equal(item.name, "Preview links only while holding Ctrl/Cmd");
+  assert.equal(item.action.type, "switch");
+});

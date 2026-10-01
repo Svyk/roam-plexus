@@ -6,7 +6,9 @@ const OFFSET_PX = 14;
 const MAX_CHILDREN = 3;
 
 // Hover preview for Roam links inside an open drawing. It exists only between attach() and its disposer, listens
-// only on the editor container, and does no work unless the pointer is over an element carrying a Roam link.
+// on the editor container (and keyTarget, when that target can listen), and does no work unless the pointer is
+// over an element carrying a Roam link. requireModifier is read on each event; when it returns true, ctrl or meta
+// has to be down or the preview hides and no timer is armed.
 export function createHoverPreview({
   doc,
   api = globalThis.roamAlphaAPI,
@@ -14,6 +16,8 @@ export function createHoverPreview({
   caf = globalThis.cancelAnimationFrame?.bind(globalThis),
   delayMs = 250,
   parse = parseRoamLink,
+  requireModifier = () => false,
+  keyTarget,
 } = {}) {
   let portal = null;
   let body = null;
@@ -108,10 +112,12 @@ export function createHoverPreview({
       if (!app || !containerEl?.addEventListener) return () => {};
       let last = null;
       let frame = null;
+      // False only after an event decided the modifier gate failed. A probe already queued must see it and not arm.
+      let hoverAllowed = true;
 
       const probe = () => {
         frame = null;
-        if (!last) return;
+        if (!last || !hoverAllowed) return;
         const { x, y } = last;
         try {
           const box = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
@@ -129,6 +135,10 @@ export function createHoverPreview({
         }
       };
 
+      const arm = () => {
+        if (frame != null) return;
+        frame = raf ? raf(probe) : (probe(), null);
+      };
       const onMove = (e) => {
         // A held button is a drag or pan, not a hover; stray targets are Excalidraw's own panels.
         if (e.buttons || !isCanvasEvent(e)) {
@@ -136,15 +146,36 @@ export function createHoverPreview({
           return;
         }
         last = { x: e.clientX, y: e.clientY };
-        if (frame != null) return;
-        frame = raf ? raf(probe) : (probe(), null);
+        hoverAllowed = !requireModifier() || !!(e.ctrlKey || e.metaKey);
+        if (!hoverAllowed) {
+          hide();
+          return;
+        }
+        arm();
       };
       const onHide = () => { last = null; hide(); };
+      const onKeyDown = (e) => {
+        if (e.key !== "Control" && e.key !== "Meta") return;
+        if (!requireModifier() || !last) return;
+        hoverAllowed = true;
+        arm();
+      };
+      const onKeyUp = (e) => {
+        if (e.key !== "Control" && e.key !== "Meta") return;
+        if (!requireModifier()) return;
+        hoverAllowed = false;
+        hide();
+      };
+      const listenKeys = !!keyTarget?.addEventListener;
 
       containerEl.addEventListener("pointermove", onMove, { capture: true });
       containerEl.addEventListener("pointerleave", onHide);
       containerEl.addEventListener("pointerdown", onHide, { capture: true });
       containerEl.addEventListener("wheel", onHide, { capture: true, passive: true });
+      if (listenKeys) {
+        keyTarget.addEventListener("keydown", onKeyDown);
+        keyTarget.addEventListener("keyup", onKeyUp);
+      }
       const dispose = () => {
         if (detachCurrent !== dispose) return;
         detachCurrent = null;
@@ -152,6 +183,10 @@ export function createHoverPreview({
         containerEl.removeEventListener("pointerleave", onHide);
         containerEl.removeEventListener("pointerdown", onHide, { capture: true });
         containerEl.removeEventListener("wheel", onHide, { capture: true });
+        if (listenKeys) {
+          keyTarget.removeEventListener("keydown", onKeyDown);
+          keyTarget.removeEventListener("keyup", onKeyUp);
+        }
         if (frame != null && caf) caf(frame);
         frame = null;
         last = null;

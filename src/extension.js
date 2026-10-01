@@ -681,7 +681,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       const suggest = createLinkSuggest({ doc, api, zIndexFor, createPage, onEmbedPick });
       lifecycle.add(() => suggest.dispose());
       lifecycle.add(installSuggestAutoAttach({ doc, suggest }));
-      const hover = createHoverPreview({ doc, api });
+      const hover = createHoverPreview({ doc, api, requireModifier: () => getSettings().previewModifier === true, keyTarget: doc });
       lifecycle.add(() => hover.dispose());
       // Compass reads thumbnails cache-only, so warm them once a visit ends (after Roam has saved the scene).
       const thumbTimers = new Set();

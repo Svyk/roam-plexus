@@ -15,7 +15,7 @@ class El extends EventTarget {
   getBoundingClientRect() { return { left: 0, top: 0, width: 300, height: 100 }; }
 }
 
-function setup({ link, state = { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, onLookup, onPull }) {
+function setup({ link, state = { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, onLookup, onPull, requireModifier, keyTarget }) {
   const created = [];
   const rendered = [];
   const unmounted = [];
@@ -33,7 +33,7 @@ function setup({ link, state = { zoom: { value: 1 }, scrollX: 0, scrollY: 0 }, o
   };
   const app = { state, getElementLinkAtPosition: (p) => { onLookup?.(p); return link; } };
   const containerEl = new El();
-  const hover = createHoverPreview({ doc, api, raf: (cb) => { queueMicrotask(cb); return 1; }, caf() {}, delayMs: 0 });
+  const hover = createHoverPreview({ doc, api, raf: (cb) => { queueMicrotask(cb); return 1; }, caf() {}, delayMs: 0, requireModifier, keyTarget });
   const dispose = hover.attach({ app, containerEl });
   const move = (extra = {}) => containerEl.dispatchEvent(Object.assign(new Event("pointermove"), { clientX: 50, clientY: 60 }, extra));
   return { doc, containerEl, rendered, unmounted, created, dispose, move, hover };
@@ -121,4 +121,19 @@ test("a stable hover on a URL link pulls once, not once per frame; leave hides; 
   assert.equal(s.doc.body.children.length, 2);
   s.containerEl.dispatchEvent(new Event("wheel"));
   assert.equal(s.doc.body.children[1].removed, true);
+});
+
+test("requireModifier blocks a plain move, allows metaKey, and Meta keyup hides", async () => {
+  const keyTarget = new EventTarget();
+  const s = setup({ link: "[[Foo]]", requireModifier: () => true, keyTarget });
+  s.move();
+  await tick();
+  assert.equal(s.doc.body.children.length, 0);
+  s.move({ metaKey: true });
+  await tick();
+  assert.equal(s.doc.body.children.length, 1);
+  const portal = s.doc.body.children[0];
+  assert.match(portal.className, /plexus-hover/);
+  keyTarget.dispatchEvent(Object.assign(new Event("keyup"), { key: "Meta" }));
+  assert.equal(portal.removed, true);
 });
