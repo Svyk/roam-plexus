@@ -69,6 +69,14 @@ test("cropToFraction and regionFromCrop use natural fractions", async () => {
   assert.equal(region.caption, "");
 });
 
+test("regionFromCrop keeps a rotated image and stores the crop fraction", async () => {
+  const turned = { ...img, angle: Math.PI / 2 };
+  const t = make({ elements: [turned], ids: ["img-a"] });
+  assert.equal(await t.actions.regionFromCrop(), "reg000001");
+  assert.deepEqual(parseRegion(t.created[0][1]).f, [0.25, 0.25, 0.5, 0.5]);
+  assert.equal(t.toasts.some((row) => row[0] === "Rotated images are not supported"), false);
+});
+
 test("regionFromCrop toasts for an uncropped image", async () => {
   const t = make({ elements: [{ ...img, crop: null }], ids: ["img-a"] });
   assert.equal(t.actions.hasCroppedImageSelected(), false);

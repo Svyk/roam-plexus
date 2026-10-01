@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.29.0]
+- A block with several images uses S to pick the next one, in string order. One image ignores S.
+- A rotated drawing image keeps its angle. The region is stored in that image's box.
+- Two or more links in a region caption open a chooser. One link still opens the region. Links of those links stay out.
+- A sticky note is yellow, with bound text. A number stamp writes the next number. Stack places one copy underneath.
+- The palette stays two entries. The command list is 78.
+
 ## [0.28.0]
 - A mind map node is a rectangle or an ellipse, its edge a line or an arrow, and its palette default, ink, or leaf.
 - An indented paste becomes child blocks. A drawing is refused. At most forty.

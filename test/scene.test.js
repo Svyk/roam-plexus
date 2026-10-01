@@ -91,7 +91,9 @@ test("regionSceneBBox rect kind", () => {
   const img = { id: "img", type: "image", x: 100, y: 200, width: 400, height: 200, angle: 0 };
   const r = regionSceneBBox({ kind: "rect", el: "img", f: [0.25, 0.5, 0.5, 0.25] }, [img]);
   assert.deepEqual(r, { bbox: [200, 300, 400, 350], missing: [] });
-  assert.equal(regionSceneBBox({ kind: "rect", el: "img", f: [0, 0, 1, 1] }, [{ ...img, angle: 0.3 }]).error, "rotated-image");
+  const turned = regionSceneBBox({ kind: "rect", el: "img", f: [0, 0, 1, 1] }, [{ ...img, angle: Math.PI / 2 }]);
+  nearAll(turned.bbox, [200, 100, 400, 500]);
+  assert.deepEqual(turned.missing, []);
   assert.equal(regionSceneBBox({ kind: "rect", el: "r", f: [0, 0, 1, 1] }, [rect("r", 0, 0, 1, 1)]).error, "not-image");
   assert.equal(regionSceneBBox({ kind: "rect", el: "zz", f: [0, 0, 1, 1] }, [img]).error, "no-elements");
 });
@@ -262,7 +264,9 @@ test("regionSceneBBox poly: polygon bbox inside the image element", () => {
   const els = [{ id: "img", type: "image", x: 100, y: 200, width: 400, height: 200, angle: 0 }];
   const { bbox } = regionSceneBBox({ kind: "poly", el: "img", p: tri }, els);
   nearAll(bbox, [140, 240, 460, 360], 1);
-  assert.equal(regionSceneBBox({ kind: "poly", el: "img", p: tri }, [{ ...els[0], angle: 0.3 }]).error, "rotated-image");
+  const spun = regionSceneBBox({ kind: "poly", el: "img", p: tri }, [{ ...els[0], angle: Math.PI / 2 }]);
+  assert.equal(spun.error, undefined);
+  assert.equal(spun.bbox.length, 4);
   assert.equal(regionSceneBBox({ kind: "poly", el: "r", p: tri }, [rect("r", 0, 0, 1, 1)]).error, "not-image");
   assert.equal(regionSceneBBox({ kind: "poly", el: "img", p: [0, 0, 1, 0, 0.5, 0] }, els).error, "no-elements");
 });

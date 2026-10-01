@@ -97,6 +97,8 @@ function make(over = {}) {
     doc: over.doc || { querySelectorAll: () => [] },
     clipboard: over.clipboard || { writeText: async (t) => copied.push(t) },
     refreshRegion: over.refreshRegion,
+    startTool: over.startTool,
+    loadBitmap: over.loadBitmap,
     chooseKind: over.chooseKind,
   });
   return { actions, created, puts, copied, toasts, zooms, zoomOpts, spots, state, app };
@@ -160,13 +162,56 @@ test("a second createAreaRegion while one is running is ignored", async () => {
   assert.equal(created.length, 1);
 });
 
-test("image region negatives: no selection match, non-image, multi-select, rotated", async () => {
+test("a rotated drawing image starts the region tool", async () => {
+  const img = { id: "img-a", type: "image", x: 0, y: 0, width: 100, height: 40, angle: Math.PI / 2, isDeleted: false };
+  let seen = null;
+  const { actions, created, toasts } = make({
+    ids: ["img-a"],
+    elements: [img],
+    startTool: (opts) => {
+      seen = opts.element;
+      return Object.assign(Promise.resolve({ kind: "rect", f: [0.2, 0.2, 0.4, 0.4], altKey: true }), { cancel() {} });
+    },
+  });
+  assert.equal(await actions.createImageRegion(), "reg000001");
+  assert.equal(seen.angle, Math.PI / 2);
+  assert.equal(parseRegion(created[0][1]).el, "img-a");
+  assert.equal(toasts.some((row) => row[0] === "Rotated images are not supported"), false);
+});
+
+test("S on a multi-image block stores the next image index", async () => {
+  const imgs = [0, 1].map(() => ({
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 80, height: 40 }),
+    naturalWidth: 80,
+    naturalHeight: 40,
+  }));
+  const block = { id: "block-input-blk000001", closest: () => null, querySelectorAll: () => imgs };
+  let calls = 0;
+  const { actions, created, toasts } = make({
+    pullBlock: () => ({ string: "![one](https://x/a.png) ![two](https://x/b.png)" }),
+    doc: { querySelectorAll: () => [block], defaultView: { getComputedStyle: () => ({}) } },
+    loadBitmap: async () => { throw new Error("no bitmap"); },
+    startTool: (opts) => {
+      calls += 1;
+      assert.equal(opts.cycle, true);
+      const picked = calls === 1 ? { kind: "cycle" } : { kind: "rect", f: [0.1, 0.2, 0.3, 0.4], altKey: true };
+      return Object.assign(Promise.resolve(picked), { cancel() {} });
+    },
+  });
+  assert.equal(await actions.createPlainImageRegion("blk000001"), "reg000001");
+  assert.equal(calls, 2);
+  const region = parseRegion(created[0][1]);
+  assert.equal(region.kind, "imgrect");
+  assert.equal(region.i, 1);
+  assert.equal(toasts.some((row) => row[0] === "Image 2 of 2"), true);
+});
+
+test("image region negatives: no selection match, non-image, multi-select", async () => {
   const img = { id: "img-a", type: "image", x: 0, y: 0, width: 10, height: 10, angle: 0, isDeleted: false };
   const cases = [
     [{ ids: ["rect-a"] }, "Select exactly one image"],
     [{ ids: ["img-a", "rect-a"], elements: [img, ...elements] }, "Select exactly one image"],
     [{ ids: ["ghost"] }, "Select exactly one image"],
-    [{ ids: ["img-a"], elements: [{ ...img, angle: 0.5 }] }, "Rotated images are not supported"],
     [{ ids: ["img-a"], elements: [img], editor: null }, "Open a drawing full-screen first"],
   ];
   for (const [over, message] of cases) {

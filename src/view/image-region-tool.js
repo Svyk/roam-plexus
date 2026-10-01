@@ -1,4 +1,4 @@
-import { elementBounds, rectToFraction } from "../model/scene.js";
+import { elementBounds, rectToFraction, unrotatedFraction, unrotatedRectFraction, viewportToScene } from "../model/scene.js";
 import { viewportRectOf } from "../host/native.js";
 
 const LASSO_STEP_PX = 4;
@@ -9,11 +9,12 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 // Resolves null, { kind: "rect", f: [rx, ry, rw, rh], altKey } (plain drag), { kind: "lasso", p: [x1,y1,...], altKey } (Alt-drag)
 // or { kind: "pin", x, y } (a click that moved under 4 px, Alt or not); all values are displayed-box fractions.
 // imageRect (a viewport rect) overrides app/element for images that live in ordinary blocks.
-export function startImageRegionTool({ app, element, doc, imageRect: fixedRect, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
+export function startImageRegionTool({ app, element, doc, imageRect: fixedRect, cycle = false, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
   let cancel = null;
   const promise = new Promise((resolve) => {
-    if (!fixedRect && element?.angle) return resolve(null);
+    const angled = !fixedRect && !!Number(element?.angle);
     const imageRect = fixedRect || viewportRectOf(app, elementBounds(element));
+    const sceneOf = (clientX, clientY) => viewportToScene({ x: clientX, y: clientY, appState: app?.state || {} });
     const overlay = doc.createElement("div");
     overlay.className = "plexus-portal plexus-image-tool";
     overlay.style.left = `${imageRect.left}px`;
@@ -68,6 +69,12 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect, 
       removeOverlay();
     };
     const onKey = (e) => {
+      if (cycle && (e.key === "s" || e.key === "S") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        finish({ kind: "cycle" });
+        return;
+      }
       if (e.key !== "Escape") return;
       e.stopPropagation();
       finish(null);
@@ -123,6 +130,24 @@ export function startImageRegionTool({ app, element, doc, imageRect: fixedRect, 
       if (e.button !== 0) return;
       if (!start || finished) return;
       const altKey = !!e.altKey;
+      if (angled) {
+        if (moved < PIN_SLOP_PX) {
+          const hit = unrotatedFraction(element, sceneOf(e.clientX, e.clientY));
+          return finish(hit ? { kind: "pin", x: hit.x, y: hit.y } : null, { linger: true });
+        }
+        if (lasso) {
+          const local = [];
+          for (const pt of lasso) {
+            const hit = unrotatedFraction(element, sceneOf(pt.x, pt.y), { clamp: true });
+            if (hit) local.push({ x: hit.x * element.width, y: hit.y * element.height });
+          }
+          const p = lassoToFraction(local, { left: 0, top: 0, width: element.width, height: element.height });
+          return finish(p ? { kind: "lasso", p: p.p, altKey } : null, { linger: true });
+        }
+        const f = unrotatedRectFraction(element, sceneOf(start.x, start.y), sceneOf(e.clientX, e.clientY));
+        if (!f || f[2] * element.width < 4 || f[3] * element.height < 4) return finish(null, { linger: true });
+        return finish({ kind: "rect", f, altKey }, { linger: true });
+      }
       if (moved < PIN_SLOP_PX) {
         const x = Math.min(1, Math.max(0, (e.clientX - imageRect.left) / imageRect.width));
         const y = Math.min(1, Math.max(0, (e.clientY - imageRect.top) / imageRect.height));

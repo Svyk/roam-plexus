@@ -1,4 +1,4 @@
-/* Plexus v0.28.0 | MIT | generated; edit src/ */
+/* Plexus v0.29.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -1058,6 +1058,67 @@ function elementBounds(el) {
       return corners();
   }
 }
+function unrotatedFraction(element, point, { clamp: clamp2 = false } = {}) {
+  if (!element || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  const x = Number(element.x) || 0;
+  const y = Number(element.y) || 0;
+  const w = Number(element.width) || 0;
+  const h = Number(element.height) || 0;
+  if (!(w > 0) || !(h > 0)) return null;
+  const [lx, ly] = rotate(point.x, point.y, x + w / 2, y + h / 2, -(Number(element.angle) || 0));
+  let fx = (lx - x) / w;
+  let fy = (ly - y) / h;
+  const outside = fx < -1e-9 || fy < -1e-9 || fx > 1 + 1e-9 || fy > 1 + 1e-9;
+  if (outside && !clamp2) return null;
+  return { x: Math.min(1, Math.max(0, fx)), y: Math.min(1, Math.max(0, fy)) };
+}
+function unrotatedRectFraction(element, a, b) {
+  if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return null;
+  const x = Number(element?.x) || 0;
+  const y = Number(element?.y) || 0;
+  const w = Number(element?.width) || 0;
+  const h = Number(element?.height) || 0;
+  if (!(w > 0) || !(h > 0)) return null;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const angle = -(Number(element.angle) || 0);
+  const x1 = Math.min(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x, b.x);
+  const y2 = Math.max(a.y, b.y);
+  let lx1 = Infinity;
+  let ly1 = Infinity;
+  let lx2 = -Infinity;
+  let ly2 = -Infinity;
+  for (const [px, py] of [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]) {
+    const [lx, ly] = rotate(px, py, cx, cy, angle);
+    if (lx < lx1) lx1 = lx;
+    if (ly < ly1) ly1 = ly;
+    if (lx > lx2) lx2 = lx;
+    if (ly > ly2) ly2 = ly;
+  }
+  const ix1 = Math.max(lx1, x);
+  const iy1 = Math.max(ly1, y);
+  const ix2 = Math.min(lx2, x + w);
+  const iy2 = Math.min(ly2, y + h);
+  if (!(ix2 > ix1) || !(iy2 > iy1)) return null;
+  return [(ix1 - x) / w, (iy1 - y) / h, (ix2 - ix1) / w, (iy2 - iy1) / h];
+}
+function orientedBBox(el, bbox) {
+  const angle = Number(el?.angle) || 0;
+  if (!angle) return bbox;
+  const x = Number(el.x) || 0;
+  const y = Number(el.y) || 0;
+  const cx = x + (Number(el.width) || 0) / 2;
+  const cy = y + (Number(el.height) || 0) / 2;
+  const [x1, y1, x2, y2] = bbox;
+  return boundsOf([
+    rotate(x1, y1, cx, cy, angle),
+    rotate(x2, y1, cx, cy, angle),
+    rotate(x2, y2, cx, cy, angle),
+    rotate(x1, y2, cx, cy, angle)
+  ]);
+}
 function commonBounds(elements) {
   const live3 = liveElements(elements);
   if (!live3.length) return null;
@@ -1124,14 +1185,11 @@ function regionSceneBBox(region, elements, appState, index) {
     const el = lookup(region.el);
     if (!el) return { error: "no-elements" };
     if (el.type !== "image") return { error: "not-image" };
-    if (Number(el.angle) || 0) return { error: "rotated-image" };
     const [rx, ry, rw, rh] = region.kind === "rect" ? region.f : polyBBox(region.p) ?? [0, 0, 0, 0];
     if (!(rw > 0) || !(rh > 0)) return { error: "no-elements" };
+    const placed = (bbox) => ({ bbox: orientedBBox(el, bbox), missing: [] });
     if (!validCrop(el.crop)) {
-      return {
-        bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
-        missing: []
-      };
+      return placed([el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height]);
     }
     if (region.kind === "poly") {
       const disp = [];
@@ -1148,14 +1206,14 @@ function regionSceneBBox(region, elements, appState, index) {
         cy1 = Math.min(cy1, clipped[i + 1]);
         cy2 = Math.max(cy2, clipped[i + 1]);
       }
-      return { bbox: [el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height], missing: [] };
+      return placed([el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height]);
     }
     const [ax, ay] = naturalToScene(el, [rx, ry]);
     const [bx, by] = naturalToScene(el, [rx + rw, ry + rh]);
     const x1 = Math.max(ax, el.x), y1 = Math.max(ay, el.y);
     const x2 = Math.min(bx, el.x + el.width), y2 = Math.min(by, el.y + el.height);
     if (!(x2 > x1) || !(y2 > y1)) return { error: "outside-crop" };
-    return { bbox: [x1, y1, x2, y2], missing: [] };
+    return placed([x1, y1, x2, y2]);
   }
   if (region.kind === "group") {
     const g = region.groupId ?? region.g;
@@ -5400,8 +5458,219 @@ function installRegionSync({ app, api, drawingUid, regionsOf, nameRegion, reques
   };
 }
 
+// src/model/tokens.js
+var MASK = "\0";
+var UID_RE2 = /^\(\(([A-Za-z0-9_-]{9})\)\)/;
+var ALIAS_HEAD_RE = /^\[[^[\]\n]*\]\(/;
+var TAG_CHAR_RE = /[\p{L}\p{N}_\-/.:@]/u;
+var blank2 = (s) => MASK.repeat(s.length);
+function maskBraces(text) {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "{" && text[i + 1] === "{") {
+      let depth = 0;
+      let j = i;
+      let end = -1;
+      while (j < text.length) {
+        if (text[j] === "{" && text[j + 1] === "{") {
+          depth++;
+          j += 2;
+          continue;
+        }
+        if (text[j] === "}" && text[j + 1] === "}") {
+          depth--;
+          j += 2;
+          if (depth === 0) {
+            end = j;
+            break;
+          }
+          continue;
+        }
+        j++;
+      }
+      if (end > 0) {
+        out += blank2(text.slice(i, end));
+        i = end;
+        continue;
+      }
+    }
+    out += text[i];
+    i++;
+  }
+  return out;
+}
+function maskText(text) {
+  return maskBraces(
+    String(text ?? "").replace(/```[\s\S]*?```/g, blank2).replace(/`[^`\n]*`/g, blank2).replace(/https?:\/\/\S+/g, blank2)
+  );
+}
+function closeOf(m, open6, limit) {
+  let depth = 1;
+  let i = open6 + 2;
+  while (i < limit) {
+    if (m[i] === "[" && m[i + 1] === "[") {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (m[i] === "]" && m[i + 1] === "]") {
+      depth--;
+      i += 2;
+      if (depth === 0) return i;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+function scan(m, from, to, nested, out, inTitle = false) {
+  let i = from;
+  while (i < to) {
+    const c = m[i];
+    if (inTitle && c !== "[" && !(c === "#" && m[i + 1] === "[" && m[i + 2] === "[")) {
+      i++;
+      continue;
+    }
+    if (c === "[" && m[i + 1] !== "[") {
+      if (inTitle) {
+        i++;
+        continue;
+      }
+      const head = ALIAS_HEAD_RE.exec(m.slice(i, to));
+      if (head) {
+        const p = i + head[0].length;
+        if (m[p] === "[" && m[p + 1] === "[") {
+          const end = closeOf(m, p, to);
+          if (end > 0 && m[end] === ")" && end - 2 > p + 2) {
+            out.push({ kind: "page", title: m.slice(p + 2, end - 2), start: i, end: end + 1 });
+            i = end + 1;
+            continue;
+          }
+        } else if (m[p] === "(" && m[p + 1] === "(") {
+          const u = UID_RE2.exec(m.slice(p, to));
+          if (u && m[p + u[0].length] === ")") {
+            out.push({ kind: "block", uid: u[1], start: i, end: p + u[0].length + 1 });
+            i = p + u[0].length + 1;
+            continue;
+          }
+        }
+      }
+      i++;
+      continue;
+    }
+    if (c === "[" && m[i + 1] === "[") {
+      const end = closeOf(m, i, to);
+      if (end > 0 && end - 2 > i + 2) {
+        out.push({ kind: "page", title: m.slice(i + 2, end - 2), start: i, end });
+        if (nested) scan(m, i + 2, end - 2, nested, out, true);
+        i = end;
+        continue;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === "#" && m[i + 1] === "[" && m[i + 2] === "[") {
+      const end = closeOf(m, i + 1, to);
+      if (end > 0 && end - 2 > i + 3) {
+        out.push({ kind: "tag", title: m.slice(i + 3, end - 2), start: i, end });
+        if (nested) scan(m, i + 3, end - 2, nested, out, true);
+        i = end;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (c === "#") {
+      let j = i + 1;
+      while (j < to && TAG_CHAR_RE.test(m[j])) j++;
+      while (j > i + 1 && m[j - 1] === ":") j--;
+      if (j > i + 1) {
+        out.push({ kind: "tag", title: m.slice(i + 1, j), start: i, end: j });
+        i = j;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (c === "(" && m[i + 1] === "(") {
+      const u = UID_RE2.exec(m.slice(i, to));
+      if (u) {
+        out.push({ kind: "block", uid: u[1], start: i, end: i + u[0].length });
+        i += u[0].length;
+        continue;
+      }
+    }
+    i++;
+  }
+}
+function findTokens(text, { nested = false } = {}) {
+  const src = String(text ?? "");
+  if (!src) return [];
+  const m = maskText(src);
+  const out = [];
+  scan(m, 0, m.length, nested, out);
+  for (const t of out) if (t.title != null) t.title = titleFrom(src, t);
+  return out.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+function titleFrom(src, t) {
+  const raw = src.slice(t.start, t.end);
+  if (raw.startsWith("#[[")) return raw.slice(3, -2);
+  if (raw.startsWith("[[")) return raw.slice(2, -2);
+  if (raw.startsWith("#")) return raw.slice(1);
+  const alias = ALIAS_HEAD_RE.exec(raw);
+  if (alias) return raw.slice(alias[0].length + 2, -3);
+  return t.title;
+}
+function alignWrapped(text, originalText) {
+  const t = String(text ?? "");
+  const o = String(originalText ?? "");
+  const map = new Int32Array(t.length + 1);
+  let i = 0;
+  let j = 0;
+  while (i < t.length) {
+    if (j < o.length && t[i] === o[j]) {
+      map[i++] = j++;
+      continue;
+    }
+    if (t[i] === "\n") {
+      map[i++] = j;
+      if (j < o.length && /\s/.test(o[j])) j++;
+      continue;
+    }
+    if (j < o.length && /\s/.test(o[j])) {
+      j++;
+      continue;
+    }
+    return null;
+  }
+  map[t.length] = o.length;
+  return map;
+}
+
 // src/model/links.js
 var URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
+var CAPTION_LINK_CAP = 8;
+function captionLinks(text) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const tok of findTokens(text)) {
+    let key = null;
+    let item = null;
+    if (tok.kind === "block" && tok.uid) {
+      key = `b:${tok.uid}`;
+      item = { type: "block", uid: tok.uid };
+    } else if (tok.kind === "page" && tok.title) {
+      key = `p:${tok.title}`;
+      item = { type: "page", title: tok.title };
+    }
+    if (!item || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= CAPTION_LINK_CAP) break;
+  }
+  return out;
+}
 function parseRoamLink(link, graphName) {
   if (typeof link !== "string") return null;
   const s = link.trim();
@@ -7205,6 +7474,105 @@ function createCropPopover({ doc, delayMs = 300 }) {
   };
 }
 
+// src/host/links.js
+var MAX_MOVE_PX = 6;
+var MAX_HOLD_MS = 400;
+function isCanvasEvent(event) {
+  const tag = event?.target?.tagName;
+  return !tag || String(tag).toUpperCase() === "CANVAS";
+}
+function linksActive(app) {
+  const tool = app?.state?.activeTool?.type;
+  return !tool || tool === "selection" || !!app.state.viewModeEnabled;
+}
+function clearLinkTooltip(doc) {
+  for (const el of doc?.querySelectorAll?.(".excalidraw-tooltip--visible") ?? []) {
+    el.classList.remove("excalidraw-tooltip--visible");
+  }
+}
+function pageUidOf(api, title) {
+  return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
+}
+function sidebarWindow(api, target) {
+  return target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(api, target.title) } : { type: "block", "block-uid": target.uid };
+}
+function navigate(api, containerEl, target, sidebar, window) {
+  if (sidebar) {
+    api.ui.rightSidebar.addWindow({ window });
+    return;
+  }
+  containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
+  if (target.type === "page") {
+    const uid = target.uid ?? pageUidOf(api, target.title);
+    if (uid) api.ui.mainWindow.openPage({ page: { uid } });
+    else api.ui.mainWindow.openPage({ page: { title: target.title } });
+  } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
+  clearLinkTooltip(containerEl.ownerDocument);
+}
+function navigateToTarget({ api, containerEl, target, sidebar = false }) {
+  const window = sidebar ? sidebarWindow(api, target) : null;
+  if (sidebar && !window["block-uid"]) return false;
+  navigate(api, containerEl, target, sidebar, window);
+  return true;
+}
+function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
+  if (!app || !containerEl?.addEventListener) return () => {
+  };
+  let down = null;
+  const kindOf = (uid) => {
+    const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
+    if (!raw) return null;
+    return raw[":node/title"] != null ? "page" : "block";
+  };
+  function resolve(event) {
+    const el = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const appState = { ...app.state, offsetLeft: el.left, offsetTop: el.top };
+    const point = viewportToScene({ x: event.clientX, y: event.clientY, appState });
+    const found = app.getElementLinkAtPosition(point, null);
+    const link = typeof found === "string" ? found : found?.link;
+    if (!link) return null;
+    const target = parse(link, api.graph.name);
+    if (!target) return null;
+    if (target.type === "block" && target.uid) return target;
+    if (target.type === "page" && target.title) return target;
+    if (target.uid) {
+      const type = kindOf(target.uid);
+      return type ? { type, uid: target.uid } : null;
+    }
+    return null;
+  }
+  const onDown = (e) => {
+    down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
+  };
+  const onUp = (e) => {
+    const start = down;
+    down = null;
+    if (!start || !e.isTrusted) return;
+    if (getSettings?.()?.links === false) return;
+    if (!isCanvasEvent(e) || !linksActive(app)) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
+    try {
+      const target = resolve(e);
+      if (!target) return;
+      const sidebar = !!e.shiftKey;
+      const window = sidebar ? sidebarWindow(api, target) : null;
+      if (sidebar && !window["block-uid"]) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      navigate(api, containerEl, target, sidebar, window);
+      onNavigate?.({ target, sidebar });
+    } catch (error) {
+      console.warn("[plexus] link interception failed", error);
+    }
+  };
+  containerEl.addEventListener("pointerdown", onDown, true);
+  containerEl.addEventListener("pointerup", onUp, true);
+  return () => {
+    containerEl.removeEventListener("pointerdown", onDown, true);
+    containerEl.removeEventListener("pointerup", onUp, true);
+  };
+}
+
 // src/view/regionref.js
 var CLAIMED = "data-plexus-claimed";
 var ALIAS_CLAIMED = "data-plexus-alias";
@@ -7343,6 +7711,125 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
   let pruneAt = PRUNE_FLOOR;
   let popover = null;
   const getPopover = () => popover || (popover = createCropPopover({ doc }));
+  let chooser = null;
+  const closeChooser = () => {
+    const current7 = chooser;
+    chooser = null;
+    current7?.dispose();
+  };
+  const manyLinks = (region) => {
+    const links = captionLinks(region?.caption);
+    return links.length >= 2 ? links : null;
+  };
+  const atOf = (el, e) => {
+    const r = el?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    return { x: Number.isFinite(e?.clientX) ? e.clientX : r.left, y: Number.isFinite(e?.clientY) ? e.clientY : r.top };
+  };
+  function openCaptionChooser(links, at) {
+    closeChooser();
+    if (!links?.length || typeof doc?.body?.append !== "function" || typeof doc.createElement !== "function") return;
+    const root = doc.createElement("div");
+    root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-token-chooser";
+    root.setAttribute?.("tabindex", "-1");
+    if (root.style) {
+      root.style.position = "fixed";
+      root.style.zIndex = "4000";
+    }
+    const rows = [];
+    let active = 0;
+    const paint2 = () => rows.forEach((row, k) => {
+      if (row.style) row.style.backgroundColor = k === active ? "rgb(213, 218, 223)" : "";
+    });
+    const labelOf2 = (link) => {
+      if (link.type === "page") return link.title;
+      try {
+        const text = String(host.pullBlock(link.uid)?.string ?? "").replace(/\s+/g, " ").trim();
+        return (text || `((${link.uid}))`).slice(0, 80);
+      } catch {
+        return `((${link.uid}))`;
+      }
+    };
+    const choose = (link) => {
+      try {
+        navigateToTarget({ api, containerEl: root, target: link });
+      } catch (error) {
+        console.warn("[plexus] caption link failed", error);
+      }
+      closeChooser();
+    };
+    links.forEach((link, k) => {
+      const row = doc.createElement("div");
+      row.className = "dont-unfocus-block";
+      if (row.style) {
+        row.style.padding = "6px";
+        row.style.cursor = "pointer";
+      }
+      const inner2 = doc.createElement("div");
+      inner2.className = "rm-autocomplete-result";
+      inner2.textContent = labelOf2(link);
+      row.append?.(inner2);
+      row.addEventListener?.("click", (ev) => {
+        ev.preventDefault?.();
+        ev.stopPropagation?.();
+        choose(link);
+      });
+      row.addEventListener?.("mousemove", () => {
+        active = k;
+        paint2();
+      });
+      root.append?.(row);
+      rows.push(row);
+    });
+    root.addEventListener?.("keydown", (ev) => {
+      ev.stopPropagation?.();
+      if (ev.key === "Escape") {
+        ev.preventDefault?.();
+        closeChooser();
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault?.();
+        active = (active + 1) % rows.length;
+        paint2();
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault?.();
+        active = (active - 1 + rows.length) % rows.length;
+        paint2();
+      } else if (ev.key === "Enter") {
+        ev.preventDefault?.();
+        choose(links[active]);
+      }
+    });
+    const onOutside = (ev) => {
+      if (!(ev?.target && root.contains?.(ev.target))) closeChooser();
+    };
+    const onEsc = (ev) => {
+      if (ev?.key !== "Escape") return;
+      ev.stopPropagation?.();
+      closeChooser();
+    };
+    doc.addEventListener?.("pointerdown", onOutside, true);
+    doc.addEventListener?.("keydown", onEsc, true);
+    doc.body.append(root);
+    const rect = root.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const view2 = doc.defaultView;
+    const vw = view2?.innerWidth ?? 800;
+    const vh = view2?.innerHeight ?? 600;
+    if (root.style) {
+      root.style.left = `${Math.max(0, Math.min(at?.x || 0, vw - (rect.width || 0) - 8))}px`;
+      root.style.top = `${Math.max(0, Math.min(at?.y || 0, vh - (rect.height || 0) - 8))}px`;
+    }
+    paint2();
+    try {
+      root.focus?.({ preventScroll: true });
+    } catch {
+    }
+    chooser = {
+      dispose() {
+        doc.removeEventListener?.("pointerdown", onOutside, true);
+        doc.removeEventListener?.("keydown", onEsc, true);
+        root.remove?.();
+      }
+    };
+  }
   const settings = () => {
     const s = getSettings() || {};
     return {
@@ -7756,13 +8243,24 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
         }
         onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
       };
+      const linksNow = () => {
+        try {
+          const fresh2 = host.pullBlock(uid);
+          const parsed = fresh2 ? parseRegion(fresh2.string) : null;
+          if (parsed) return manyLinks(parsed);
+        } catch {
+        }
+        return manyLinks(region);
+      };
       root.addEventListener("keydown", (e) => {
         try {
           if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
           e.stopPropagation();
-          openFrom(e);
+          const links = linksNow();
+          if (links && !e.shiftKey) openCaptionChooser(links, atOf(root, e));
+          else openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -7772,10 +8270,13 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
         e.preventDefault();
       }, true);
       root.addEventListener("click", (e) => {
+        const links = linksNow();
+        if (links && (e.ctrlKey || e.metaKey || e.altKey)) return;
         e.stopPropagation();
         e.preventDefault();
         try {
-          openFrom(e);
+          if (links && !e.shiftKey) openCaptionChooser(links, atOf(root, e));
+          else openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -7872,11 +8373,15 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
       const capture = (open6) => (e) => {
         try {
           const u = currentUid();
-          if (!plain(e) || !u || !regionOf(u)) return;
+          const region = u ? regionOf(u) : null;
+          if (!plain(e) || !u || !region) return;
           e.preventDefault();
           e.stopPropagation();
           info.uid = u;
-          if (open6) onOpen(u, { sidebar: !!getSettings().openInSidebar });
+          if (!open6) return;
+          const links = manyLinks(region);
+          if (links) openCaptionChooser(links, atOf(anchor, e));
+          else onOpen(u, { sidebar: !!getSettings().openInSidebar });
         } catch (error) {
           console.warn("[plexus] alias open failed", error);
         }
@@ -7988,6 +8493,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
       }
     },
     releaseAll() {
+      closeChooser();
       for (const [root, info] of [...roots]) unclaim(root, info);
       roots.clear();
       for (const [anchor, info] of [...aliases]) unalias(anchor, info);
@@ -8476,105 +8982,6 @@ function relationPlan({ sourceUid, destUid, label = DEFAULT_LABEL, strings } = {
   const child = `((${destUid}))`;
   if (Array.isArray(strings) && strings.some((entry) => typeof entry === "string" && entry.includes(child))) return null;
   return { parentUid: sourceUid, attribute: `${name}::`, child };
-}
-
-// src/host/links.js
-var MAX_MOVE_PX = 6;
-var MAX_HOLD_MS = 400;
-function isCanvasEvent(event) {
-  const tag = event?.target?.tagName;
-  return !tag || String(tag).toUpperCase() === "CANVAS";
-}
-function linksActive(app) {
-  const tool = app?.state?.activeTool?.type;
-  return !tool || tool === "selection" || !!app.state.viewModeEnabled;
-}
-function clearLinkTooltip(doc) {
-  for (const el of doc?.querySelectorAll?.(".excalidraw-tooltip--visible") ?? []) {
-    el.classList.remove("excalidraw-tooltip--visible");
-  }
-}
-function pageUidOf(api, title) {
-  return api.data.pull("[:block/uid]", [":node/title", title])?.[":block/uid"] || null;
-}
-function sidebarWindow(api, target) {
-  return target.type === "page" ? { type: "outline", "block-uid": target.uid ?? pageUidOf(api, target.title) } : { type: "block", "block-uid": target.uid };
-}
-function navigate(api, containerEl, target, sidebar, window) {
-  if (sidebar) {
-    api.ui.rightSidebar.addWindow({ window });
-    return;
-  }
-  containerEl.closest?.(".excalidraw-outer-container")?.querySelector?.(".bp3-icon-minimize")?.click?.();
-  if (target.type === "page") {
-    const uid = target.uid ?? pageUidOf(api, target.title);
-    if (uid) api.ui.mainWindow.openPage({ page: { uid } });
-    else api.ui.mainWindow.openPage({ page: { title: target.title } });
-  } else api.ui.mainWindow.openBlock({ block: { uid: target.uid } });
-  clearLinkTooltip(containerEl.ownerDocument);
-}
-function navigateToTarget({ api, containerEl, target, sidebar = false }) {
-  const window = sidebar ? sidebarWindow(api, target) : null;
-  if (sidebar && !window["block-uid"]) return false;
-  navigate(api, containerEl, target, sidebar, window);
-  return true;
-}
-function installLinkInterception({ app, containerEl, api = globalThis.roamAlphaAPI, getSettings, onNavigate, parse = parseRoamLink, now = () => Date.now() } = {}) {
-  if (!app || !containerEl?.addEventListener) return () => {
-  };
-  let down = null;
-  const kindOf = (uid) => {
-    const raw = api.data.pull("[:node/title :block/string]", [":block/uid", uid]);
-    if (!raw) return null;
-    return raw[":node/title"] != null ? "page" : "block";
-  };
-  function resolve(event) {
-    const el = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
-    const appState = { ...app.state, offsetLeft: el.left, offsetTop: el.top };
-    const point = viewportToScene({ x: event.clientX, y: event.clientY, appState });
-    const found = app.getElementLinkAtPosition(point, null);
-    const link = typeof found === "string" ? found : found?.link;
-    if (!link) return null;
-    const target = parse(link, api.graph.name);
-    if (!target) return null;
-    if (target.type === "block" && target.uid) return target;
-    if (target.type === "page" && target.title) return target;
-    if (target.uid) {
-      const type = kindOf(target.uid);
-      return type ? { type, uid: target.uid } : null;
-    }
-    return null;
-  }
-  const onDown = (e) => {
-    down = e.isTrusted && (e.button ?? 0) === 0 ? { x: e.clientX, y: e.clientY, t: now() } : null;
-  };
-  const onUp = (e) => {
-    const start = down;
-    down = null;
-    if (!start || !e.isTrusted) return;
-    if (getSettings?.()?.links === false) return;
-    if (!isCanvasEvent(e) || !linksActive(app)) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
-    try {
-      const target = resolve(e);
-      if (!target) return;
-      const sidebar = !!e.shiftKey;
-      const window = sidebar ? sidebarWindow(api, target) : null;
-      if (sidebar && !window["block-uid"]) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      navigate(api, containerEl, target, sidebar, window);
-      onNavigate?.({ target, sidebar });
-    } catch (error) {
-      console.warn("[plexus] link interception failed", error);
-    }
-  };
-  containerEl.addEventListener("pointerdown", onDown, true);
-  containerEl.addEventListener("pointerup", onUp, true);
-  return () => {
-    containerEl.removeEventListener("pointerdown", onDown, true);
-    containerEl.removeEventListener("pointerup", onUp, true);
-  };
 }
 
 // src/view/hover-preview.js
@@ -18294,7 +18701,7 @@ function legacySummary(queryRows) {
 
 // src/model/caption.js
 var MAX_CAPTION = 200;
-var UID_RE2 = /^[A-Za-z0-9_-]+$/;
+var UID_RE3 = /^[A-Za-z0-9_-]+$/;
 function cleanText2(text) {
   return String(text ?? "").replace(/[{}`]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -18308,7 +18715,7 @@ function refFromLink(value) {
 function sourceRefOf(el) {
   const plexus = el?.customData?.plexus;
   const uid = plexus?.mm?.uid;
-  if (typeof uid === "string" && UID_RE2.test(uid)) return `((${uid}))`;
+  if (typeof uid === "string" && UID_RE3.test(uid)) return `((${uid}))`;
   return refFromLink(plexus?.embed) || refFromLink(el?.link);
 }
 var SEP = " · ";
@@ -18418,11 +18825,12 @@ var LASSO_STEP_PX = 4;
 var PIN_SLOP_PX = 4;
 var LINGER_MS = 50;
 var SVG_NS2 = "http://www.w3.org/2000/svg";
-function startImageRegionTool({ app, element, doc, imageRect: fixedRect, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
+function startImageRegionTool({ app, element, doc, imageRect: fixedRect, cycle = false, setTimeout: setT = (...a) => globalThis.setTimeout(...a), clearTimeout: clearT = (...a) => globalThis.clearTimeout(...a) }) {
   let cancel = null;
   const promise = new Promise((resolve) => {
-    if (!fixedRect && element?.angle) return resolve(null);
+    const angled = !fixedRect && !!Number(element?.angle);
     const imageRect = fixedRect || viewportRectOf(app, elementBounds(element));
+    const sceneOf = (clientX, clientY) => viewportToScene({ x: clientX, y: clientY, appState: app?.state || {} });
     const overlay = doc.createElement("div");
     overlay.className = "plexus-portal plexus-image-tool";
     overlay.style.left = `${imageRect.left}px`;
@@ -18476,6 +18884,12 @@ function startImageRegionTool({ app, element, doc, imageRect: fixedRect, setTime
       removeOverlay();
     };
     const onKey = (e) => {
+      if (cycle && (e.key === "s" || e.key === "S") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        finish({ kind: "cycle" });
+        return;
+      }
       if (e.key !== "Escape") return;
       e.stopPropagation();
       finish(null);
@@ -18529,6 +18943,24 @@ function startImageRegionTool({ app, element, doc, imageRect: fixedRect, setTime
       if (e.button !== 0) return;
       if (!start || finished) return;
       const altKey = !!e.altKey;
+      if (angled) {
+        if (moved < PIN_SLOP_PX) {
+          const hit = unrotatedFraction(element, sceneOf(e.clientX, e.clientY));
+          return finish(hit ? { kind: "pin", x: hit.x, y: hit.y } : null, { linger: true });
+        }
+        if (lasso) {
+          const local = [];
+          for (const pt2 of lasso) {
+            const hit = unrotatedFraction(element, sceneOf(pt2.x, pt2.y), { clamp: true });
+            if (hit) local.push({ x: hit.x * element.width, y: hit.y * element.height });
+          }
+          const p = lassoToFraction(local, { left: 0, top: 0, width: element.width, height: element.height });
+          return finish(p ? { kind: "lasso", p: p.p, altKey } : null, { linger: true });
+        }
+        const f2 = unrotatedRectFraction(element, sceneOf(start.x, start.y), sceneOf(e.clientX, e.clientY));
+        if (!f2 || f2[2] * element.width < 4 || f2[3] * element.height < 4) return finish(null, { linger: true });
+        return finish({ kind: "rect", f: f2, altKey }, { linger: true });
+      }
       if (moved < PIN_SLOP_PX) {
         const x = Math.min(1, Math.max(0, (e.clientX - imageRect.left) / imageRect.width));
         const y = Math.min(1, Math.max(0, (e.clientY - imageRect.top) / imageRect.height));
@@ -19259,7 +19691,7 @@ function placedImage({ elementId, fileId, url, link = null, x = 0, y = 0, width 
 }
 
 // src/model/turninto.js
-var UID_RE3 = /^[A-Za-z0-9_-]{9}$/;
+var UID_RE4 = /^[A-Za-z0-9_-]{9}$/;
 var bump3 = (el, patch) => ({
   ...el,
   ...patch,
@@ -19280,7 +19712,7 @@ function pageRef(title) {
   return `[[${name}]]`;
 }
 function blockRef(uid) {
-  return UID_RE3.test(String(uid ?? "")) ? `((${uid}))` : null;
+  return UID_RE4.test(String(uid ?? "")) ? `((${uid}))` : null;
 }
 function imageMarkdown(url) {
   const href = String(url ?? "").trim();
@@ -19555,6 +19987,96 @@ function openInsertPicker({ doc, rows = [], onChoose, zIndex = 100003 } = {}) {
   const handle = { close: () => finish(null) };
   open2.set(doc, handle);
   return handle;
+}
+
+// src/model/stamps.js
+var STICKY_FILL = "#fff3bf";
+var STACK_GAP = 16;
+function nextStampNumber(elements) {
+  let max = 0;
+  for (const el of Array.isArray(elements) ? elements : []) {
+    if (!el || el.isDeleted || el.type !== "text") continue;
+    const raw = String(el.originalText ?? el.text ?? "").trim();
+    if (!/^[1-9]\d*$/.test(raw)) continue;
+    const n = Number(raw);
+    if (!Number.isSafeInteger(n) || n > max) max = Number.isSafeInteger(n) ? n : max;
+  }
+  return (Number.isSafeInteger(max) ? max : 0) + 1;
+}
+function leavesSelection(el, ids) {
+  if (!el || el.type !== "arrow") return false;
+  const ends = [el.startBinding?.elementId, el.endBinding?.elementId].filter(Boolean);
+  return ends.some((id) => !ids.has(id));
+}
+function stackCopies(elements, selectedIds, { newId, gap = STACK_GAP } = {}) {
+  if (typeof newId !== "function") return null;
+  const ids = new Set(Array.isArray(selectedIds) ? selectedIds : []);
+  const live3 = (Array.isArray(elements) ? elements : []).filter((el) => el && !el.isDeleted && ids.has(el.id));
+  const keep = live3.filter((el) => !leavesSelection(el, ids));
+  if (!keep.length) return null;
+  const b = commonBounds(keep);
+  if (!b) return null;
+  const dy = b[3] - b[1] + gap;
+  const used = new Set((Array.isArray(elements) ? elements : []).map((el) => el?.id).filter(Boolean));
+  const fresh2 = () => {
+    for (let i = 0; i < 8; i += 1) {
+      const id2 = String(newId() ?? "");
+      if (id2 && !used.has(id2)) {
+        used.add(id2);
+        return id2;
+      }
+    }
+    const id = `plxstack${used.size}`;
+    used.add(id);
+    return id;
+  };
+  const idMap2 = /* @__PURE__ */ new Map();
+  const groups = /* @__PURE__ */ new Map();
+  for (const el of keep) idMap2.set(el.id, fresh2());
+  const mapGroup = (g) => {
+    if (!groups.has(g)) groups.set(g, fresh2());
+    return groups.get(g);
+  };
+  return keep.map((el) => {
+    const copy = structuredClone(el);
+    copy.id = idMap2.get(el.id);
+    copy.y = (Number(copy.y) || 0) + dy;
+    if (copy.containerId) copy.containerId = idMap2.get(copy.containerId) ?? null;
+    if (Array.isArray(copy.boundElements)) {
+      copy.boundElements = copy.boundElements.filter((entry) => entry && idMap2.has(entry.id)).map((entry) => ({ ...entry, id: idMap2.get(entry.id) }));
+    }
+    for (const key of ["startBinding", "endBinding"]) {
+      if (copy[key]?.elementId) {
+        const nid2 = idMap2.get(copy[key].elementId);
+        copy[key] = nid2 ? { ...copy[key], elementId: nid2 } : null;
+      }
+    }
+    if (Array.isArray(copy.groupIds) && copy.groupIds.length) copy.groupIds = copy.groupIds.map(mapGroup);
+    copy.version = (Number(copy.version) || 1) + 1;
+    return copy;
+  });
+}
+function stickyElements({ x = 0, y = 0, newId, measure: measure3 } = {}) {
+  const b = createBuilder({
+    newId,
+    measure: measure3,
+    style: { backgroundColor: STICKY_FILL, fillStyle: "solid", strokeColor: "#1e1e1e", roughness: 0 }
+  });
+  b.box("Note", {
+    x,
+    y,
+    backgroundColor: STICKY_FILL,
+    strokeColor: "#1e1e1e",
+    roughness: 0,
+    minWidth: 200,
+    minHeight: 140
+  });
+  return b.elements();
+}
+function stampElements({ x = 0, y = 0, n = 1, newId, measure: measure3 } = {}) {
+  const b = createBuilder({ newId, measure: measure3, style: { strokeColor: "#1e1e1e" } });
+  b.text(x, y, String(n));
+  return b.elements();
 }
 
 // src/actions.js
@@ -20051,6 +20573,25 @@ function createActions({
   function viewCentre(app) {
     const st = app.state || {};
     return viewportToScene({ x: (st.offsetLeft || 0) + (st.width || 0) / 2, y: (st.offsetTop || 0) + (st.height || 0) / 2, appState: st });
+  }
+  function placeBuilt(label, build) {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster2.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    if (!editor.drawingUid) {
+      toaster2.show("Could not identify this drawing", { kind: "error" });
+      return null;
+    }
+    let n = 0;
+    const elements = build(viewCentre(editor.app), () => `plx${rnd6().toString(36)}${n++}`);
+    if (!elements?.length) return null;
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, label)) {
+      toaster2.show("Could not add to the drawing", { kind: "error" });
+      return null;
+    }
+    return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
   }
   function insertGuarded(app, drawingUid, elements, label) {
     const selectedElementIds2 = {};
@@ -21776,10 +22317,6 @@ function createActions({
         toaster2.show("Select exactly one image", { kind: "error" });
         return null;
       }
-      if (element.angle) {
-        toaster2.show("Rotated images are not supported", { kind: "error" });
-        return null;
-      }
       if (badTarget(drawingUid, [element.id])) return null;
       const tool = startTool({ app, element, doc });
       activeTool = tool;
@@ -21832,10 +22369,6 @@ function createActions({
       const element = croppedImage(app);
       if (!element) {
         toaster2.show("Select exactly one cropped image", { kind: "error" });
-        return null;
-      }
-      if (element.angle) {
-        toaster2.show("Rotated images are not supported", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
@@ -22068,51 +22601,100 @@ function createActions({
         toaster2.show("No image in this block", { kind: "error" });
         return null;
       }
-      const ref = refs[0];
-      const img = findRenderedImage(blockUid);
-      if (!img) {
-        toaster2.show("Show the image on screen first", { kind: "error" });
-        return null;
-      }
-      const imageRect = contentRect(img, doc.defaultView);
-      const tool = startTool({ doc, imageRect });
-      activeTool = tool;
-      activeToolIsDrawing = false;
-      let picked;
-      try {
-        picked = await tool;
-      } finally {
-        if (activeTool === tool) activeTool = null;
-      }
-      if (!picked || disposed) return null;
-      if (picked.kind === "pin") return pinInPlain({ blockUid, ref, imageRect, x: picked.x, y: picked.y });
-      const anchor = { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height };
-      if (picked.kind === "rect" && !picked.altKey && picked.f[2] * picked.f[3] >= WHOLE_IMAGE_AREA) {
-        try {
-          const write = () => clipboard.writeText(`((${blockUid}))`);
-          await (native.withClipboard ? native.withClipboard(write) : write());
-          toaster2.show("Whole image: copied the image block ref. Hold Alt while releasing to make a region.");
-        } catch (error) {
-          console.warn("[plexus] clipboard failed", error);
-          toaster2.show("Clipboard access was blocked", { kind: "error" });
+      let index = 0;
+      for (; ; ) {
+        const ref = refs[index];
+        const img = findRenderedImage(blockUid, ref.index);
+        if (!img) {
+          toaster2.show("Show the image on screen first", { kind: "error" });
+          return null;
         }
+        const imageRect = contentRect(img, doc.defaultView);
+        const tool = startTool({ doc, imageRect, cycle: refs.length > 1 });
+        activeTool = tool;
+        activeToolIsDrawing = false;
+        let picked;
+        try {
+          picked = await tool;
+        } finally {
+          if (activeTool === tool) activeTool = null;
+        }
+        if (!picked || disposed) return null;
+        if (picked.kind === "cycle") {
+          if (refs.length < 2) return null;
+          index = (index + 1) % refs.length;
+          toaster2.show(`Image ${index + 1} of ${refs.length}`);
+          continue;
+        }
+        if (picked.kind === "pin") return pinInPlain({ blockUid, ref, imageRect, x: picked.x, y: picked.y });
+        const anchor = { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height };
+        if (picked.kind === "rect" && !picked.altKey && picked.f[2] * picked.f[3] >= WHOLE_IMAGE_AREA) {
+          try {
+            const write = () => clipboard.writeText(`((${blockUid}))`);
+            await (native.withClipboard ? native.withClipboard(write) : write());
+            toaster2.show("Whole image: copied the image block ref. Hold Alt while releasing to make a region.");
+          } catch (error) {
+            console.warn("[plexus] clipboard failed", error);
+            toaster2.show("Clipboard access was blocked", { kind: "error" });
+          }
+          return null;
+        }
+        let region;
+        if (picked.kind === "rect") {
+          const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
+          if (caption == null || disposed) return null;
+          region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked.f, caption };
+        } else if (picked.kind === "lasso") {
+          const p = simplifyPoly(picked.p);
+          if (!p || !polyBBox(p)) return null;
+          const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
+          if (caption == null || disposed) return null;
+          region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption };
+        } else {
+          return null;
+        }
+        return finishWith(region, plainCachePut(region, ref));
+      }
+    }),
+    stickyNote: () => once("sticky", () => placeBuilt("Sticky note", (c, newId) => stickyElements({
+      x: c.x - 100,
+      y: c.y - 70,
+      newId,
+      measure: measure3
+    }))),
+    numberStamp: () => once("stamp", () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
-      let region;
-      if (picked.kind === "rect") {
-        const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
-        if (caption == null || disposed) return null;
-        region = { kind: "imgrect", drawingUid: blockUid, i: ref.index, f: picked.f, caption };
-      } else if (picked.kind === "lasso") {
-        const p = simplifyPoly(picked.p);
-        if (!p || !polyBBox(p)) return null;
-        const caption = await chooseCaption({ auto: "", refs: "", rect: anchor, drawing: false });
-        if (caption == null || disposed) return null;
-        region = { kind: "imgpoly", drawingUid: blockUid, i: ref.index, p, caption };
-      } else {
+      const n = nextStampNumber(sceneElements(editor.app));
+      const id = placeBuilt("Number stamp", (c, newId) => stampElements({ x: c.x, y: c.y, n, newId, measure: measure3 }));
+      if (id) toaster2.show(String(n));
+      return id;
+    }),
+    stackSelection: () => once("stack", () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
         return null;
       }
-      return finishWith(region, plainCachePut(region, ref));
+      if (!editor.drawingUid) {
+        toaster2.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const ids = native.selectedElementIds(editor.app);
+      let n = 0;
+      const copies = stackCopies(sceneElements(editor.app), ids, { newId: () => `plxstack${rnd6().toString(36)}${n++}` });
+      if (!copies) {
+        toaster2.show(ids?.length ? "Nothing to stack" : "Select something first");
+        return null;
+      }
+      if (!insertGuarded(editor.app, editor.drawingUid, copies, "Stack")) {
+        toaster2.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      return copies.filter((el) => !el.containerId).map((el) => el.id);
     }),
     // A pin: a small square region at a point, always prompting for its caption. Give { blockUid, index?, imageRect? } for
     // an image block, else { element?, drawingUid? } for a drawing image in the open editor. Point is { x, y } as
@@ -22339,7 +22921,6 @@ function createActions({
     } else {
       const el = ids.length === 1 ? elements.find((e) => e.id === ids[0] && !e.isDeleted) : null;
       if (!el || el.type !== "image") return { error: "Select exactly one image" };
-      if (el.angle) return { error: "Rotated images are not supported" };
       const fits = region.kind === "rect" ? displayedRect(el, region.f) : displayedPoly(el, region.p);
       if (!fits) return { error: "The region does not fit that image" };
       key = "el";
@@ -22782,10 +23363,6 @@ function createActions({
     const element = opts?.element ?? (ids.length === 1 ? sceneElements(app).find((el) => el.id === ids[0] && !el.isDeleted) : null);
     if (!element || element.type !== "image") {
       toaster2.show("Select exactly one image", { kind: "error" });
-      return null;
-    }
-    if (element.angle) {
-      toaster2.show("Rotated images are not supported", { kind: "error" });
       return null;
     }
     const drawingUid = opts?.drawingUid ?? editor.drawingUid;
@@ -26759,7 +27336,7 @@ var TODAY_REF2 = "plexus:today";
 var ACTIVE_BG2 = "rgb(213, 218, 223)";
 var MIN_Z = 100003;
 var WIDTH = 400;
-var UID_RE4 = /^[A-Za-z0-9_-]{9}$/;
+var UID_RE5 = /^[A-Za-z0-9_-]{9}$/;
 var SEMANTIC_TIMEOUT = 1500;
 var warn4 = (what, error) => console.warn(`[plexus] embed picker ${what} failed`, error);
 var open4 = /* @__PURE__ */ new WeakMap();
@@ -26971,7 +27548,7 @@ function openEmbedPicker({
   };
   async function direct(q) {
     const m = /^(?:\(\()?([A-Za-z0-9_-]{9})(?:\)\))?$/.exec(q);
-    if (!m || !UID_RE4.test(m[1])) return null;
+    if (!m || !UID_RE5.test(m[1])) return null;
     try {
       const pulled = await api.data.pull("[:block/uid :block/string :node/title]", [":block/uid", m[1]]);
       if (!pulled) return null;
@@ -28618,7 +29195,7 @@ var PARENTS = "roam/block-uid-list-only-parents";
 var BLOCKS = "roam/block-uid-list";
 var URIS = "roam/roam-uri-list";
 var CLAIM = [PARENTS, BLOCKS, PLEXUS_MIME];
-var UID_RE5 = /^[\w-]{9}$/;
+var UID_RE6 = /^[\w-]{9}$/;
 var CAP2 = 500;
 var WATCHDOG_MS = 250;
 var OFFSET = 12;
@@ -28635,7 +29212,7 @@ function claimableTypes(types) {
 function dropMode(e) {
   return e?.shiftKey ? "label" : e?.altKey ? "link" : "embed";
 }
-var uidsOf = (text) => String(text ?? "").split(/[^A-Za-z0-9_-]+/).filter((s) => UID_RE5.test(s));
+var uidsOf = (text) => String(text ?? "").split(/[^A-Za-z0-9_-]+/).filter((s) => UID_RE6.test(s));
 function uriUids(text) {
   const out = [];
   for (const line of String(text ?? "").split(/[\r\n]+/)) {
@@ -28791,196 +29368,6 @@ function installRoamDrop({ doc, containerEl, app, zIndex = 1e3, resolve, exclude
     doc.removeEventListener("drop", docEnd, true);
     win?.removeEventListener("blur", onBlur);
   };
-}
-
-// src/model/tokens.js
-var MASK = "\0";
-var UID_RE6 = /^\(\(([A-Za-z0-9_-]{9})\)\)/;
-var ALIAS_HEAD_RE = /^\[[^[\]\n]*\]\(/;
-var TAG_CHAR_RE = /[\p{L}\p{N}_\-/.:@]/u;
-var blank2 = (s) => MASK.repeat(s.length);
-function maskBraces(text) {
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === "{" && text[i + 1] === "{") {
-      let depth = 0;
-      let j = i;
-      let end = -1;
-      while (j < text.length) {
-        if (text[j] === "{" && text[j + 1] === "{") {
-          depth++;
-          j += 2;
-          continue;
-        }
-        if (text[j] === "}" && text[j + 1] === "}") {
-          depth--;
-          j += 2;
-          if (depth === 0) {
-            end = j;
-            break;
-          }
-          continue;
-        }
-        j++;
-      }
-      if (end > 0) {
-        out += blank2(text.slice(i, end));
-        i = end;
-        continue;
-      }
-    }
-    out += text[i];
-    i++;
-  }
-  return out;
-}
-function maskText(text) {
-  return maskBraces(
-    String(text ?? "").replace(/```[\s\S]*?```/g, blank2).replace(/`[^`\n]*`/g, blank2).replace(/https?:\/\/\S+/g, blank2)
-  );
-}
-function closeOf(m, open6, limit) {
-  let depth = 1;
-  let i = open6 + 2;
-  while (i < limit) {
-    if (m[i] === "[" && m[i + 1] === "[") {
-      depth++;
-      i += 2;
-      continue;
-    }
-    if (m[i] === "]" && m[i + 1] === "]") {
-      depth--;
-      i += 2;
-      if (depth === 0) return i;
-      continue;
-    }
-    i++;
-  }
-  return -1;
-}
-function scan(m, from, to, nested, out, inTitle = false) {
-  let i = from;
-  while (i < to) {
-    const c = m[i];
-    if (inTitle && c !== "[" && !(c === "#" && m[i + 1] === "[" && m[i + 2] === "[")) {
-      i++;
-      continue;
-    }
-    if (c === "[" && m[i + 1] !== "[") {
-      if (inTitle) {
-        i++;
-        continue;
-      }
-      const head = ALIAS_HEAD_RE.exec(m.slice(i, to));
-      if (head) {
-        const p = i + head[0].length;
-        if (m[p] === "[" && m[p + 1] === "[") {
-          const end = closeOf(m, p, to);
-          if (end > 0 && m[end] === ")" && end - 2 > p + 2) {
-            out.push({ kind: "page", title: m.slice(p + 2, end - 2), start: i, end: end + 1 });
-            i = end + 1;
-            continue;
-          }
-        } else if (m[p] === "(" && m[p + 1] === "(") {
-          const u = UID_RE6.exec(m.slice(p, to));
-          if (u && m[p + u[0].length] === ")") {
-            out.push({ kind: "block", uid: u[1], start: i, end: p + u[0].length + 1 });
-            i = p + u[0].length + 1;
-            continue;
-          }
-        }
-      }
-      i++;
-      continue;
-    }
-    if (c === "[" && m[i + 1] === "[") {
-      const end = closeOf(m, i, to);
-      if (end > 0 && end - 2 > i + 2) {
-        out.push({ kind: "page", title: m.slice(i + 2, end - 2), start: i, end });
-        if (nested) scan(m, i + 2, end - 2, nested, out, true);
-        i = end;
-        continue;
-      }
-      i += 2;
-      continue;
-    }
-    if (c === "#" && m[i + 1] === "[" && m[i + 2] === "[") {
-      const end = closeOf(m, i + 1, to);
-      if (end > 0 && end - 2 > i + 3) {
-        out.push({ kind: "tag", title: m.slice(i + 3, end - 2), start: i, end });
-        if (nested) scan(m, i + 3, end - 2, nested, out, true);
-        i = end;
-        continue;
-      }
-      i++;
-      continue;
-    }
-    if (c === "#") {
-      let j = i + 1;
-      while (j < to && TAG_CHAR_RE.test(m[j])) j++;
-      while (j > i + 1 && m[j - 1] === ":") j--;
-      if (j > i + 1) {
-        out.push({ kind: "tag", title: m.slice(i + 1, j), start: i, end: j });
-        i = j;
-        continue;
-      }
-      i++;
-      continue;
-    }
-    if (c === "(" && m[i + 1] === "(") {
-      const u = UID_RE6.exec(m.slice(i, to));
-      if (u) {
-        out.push({ kind: "block", uid: u[1], start: i, end: i + u[0].length });
-        i += u[0].length;
-        continue;
-      }
-    }
-    i++;
-  }
-}
-function findTokens(text, { nested = false } = {}) {
-  const src = String(text ?? "");
-  if (!src) return [];
-  const m = maskText(src);
-  const out = [];
-  scan(m, 0, m.length, nested, out);
-  for (const t of out) if (t.title != null) t.title = titleFrom(src, t);
-  return out.sort((a, b) => a.start - b.start || b.end - a.end);
-}
-function titleFrom(src, t) {
-  const raw = src.slice(t.start, t.end);
-  if (raw.startsWith("#[[")) return raw.slice(3, -2);
-  if (raw.startsWith("[[")) return raw.slice(2, -2);
-  if (raw.startsWith("#")) return raw.slice(1);
-  const alias = ALIAS_HEAD_RE.exec(raw);
-  if (alias) return raw.slice(alias[0].length + 2, -3);
-  return t.title;
-}
-function alignWrapped(text, originalText) {
-  const t = String(text ?? "");
-  const o = String(originalText ?? "");
-  const map = new Int32Array(t.length + 1);
-  let i = 0;
-  let j = 0;
-  while (i < t.length) {
-    if (j < o.length && t[i] === o[j]) {
-      map[i++] = j++;
-      continue;
-    }
-    if (t[i] === "\n") {
-      map[i++] = j;
-      if (j < o.length && /\s/.test(o[j])) j++;
-      continue;
-    }
-    if (j < o.length && /\s/.test(o[j])) {
-      j++;
-      continue;
-    }
-    return null;
-  }
-  map[t.length] = o.length;
-  return map;
 }
 
 // src/view/text-links.js
@@ -31488,6 +31875,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         if (!actions) return unavailable("liveQuery");
         return Promise.resolve(actions.liveQuery()).catch((error) => console.warn("[plexus] live query failed", error));
       } },
+      { id: "stickyNote", label: "Sticky note", run: () => actions ? Promise.resolve(actions.stickyNote()).catch((error) => console.warn("[plexus] sticky note failed", error)) : unavailable("stickyNote") },
+      { id: "numberStamp", label: "Number stamp", run: () => actions ? Promise.resolve(actions.numberStamp()).catch((error) => console.warn("[plexus] number stamp failed", error)) : unavailable("numberStamp") },
+      { id: "stackSelection", label: "Stack", run: () => actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection") },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
     let commandListHandle = null;

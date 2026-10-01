@@ -1,4 +1,30 @@
+import { findTokens } from "./tokens.js";
+
 const URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
+
+export const CAPTION_LINK_CAP = 8;
+
+// First-order ((uid)) and [[Title]] in a caption, in order, duplicates dropped. No tags, no further walk.
+export function captionLinks(text) {
+  const out = [];
+  const seen = new Set();
+  for (const tok of findTokens(text)) {
+    let key = null;
+    let item = null;
+    if (tok.kind === "block" && tok.uid) {
+      key = `b:${tok.uid}`;
+      item = { type: "block", uid: tok.uid };
+    } else if (tok.kind === "page" && tok.title) {
+      key = `p:${tok.title}`;
+      item = { type: "page", title: tok.title };
+    }
+    if (!item || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= CAPTION_LINK_CAP) break;
+  }
+  return out;
+}
 
 // Pure. Returns {type:"page", title} | {type:"block", uid} | {type:"page", uid} (same-graph URL; the host resolves page vs block) | null.
 export function parseRoamLink(link, graphName) {

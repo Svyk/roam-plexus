@@ -1682,6 +1682,9 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         if (!actions) return unavailable("liveQuery");
         return Promise.resolve(actions.liveQuery()).catch((error) => console.warn("[plexus] live query failed", error));
       } },
+      { id: "stickyNote", label: "Sticky note", run: () => (actions ? Promise.resolve(actions.stickyNote()).catch((error) => console.warn("[plexus] sticky note failed", error)) : unavailable("stickyNote")) },
+      { id: "numberStamp", label: "Number stamp", run: () => (actions ? Promise.resolve(actions.numberStamp()).catch((error) => console.warn("[plexus] number stamp failed", error)) : unavailable("numberStamp")) },
+      { id: "stackSelection", label: "Stack", run: () => (actions ? Promise.resolve(actions.stackSelection()).catch((error) => console.warn("[plexus] stack failed", error)) : unavailable("stackSelection")) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;

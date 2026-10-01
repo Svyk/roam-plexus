@@ -31,6 +31,7 @@ import { taskLabel, toggleTaskString } from "./model/task-card.js";
 import { attrWrite, chosenAttrs, parseAttr } from "./model/page-card.js";
 import { queryPageTitles } from "./model/query-live.js";
 import { openInsertPicker } from "./view/insert-picker.js";
+import { nextStampNumber, stackCopies, stampElements, stickyElements } from "./model/stamps.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const noop = () => {};
@@ -580,6 +581,26 @@ export function createActions({
   }
 
   // One guarded write that appends elements and selects them: one undo step.
+  function placeBuilt(label, build) {
+    const editor = native.activeEditor(doc);
+    if (!editor?.app) {
+      toaster.show("Open a drawing full-screen first", { kind: "error" });
+      return null;
+    }
+    if (!editor.drawingUid) {
+      toaster.show("Could not identify this drawing", { kind: "error" });
+      return null;
+    }
+    let n = 0;
+    const elements = build(viewCentre(editor.app), () => `plx${rnd().toString(36)}${n++}`);
+    if (!elements?.length) return null;
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, label)) {
+      toaster.show("Could not add to the drawing", { kind: "error" });
+      return null;
+    }
+    return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
+  }
+
   function insertGuarded(app, drawingUid, elements, label) {
     const selectedElementIds = {};
     for (const el of elements) if (!el.containerId) selectedElementIds[el.id] = true;
@@ -2282,10 +2303,6 @@ export function createActions({
         toaster.show("Select exactly one image", { kind: "error" });
         return null;
       }
-      if (element.angle) {
-        toaster.show("Rotated images are not supported", { kind: "error" });
-        return null;
-      }
       if (badTarget(drawingUid, [element.id])) return null;
       const tool = startTool({ app, element, doc });
       activeTool = tool;
@@ -2342,10 +2359,6 @@ export function createActions({
       const element = croppedImage(app);
       if (!element) {
         toaster.show("Select exactly one cropped image", { kind: "error" });
-        return null;
-      }
-      if (element.angle) {
-        toaster.show("Rotated images are not supported", { kind: "error" });
         return null;
       }
       if (badTarget(drawingUid, [element.id])) return null;
@@ -2585,15 +2598,16 @@ export function createActions({
         toaster.show("No image in this block", { kind: "error" });
         return null;
       }
-      // TODO: P2 targets only the first image; let the user pick when a block has several.
-      const ref = refs[0];
-      const img = findRenderedImage(blockUid);
+      let index = 0;
+      for (;;) {
+      const ref = refs[index];
+      const img = findRenderedImage(blockUid, ref.index);
       if (!img) {
         toaster.show("Show the image on screen first", { kind: "error" });
         return null;
       }
       const imageRect = contentRect(img, doc.defaultView);
-      const tool = startTool({ doc, imageRect });
+      const tool = startTool({ doc, imageRect, cycle: refs.length > 1 });
       activeTool = tool;
       activeToolIsDrawing = false;
       let picked;
@@ -2603,6 +2617,12 @@ export function createActions({
         if (activeTool === tool) activeTool = null;
       }
       if (!picked || disposed) return null;
+      if (picked.kind === "cycle") {
+        if (refs.length < 2) return null;
+        index = (index + 1) % refs.length;
+        toaster.show(`Image ${index + 1} of ${refs.length}`);
+        continue;
+      }
       if (picked.kind === "pin") return pinInPlain({ blockUid, ref, imageRect, x: picked.x, y: picked.y });
       const anchor = { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height };
       if (picked.kind === "rect" && !picked.altKey && picked.f[2] * picked.f[3] >= WHOLE_IMAGE_AREA) {
@@ -2632,6 +2652,47 @@ export function createActions({
         return null;
       }
       return finishWith(region, plainCachePut(region, ref));
+      }
+    }),
+
+    stickyNote: () => once("sticky", () => placeBuilt("Sticky note", (c, newId) => stickyElements({
+      x: c.x - 100, y: c.y - 70, newId, measure,
+    }))),
+
+    numberStamp: () => once("stamp", () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const n = nextStampNumber(sceneElements(editor.app));
+      const id = placeBuilt("Number stamp", (c, newId) => stampElements({ x: c.x, y: c.y, n, newId, measure }));
+      if (id) toaster.show(String(n));
+      return id;
+    }),
+
+    stackSelection: () => once("stack", () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      if (!editor.drawingUid) {
+        toaster.show("Could not identify this drawing", { kind: "error" });
+        return null;
+      }
+      const ids = native.selectedElementIds(editor.app);
+      let n = 0;
+      const copies = stackCopies(sceneElements(editor.app), ids, { newId: () => `plxstack${rnd().toString(36)}${n++}` });
+      if (!copies) {
+        toaster.show(ids?.length ? "Nothing to stack" : "Select something first");
+        return null;
+      }
+      if (!insertGuarded(editor.app, editor.drawingUid, copies, "Stack")) {
+        toaster.show("Could not add to the drawing", { kind: "error" });
+        return null;
+      }
+      return copies.filter((el) => !el.containerId).map((el) => el.id);
     }),
 
     // A pin: a small square region at a point, always prompting for its caption. Give { blockUid, index?, imageRect? } for
@@ -2896,7 +2957,6 @@ export function createActions({
     } else {
       const el = ids.length === 1 ? elements.find((e) => e.id === ids[0] && !e.isDeleted) : null;
       if (!el || el.type !== "image") return { error: "Select exactly one image" };
-      if (el.angle) return { error: "Rotated images are not supported" };
       const fits = region.kind === "rect" ? displayedRect(el, region.f) : displayedPoly(el, region.p);
       if (!fits) return { error: "The region does not fit that image" };
       key = "el";
@@ -3332,10 +3392,6 @@ export function createActions({
     const element = opts?.element ?? (ids.length === 1 ? sceneElements(app).find((el) => el.id === ids[0] && !el.isDeleted) : null);
     if (!element || element.type !== "image") {
       toaster.show("Select exactly one image", { kind: "error" });
-      return null;
-    }
-    if (element.angle) {
-      toaster.show("Rotated images are not supported", { kind: "error" });
       return null;
     }
     const drawingUid = opts?.drawingUid ?? editor.drawingUid;

@@ -141,6 +141,37 @@ test("a middle or right button press cancels the tool and creates nothing", asyn
   }
 });
 
+test("S cycles only while the tool was asked to, and otherwise does nothing", async () => {
+  const quiet = fakeDoc();
+  const idle = startImageRegionTool({ doc: quiet, imageRect: rect });
+  quiet.dispatchEvent(Object.assign(new Event("keydown", { cancelable: true }), { key: "s" }));
+  assert.equal(quiet.body.children[0].removed, undefined);
+  quiet.dispatchEvent(Object.assign(new Event("keydown", { cancelable: true }), { key: "Escape" }));
+  assert.equal(await idle, null);
+
+  const doc = fakeDoc();
+  const tool = startImageRegionTool({ doc, imageRect: rect, cycle: true });
+  const key = Object.assign(new Event("keydown", { cancelable: true }), { key: "S" });
+  doc.dispatchEvent(key);
+  assert.equal(key.defaultPrevented, true);
+  assert.deepEqual(await tool, { kind: "cycle" });
+  assert.equal(doc.body.children[0].removed, true);
+});
+
+test("a rotated image maps the click into its own box", async () => {
+  const doc = fakeDoc();
+  const element = { id: "img", type: "image", x: 0, y: 0, width: 200, height: 100, angle: Math.PI / 2 };
+  const app = { state: { zoom: { value: 1 }, scrollX: 0, scrollY: 0, offsetLeft: 0, offsetTop: 0 } };
+  const tool = startImageRegionTool({ app, element, doc, setTimeout: () => 1, clearTimeout() {} });
+  const overlay = doc.body.children[0];
+  overlay.dispatchEvent(ev("pointerdown", { clientX: 100, clientY: 150 }));
+  overlay.dispatchEvent(ev("pointerup", { clientX: 100, clientY: 150 }));
+  const pin = await tool;
+  assert.equal(pin.kind, "pin");
+  assert.ok(Math.abs(pin.x - 1) < 1e-6, pin.x);
+  assert.ok(Math.abs(pin.y - 0.5) < 1e-6, pin.y);
+});
+
 test("the overlay swallows contextmenu while active", () => {
   const doc = fakeDoc();
   startImageRegionTool({ doc, imageRect: rect, setTimeout: () => 1, clearTimeout() {} });

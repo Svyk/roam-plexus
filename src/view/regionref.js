@@ -10,6 +10,8 @@ import { hostDarkMarker, isHostDark } from "../host/theme.js";
 import { cardScale, overrideKey, refContext, resolveCaption, resolveDisplay } from "../model/refdisplay.js";
 import { KIND_WORDS, drawingTitleOf, imageAltAt, regionLabel } from "../model/label.js";
 import { createCropPopover } from "./crop-popover.js";
+import { captionLinks } from "../model/links.js";
+import { navigateToTarget } from "../host/links.js";
 
 const CLAIMED = "data-plexus-claimed";
 const ALIAS_CLAIMED = "data-plexus-alias";
@@ -173,6 +175,100 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
   let pruneAt = PRUNE_FLOOR;
   let popover = null;
   const getPopover = () => popover || (popover = createCropPopover({ doc }));
+
+  let chooser = null;
+  const closeChooser = () => {
+    const current = chooser;
+    chooser = null;
+    current?.dispose();
+  };
+  const manyLinks = (region) => {
+    const links = captionLinks(region?.caption);
+    return links.length >= 2 ? links : null;
+  };
+  const atOf = (el, e) => {
+    const r = el?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    return { x: Number.isFinite(e?.clientX) ? e.clientX : r.left, y: Number.isFinite(e?.clientY) ? e.clientY : r.top };
+  };
+  function openCaptionChooser(links, at) {
+    closeChooser();
+    if (!links?.length || typeof doc?.body?.append !== "function" || typeof doc.createElement !== "function") return;
+    const root = doc.createElement("div");
+    root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-token-chooser";
+    root.setAttribute?.("tabindex", "-1");
+    if (root.style) {
+      root.style.position = "fixed";
+      root.style.zIndex = "4000";
+    }
+    const rows = [];
+    let active = 0;
+    const paint = () => rows.forEach((row, k) => { if (row.style) row.style.backgroundColor = k === active ? "rgb(213, 218, 223)" : ""; });
+    const labelOf = (link) => {
+      if (link.type === "page") return link.title;
+      try {
+        const text = String(host.pullBlock(link.uid)?.string ?? "").replace(/\s+/g, " ").trim();
+        return (text || `((${link.uid}))`).slice(0, 80);
+      } catch { return `((${link.uid}))`; }
+    };
+    const choose = (link) => {
+      try { navigateToTarget({ api, containerEl: root, target: link }); }
+      catch (error) { console.warn("[plexus] caption link failed", error); }
+      closeChooser();
+    };
+    links.forEach((link, k) => {
+      const row = doc.createElement("div");
+      row.className = "dont-unfocus-block";
+      if (row.style) {
+        row.style.padding = "6px";
+        row.style.cursor = "pointer";
+      }
+      const inner = doc.createElement("div");
+      inner.className = "rm-autocomplete-result";
+      inner.textContent = labelOf(link);
+      row.append?.(inner);
+      row.addEventListener?.("click", (ev) => {
+        ev.preventDefault?.();
+        ev.stopPropagation?.();
+        choose(link);
+      });
+      row.addEventListener?.("mousemove", () => { active = k; paint(); });
+      root.append?.(row);
+      rows.push(row);
+    });
+    root.addEventListener?.("keydown", (ev) => {
+      ev.stopPropagation?.();
+      if (ev.key === "Escape") { ev.preventDefault?.(); closeChooser(); }
+      else if (ev.key === "ArrowDown") { ev.preventDefault?.(); active = (active + 1) % rows.length; paint(); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault?.(); active = (active - 1 + rows.length) % rows.length; paint(); }
+      else if (ev.key === "Enter") { ev.preventDefault?.(); choose(links[active]); }
+    });
+    const onOutside = (ev) => { if (!(ev?.target && root.contains?.(ev.target))) closeChooser(); };
+    const onEsc = (ev) => {
+      if (ev?.key !== "Escape") return;
+      ev.stopPropagation?.();
+      closeChooser();
+    };
+    doc.addEventListener?.("pointerdown", onOutside, true);
+    doc.addEventListener?.("keydown", onEsc, true);
+    doc.body.append(root);
+    const rect = root.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const view = doc.defaultView;
+    const vw = view?.innerWidth ?? 800;
+    const vh = view?.innerHeight ?? 600;
+    if (root.style) {
+      root.style.left = `${Math.max(0, Math.min(at?.x || 0, vw - (rect.width || 0) - 8))}px`;
+      root.style.top = `${Math.max(0, Math.min(at?.y || 0, vh - (rect.height || 0) - 8))}px`;
+    }
+    paint();
+    try { root.focus?.({ preventScroll: true }); } catch { /* focus is best effort */ }
+    chooser = {
+      dispose() {
+        doc.removeEventListener?.("pointerdown", onOutside, true);
+        doc.removeEventListener?.("keydown", onEsc, true);
+        root.remove?.();
+      },
+    };
+  }
 
   const settings = () => {
     const s = getSettings() || {};
@@ -609,13 +705,24 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         }
         onOpen(uid, { sidebar: !!getSettings().openInSidebar !== !!e.shiftKey });
       };
+      // The caption can land, or be edited, after the card is drawn. Read it at the click.
+      const linksNow = () => {
+        try {
+          const fresh = host.pullBlock(uid);
+          const parsed = fresh ? parseRegion(fresh.string) : null;
+          if (parsed) return manyLinks(parsed);
+        } catch { /* the region captured at claim still answers */ }
+        return manyLinks(region);
+      };
       root.addEventListener("keydown", (e) => {
         try {
           if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
           e.stopPropagation();
-          openFrom(e);
+          const links = linksNow();
+          if (links && !e.shiftKey) openCaptionChooser(links, atOf(root, e));
+          else openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -625,10 +732,13 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
         e.preventDefault();
       }, true);
       root.addEventListener("click", (e) => {
+        const links = linksNow();
+        if (links && (e.ctrlKey || e.metaKey || e.altKey)) return;
         e.stopPropagation();
         e.preventDefault();
         try {
-          openFrom(e);
+          if (links && !e.shiftKey) openCaptionChooser(links, atOf(root, e));
+          else openFrom(e);
         } catch (error) {
           console.warn("[plexus] open failed", error);
         }
@@ -735,11 +845,15 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       const capture = (open) => (e) => {
         try {
           const u = currentUid();
-          if (!plain(e) || !u || !regionOf(u)) return;
+          const region = u ? regionOf(u) : null;
+          if (!plain(e) || !u || !region) return;
           e.preventDefault();
           e.stopPropagation();
           info.uid = u;
-          if (open) onOpen(u, { sidebar: !!getSettings().openInSidebar });
+          if (!open) return;
+          const links = manyLinks(region);
+          if (links) openCaptionChooser(links, atOf(anchor, e));
+          else onOpen(u, { sidebar: !!getSettings().openInSidebar });
         } catch (error) {
           console.warn("[plexus] alias open failed", error);
         }
@@ -851,6 +965,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       }
     },
     releaseAll() {
+      closeChooser();
       for (const [root, info] of [...roots]) unclaim(root, info);
       roots.clear();
       for (const [anchor, info] of [...aliases]) unalias(anchor, info);

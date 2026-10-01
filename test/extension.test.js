@@ -347,7 +347,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 75 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 78 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -377,7 +377,8 @@ test("the command list carries all 75 labels and hotkeys, and captures the focus
       "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)",
       "Focus mode", "Todo mode", "Embed query results", "Embed page children", "Link selected", "Filter regions by tag",
       "Lock or unlock selection", "Unlock all", "Copy diagnostics", "Where is this cited?",
-      "Show in Compass", "Turn into page", "Insert image or drawing\u2026", "Drawing name\u2026", "Task card\u2026", "Page card\u2026", "Live query\u2026", "Region settings",
+      "Show in Compass", "Turn into page", "Insert image or drawing\u2026", "Drawing name\u2026", "Task card\u2026", "Page card\u2026", "Live query\u2026",
+      "Sticky note", "Number stamp", "Stack", "Region settings",
     ]);
     assert.deepEqual(Object.fromEntries(commands.filter((c) => c.hotkey).map((c) => [c.label, c.hotkey])), {
       "Create region from selection": "Shift+Alt+R",

@@ -131,6 +131,74 @@ export function elementBounds(el) {
   }
 }
 
+// Scene point -> fraction of the image's own (unrotated) box. Null when the point misses that box.
+// clamp keeps a point that fell outside, for a lasso that crossed the edge.
+export function unrotatedFraction(element, point, { clamp = false } = {}) {
+  if (!element || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  const x = Number(element.x) || 0;
+  const y = Number(element.y) || 0;
+  const w = Number(element.width) || 0;
+  const h = Number(element.height) || 0;
+  if (!(w > 0) || !(h > 0)) return null;
+  const [lx, ly] = rotate(point.x, point.y, x + w / 2, y + h / 2, -(Number(element.angle) || 0));
+  let fx = (lx - x) / w;
+  let fy = (ly - y) / h;
+  const outside = fx < -1e-9 || fy < -1e-9 || fx > 1 + 1e-9 || fy > 1 + 1e-9;
+  if (outside && !clamp) return null;
+  return { x: Math.min(1, Math.max(0, fx)), y: Math.min(1, Math.max(0, fy)) };
+}
+
+// Axis-aligned scene drag -> fraction rect of the image's own box. Null when the drag misses the image.
+export function unrotatedRectFraction(element, a, b) {
+  if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return null;
+  const x = Number(element?.x) || 0;
+  const y = Number(element?.y) || 0;
+  const w = Number(element?.width) || 0;
+  const h = Number(element?.height) || 0;
+  if (!(w > 0) || !(h > 0)) return null;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const angle = -(Number(element.angle) || 0);
+  const x1 = Math.min(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x, b.x);
+  const y2 = Math.max(a.y, b.y);
+  let lx1 = Infinity;
+  let ly1 = Infinity;
+  let lx2 = -Infinity;
+  let ly2 = -Infinity;
+  for (const [px, py] of [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]) {
+    const [lx, ly] = rotate(px, py, cx, cy, angle);
+    if (lx < lx1) lx1 = lx;
+    if (ly < ly1) ly1 = ly;
+    if (lx > lx2) lx2 = lx;
+    if (ly > ly2) ly2 = ly;
+  }
+  const ix1 = Math.max(lx1, x);
+  const iy1 = Math.max(ly1, y);
+  const ix2 = Math.min(lx2, x + w);
+  const iy2 = Math.min(ly2, y + h);
+  if (!(ix2 > ix1) || !(iy2 > iy1)) return null;
+  return [(ix1 - x) / w, (iy1 - y) / h, (ix2 - ix1) / w, (iy2 - iy1) / h];
+}
+
+// Fraction box in the image's own space -> scene bounds, turned about the element centre when it has an angle.
+function orientedBBox(el, bbox) {
+  const angle = Number(el?.angle) || 0;
+  if (!angle) return bbox;
+  const x = Number(el.x) || 0;
+  const y = Number(el.y) || 0;
+  const cx = x + (Number(el.width) || 0) / 2;
+  const cy = y + (Number(el.height) || 0) / 2;
+  const [x1, y1, x2, y2] = bbox;
+  return boundsOf([
+    rotate(x1, y1, cx, cy, angle),
+    rotate(x2, y1, cx, cy, angle),
+    rotate(x2, y2, cx, cy, angle),
+    rotate(x1, y2, cx, cy, angle),
+  ]);
+}
+
 export function commonBounds(elements) {
   const live = liveElements(elements);
   if (!live.length) return null;
@@ -186,7 +254,7 @@ export function sceneToNatural(el, [sx, sy]) {
 }
 
 // area: union of the listed live elements plus region.pad on each side (matches the hot SVG export).
-// rect/poly: the fraction (poly: its bbox fraction) of an unrotated image element.
+// rect/poly: the fraction (poly: its bbox) of the image's own box, then turned with the element's angle.
 // group: union of live members + pad. frame: frame bbox + pad. cframe: frame bbox exactly.
 // imgrect/imgpoly have no scene geometry (unsupported-kind).
 // index ({ live, byId }) lets a caller resolving many regions share one live list and id map; byGroup is built lazily on it.
@@ -210,14 +278,11 @@ export function regionSceneBBox(region, elements, appState, index) {
     const el = lookup(region.el);
     if (!el) return { error: "no-elements" };
     if (el.type !== "image") return { error: "not-image" };
-    if (Number(el.angle) || 0) return { error: "rotated-image" };
     const [rx, ry, rw, rh] = region.kind === "rect" ? region.f : (polyBBox(region.p) ?? [0, 0, 0, 0]);
     if (!(rw > 0) || !(rh > 0)) return { error: "no-elements" };
+    const placed = (bbox) => ({ bbox: orientedBBox(el, bbox), missing: [] });
     if (!validCrop(el.crop)) {
-      return {
-        bbox: [el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height],
-        missing: [],
-      };
+      return placed([el.x + rx * el.width, el.y + ry * el.height, el.x + (rx + rw) * el.width, el.y + (ry + rh) * el.height]);
     }
     if (region.kind === "poly") {
       const disp = [];
@@ -232,14 +297,14 @@ export function regionSceneBBox(region, elements, appState, index) {
         cx1 = Math.min(cx1, clipped[i]); cx2 = Math.max(cx2, clipped[i]);
         cy1 = Math.min(cy1, clipped[i + 1]); cy2 = Math.max(cy2, clipped[i + 1]);
       }
-      return { bbox: [el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height], missing: [] };
+      return placed([el.x + cx1 * el.width, el.y + cy1 * el.height, el.x + cx2 * el.width, el.y + cy2 * el.height]);
     }
     const [ax, ay] = naturalToScene(el, [rx, ry]);
     const [bx, by] = naturalToScene(el, [rx + rw, ry + rh]);
     const x1 = Math.max(ax, el.x), y1 = Math.max(ay, el.y);
     const x2 = Math.min(bx, el.x + el.width), y2 = Math.min(by, el.y + el.height);
     if (!(x2 > x1) || !(y2 > y1)) return { error: "outside-crop" };
-    return { bbox: [x1, y1, x2, y2], missing: [] };
+    return placed([x1, y1, x2, y2]);
   }
   if (region.kind === "group") {
     const g = region.groupId ?? region.g;
