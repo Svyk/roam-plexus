@@ -10,6 +10,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - A text element whose text is a block ref copies that block's words into the element. The uid stays on the element. The block is not written. Refresh runs when the editor opens.
 - Comment pin writes a child block and a text pin. The thread is that block's children. A reply adds a child. The block is the only writer.
 - The palette stays two entries. The command list is 86.
+- Typing, editor closed, five rounds: +0.051 ms/key. Loaded mean 12.023. Unloaded mean 11.972.
 
 ## [0.31.0]
 - Export mermaid writes one mermaid block under the drawing. Its one child starts with flowchart. Import mermaid lays out rectangles and arrows from that child. Other diagrams are left alone. Paste leaves the scene empty. No mermaid library is loaded.

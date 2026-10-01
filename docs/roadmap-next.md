@@ -852,15 +852,11 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (5)
+### 6.1 Later (1)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
-| AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
-| AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
-| EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
-| REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 ### Shipped from Later
 
 | ID | Version | Sha | What shipped |
@@ -919,6 +915,10 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | EXP-6 | 0.31.0 | `5788da2` | Export writes one mermaid block under the drawing. Its one child starts with flowchart. Import lays out rectangles and arrows. Other diagrams are left alone |
 | GRAPH-2 | 0.31.0 | `5788da2` | Expand on a card adds at most twelve backlinks, children, outgoing refs, or parents. Cards already present are skipped. New cards sit to the right |
 | API-2 | 0.31.0 | `5788da2` | Listeners cover editor open and close, a scene change, paste, drop, and a cancelable link click. apiVersion stays 6 |
+| AUTH-16 | 0.32.0 | `9a8bf6e` | Nest drawing creates a child drawing under the open one and opens it. A breadcrumb lists the page and each ancestor. A crumb opens that drawing |
+| AUTH-20 | 0.32.0 | `9a8bf6e` | Inbox tray lists at most twenty-four children not on the canvas. Name, mermaid, and region containers stay out. Choosing a row embeds that block |
+| EMB-7 | 0.32.0 | `9a8bf6e` | A text element whose text is a block ref copies that block's words. The uid stays on the element. The block is not written. Refresh runs when the editor opens |
+| REV-1 | 0.32.0 | `9a8bf6e` | Comment pin writes a child block and a text pin. Replies are children of that block. The block is the only writer |
 
 ### 6.2 Parked (17)
 
@@ -1092,11 +1092,11 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-13 | Styling helpers | 0.28.0 |
 | AUTH-14 | Insert image or drawing from picker | 0.26.0 |
 | AUTH-15 | Annotate a Roam image | P16 |
-| AUTH-16 | Nested drawings | Later |
+| AUTH-16 | Nested drawings | 0.32.0 |
 | AUTH-17 | Extract selection to new drawing | Parked |
 | AUTH-18 | Paste a ref as embed or link node | P9 |
 | AUTH-19 | Image paste helpers | Rejected |
-| AUTH-20 | Inbox tray | Later |
+| AUTH-20 | Inbox tray | 0.32.0 |
 | AUTH-21 | Layer manager | 0.30.0 |
 | EMB-1 | Embed display modes and polish | P16 |
 | EMB-2 | Page cards with attributes | 0.27.0 |
@@ -1104,7 +1104,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | EMB-4 | Live "today" embed | P9 |
 | EMB-5 | Task cards on the canvas | 0.27.0 |
 | EMB-6 | Embed text in exports and slides (Option C) | P11 |
-| EMB-7 | Text-element transclusion | Later |
+| EMB-7 | Text-element transclusion | 0.32.0 |
 | EMB-8 | Link / bookmark cards | Parked |
 | EMB-9 | Website embeddables probe | Parked |
 | EMB-10 | LaTeX on the canvas | Rejected |
@@ -1207,7 +1207,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | UX-10 | Feedback polish | 0.18.0 |
 | UX-11 | Floating mini-toolbar | Parked |
 | UX-12 | Expose hidden native actions | 0.16.0 |
-| REV-1 | Comment pins | Later |
+| REV-1 | Comment pins | 0.32.0 |
 | REV-2 | Todo mode | P15 |
 | REV-3 | Stamps and voting | Rejected |
 | REV-4 | Tags on elements, tag filter | 0.25.0 |
