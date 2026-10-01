@@ -1,4 +1,4 @@
-/* Plexus v0.26.0 | MIT | generated; edit src/ */
+/* Plexus v0.27.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -1298,6 +1298,7 @@ var DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
 var DRAWINGS_CAP = 50;
 var EMBED_CAP = 30;
 var EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/page [:node/title]} {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
+var REFS_PATTERN = "[:block/uid {:block/_refs [:block/uid]}]";
 var EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
 var CARDS_STRING = "{{[[plexus-cards]]}}";
 var PATH_CAP = 100;
@@ -1695,7 +1696,9 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       for (const n of [...nodes || []].sort(byOrder)) {
         if (budget <= 0) break;
         budget--;
-        out.push({ string: n[":block/string"] ?? "", children: depth > 1 ? take(n[":block/children"], depth - 1) : [] });
+        const row = { string: n[":block/string"] ?? "", children: depth > 1 ? take(n[":block/children"], depth - 1) : [] };
+        if (typeof n[":block/uid"] === "string" && n[":block/uid"]) row.uid = n[":block/uid"];
+        out.push(row);
       }
       return out;
     };
@@ -1706,6 +1709,29 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
       pageTitle: isPage ? "" : raw[":block/page"]?.[":node/title"] ?? "",
       string: isPage ? "" : raw[":block/string"] ?? "",
       children: take(raw[":block/children"], isPage ? 1 : 2)
+    };
+  }
+  function watchPageRefs(uid, cb) {
+    if (!uid || typeof api.data?.addPullWatch !== "function") return () => {
+    };
+    const ident = `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`;
+    const handler = (before, after) => {
+      try {
+        cb(before, after);
+      } catch (error) {
+        console.warn("[plexus] query watch callback failed", error);
+      }
+    };
+    api.data.addPullWatch(REFS_PATTERN, ident, handler);
+    let done2 = false;
+    return () => {
+      if (done2) return;
+      done2 = true;
+      try {
+        api.data.removePullWatch(REFS_PATTERN, ident, handler);
+      } catch (error) {
+        console.warn("[plexus] removePullWatch failed", error);
+      }
     };
   }
   function watchEmbed(uid, cb) {
@@ -1768,7 +1794,8 @@ function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = withLock, 
     openBlock,
     blockUidFromNode,
     pullEmbedContent,
-    watchEmbed
+    watchEmbed,
+    watchPageRefs
   };
 }
 
@@ -2988,10 +3015,12 @@ var REF_RE = /^\(\(([A-Za-z0-9_-]{9})\)\)$/;
 var PAGE_RE = /^\[\[([^\]]+)\]\]$/;
 var UID_RE = /^[A-Za-z0-9_-]{9}$/;
 var TODAY_REF = "plexus:today";
+var QUERY_REF = "plexus:query";
 function parseEmbedRef(text) {
   if (typeof text !== "string") return null;
   const t = text.trim();
   if (t === TODAY_REF) return { kind: "today", ref: TODAY_REF };
+  if (t === QUERY_REF) return { kind: "query", ref: QUERY_REF };
   let m = REF_RE.exec(t);
   if (m) return { kind: "block", uid: m[1], ref: `((${m[1]}))` };
   m = PAGE_RE.exec(t);
@@ -3110,9 +3139,928 @@ function embedAnchors(elements) {
   return liveElements(elements).filter((el) => el.type === "rectangle" && typeof el.customData?.plexus?.embed === "string");
 }
 
+// src/model/flow.js
+var FLOW_LAYOUT = "flow";
+var FLOW_DECISION_WRAP = 160;
+var FLOW_ROOT_FONT = 20;
+var FLOW_STEP_FONT = 16;
+var FLOW_CHIP_FONT = 12;
+var FLOW_PAD = 24;
+var FLOW_H_GAP = 40;
+var FLOW_ROW_GAP = 70;
+var FLOW_LANE_GAP = 40;
+var LANE_BLOCK_RE = /^\s*Lane::/;
+var LANE_VALUE_RE = /^\s*Lane::\s*([\s\S]*)$/;
+var REF_ONLY_RE = /^\(\(([^()\s]+)\)\)$/;
+var LABEL_RE = /^([^:\s[\]{}()#][^:\n[\]{}()#]{0,11}):[ \t]+/;
+var TOKEN_SRC = String.raw`#(?:decision|end|hazard|CCP\d*)(?![\p{L}\p{N}_/-])|#lane/[\p{L}\p{N}_/-]+|#\[\[(?:lane/[^\]]+|CCP[^\]]*|hazard)\]\]`;
+var SUFFIX_RE = new RegExp(String.raw`(?:(?:^|[ \t]+)(?:${TOKEN_SRC}))+[ \t]*$`, "iu");
+var TOKEN_RE = new RegExp(TOKEN_SRC, "giu");
+var INLINE_LANE_RE = /#\[\[lane\/([^\]]+)\]\]|(?:^|[\s(])#lane\/([\p{L}\p{N}_/-]+)/giu;
+var tidy = (s) => String(s).replace(/\s+/g, " ").trim();
+var tagsOf = (suffix) => suffix ? suffix.match(TOKEN_RE) || [] : [];
+var hasTag = (suffix, name) => tagsOf(suffix).some((t) => t.toLowerCase() === `#${name}`);
+function flowParts(string, { branch = false } = {}) {
+  const s = typeof string === "string" ? string : "";
+  const tp = taskParts(s);
+  let rest = tp.rest;
+  let label = "";
+  if (branch) {
+    const m = LABEL_RE.exec(rest);
+    if (m) {
+      label = m[1];
+      rest = rest.slice(m[0].length);
+    }
+  }
+  const sm = SUFFIX_RE.exec(rest);
+  return { task: tp.prefix, label, body: sm ? rest.slice(0, sm.index) : rest, suffix: sm ? sm[0] : "" };
+}
+function isDecision(string, opts) {
+  const p = flowParts(string, opts);
+  return p.body.trimEnd().endsWith("?") || hasTag(p.suffix, "decision");
+}
+function chipsOf(string, opts) {
+  const out = [];
+  let ccp = null;
+  let hazard = false;
+  for (const t of tagsOf(flowParts(string, opts).suffix)) {
+    const low = t.toLowerCase();
+    if (ccp === null && (low.startsWith("#ccp") || low.startsWith("#[[ccp"))) {
+      const rest = low.startsWith("#[[") ? t.slice(3, -2).replace(/^CCP/i, "").trim() : t.slice(4).trim();
+      ccp = rest ? `CCP ${rest}` : "CCP";
+    } else if (low === "#hazard" || low === "#[[hazard]]") hazard = true;
+  }
+  if (ccp !== null) out.push({ kind: "ccp", text: ccp });
+  if (hazard) out.push({ kind: "hazard", text: "Hazard" });
+  return out;
+}
+function laneOf(node) {
+  if (!node) return null;
+  for (const c of node.children || []) {
+    const m2 = LANE_VALUE_RE.exec(typeof c.string === "string" ? c.string : "");
+    if (!m2) continue;
+    const v = m2[1].trim();
+    if (v === "") continue;
+    const name = tidy(plainText(v));
+    if (name !== "" && name !== "·") return name;
+  }
+  const s = typeof node.string === "string" ? node.string : "";
+  const re = new RegExp(INLINE_LANE_RE.source, "giu");
+  const m = re.exec(s);
+  if (m) {
+    const name = tidy(m[1] !== void 0 ? m[1] : m[2]);
+    if (name !== "") return name;
+  }
+  return null;
+}
+var isLaneBlock = (c) => LANE_BLOCK_RE.test(typeof c.string === "string" ? c.string : "");
+var refTarget = (c) => {
+  const m = REF_ONLY_RE.exec(typeof c.string === "string" ? c.string.trim() : "");
+  return m ? m[1] : null;
+};
+var hasDrawableKids = (c) => c.children.some((k) => !isLaneBlock(k) && refTarget(k) === null);
+function flowControls(tree) {
+  const controls = /* @__PURE__ */ new Set();
+  const refs = /* @__PURE__ */ new Map();
+  if (!tree) return { controls, refs };
+  const steps = /* @__PURE__ */ new Set([tree.uid]);
+  const cands = [];
+  (function walk2(n) {
+    for (const c of n.children) {
+      if (isLaneBlock(c)) {
+        controls.add(c.uid);
+        continue;
+      }
+      const t = refTarget(c);
+      if (t !== null && !hasDrawableKids(c)) cands.push({ uid: c.uid, parent: n.uid, target: t });
+      else steps.add(c.uid);
+      walk2(c);
+    }
+  })(tree);
+  for (const c of cands) {
+    if (controls.has(c.parent)) {
+      controls.add(c.uid);
+      continue;
+    }
+    if (!steps.has(c.target) || c.target === c.uid || c.target === c.parent) continue;
+    controls.add(c.uid);
+    refs.set(c.uid, c);
+  }
+  return { controls, refs };
+}
+function prune(n, controls) {
+  return { ...n, children: n.children.filter((c) => !controls.has(c.uid)).map((c) => prune(c, controls)) };
+}
+function drawnTree(tree, { layout: layout2, attrEdges = false } = {}) {
+  if (!tree) return tree;
+  if (layout2 !== FLOW_LAYOUT) return visualTree(tree, { attrEdges });
+  return prune(tree, flowControls(tree).controls);
+}
+function flowEditable(node, displayed, { branch = false } = {}) {
+  if (!node || typeof displayed !== "string") return null;
+  let text = displayed;
+  if (isFolded(node)) {
+    const suffix = ` (+${countHidden(node)})`;
+    if (!text.endsWith(suffix)) return null;
+    text = text.slice(0, -suffix.length);
+  }
+  const parts = flowParts(node.string, { branch });
+  if (parts.task) {
+    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
+    else if (text === "☐" || text === "☑") text = "";
+  }
+  if (hasMarkup(parts.body)) return null;
+  if (text === "" || text === "·") return null;
+  const next = parts.task + (parts.label ? `${parts.label}: ` : "") + text + parts.suffix;
+  return next === node.string ? null : next;
+}
+function flowStructure(tree) {
+  const out = { root: tree ? tree.uid : null, steps: [], byUid: /* @__PURE__ */ new Map(), edges: [], lanes: [""], hasLanes: false, dtree: null };
+  if (!tree) return out;
+  const { controls, refs } = flowControls(tree);
+  const dtree = prune(tree, controls);
+  out.dtree = dtree;
+  const raw = /* @__PURE__ */ new Map();
+  const parentRaw = /* @__PURE__ */ new Map();
+  (function idx(n, p) {
+    raw.set(n.uid, n);
+    parentRaw.set(n.uid, p);
+    for (const c of n.children) if (!controls.has(c.uid)) idx(c, n.uid);
+  })(tree, null);
+  const visible = /* @__PURE__ */ new Set();
+  (function vis(n) {
+    visible.add(n.uid);
+    for (const c of visibleChildren(n)) vis(c);
+  })(dtree);
+  const resolve = (uid) => {
+    let u = uid;
+    while (u != null && !visible.has(u)) u = parentRaw.get(u) ?? null;
+    return u;
+  };
+  const loopsOf = /* @__PURE__ */ new Map();
+  for (const r of refs.values()) {
+    const p = raw.get(r.parent);
+    if (!p || !visible.has(r.parent) || p.open === false) continue;
+    const to = resolve(r.target);
+    if (to == null || to === r.parent) continue;
+    if (!loopsOf.has(r.parent)) loopsOf.set(r.parent, []);
+    loopsOf.get(r.parent).push({ from: r.parent, to, kind: "loop", label: "", primary: false, via: r.uid });
+  }
+  const add = (node, parentUid, type, rank, lane, pred, branchHead, label, chips) => {
+    const step = { uid: node.uid, node, parentUid, pred, rank, lane, type, branchHead, label, chips };
+    out.steps.push(step);
+    out.byUid.set(node.uid, step);
+    return step;
+  };
+  add(dtree, null, "root", 0, "", null, false, "", []);
+  function processStep(node, parentUid, pending, laneFromUid, branchHead) {
+    const parts = flowParts(node.string, { branch: branchHead });
+    const kids2 = visibleChildren(node);
+    const dec = isDecision(node.string, { branch: branchHead });
+    const withBranches = dec && kids2.length > 0;
+    const isEnd = !dec && hasTag(parts.suffix, "end");
+    const tagEnd = hasTag(parts.suffix, "end");
+    const laneFrom = out.byUid.get(laneFromUid);
+    const primary = pending.length === 1 && pending[0].kind !== "merge" ? pending[0] : null;
+    const rank = pending.length ? 1 + Math.max(...pending.map((p) => out.byUid.get(p.from).rank)) : laneFrom.rank + 1;
+    const explicit = laneOf(raw.get(node.uid));
+    const lane = explicit !== null ? explicit : primary ? out.byUid.get(primary.from).lane : laneFrom.lane;
+    const step = add(node, parentUid, dec ? "decision" : isEnd ? "end" : "step", rank, lane, primary ? primary.from : null, branchHead && !!primary, parts.label, chipsOf(node.string, { branch: branchHead }));
+    if (primary) out.edges.push({ from: primary.from, to: node.uid, kind: primary.kind, label: branchHead ? parts.label : "", primary: true });
+    else for (const p of pending) out.edges.push({ from: p.from, to: node.uid, kind: "merge", label: "", primary: false });
+    if (withBranches) {
+      const tails = [];
+      for (const k of kids2) {
+        for (const t of processStep(k, node.uid, [{ from: node.uid, kind: "branch" }], node.uid, true)) {
+          if (!t.noMerge) tails.push({ from: t.from, kind: "merge", noMerge: false });
+        }
+      }
+      return tails;
+    }
+    const own = tagEnd ? [] : [{ from: node.uid, kind: "seq", noMerge: (loopsOf.get(node.uid) || []).length > 0 }];
+    if (kids2.length === 0) return own;
+    const rest = processSeq(kids2, own, node.uid);
+    return tagEnd ? [] : rest;
+  }
+  function processSeq(items, pending, ownerUid) {
+    let p = pending;
+    let prev = ownerUid;
+    for (const it of items) {
+      p = processStep(it, ownerUid, p, prev, false);
+      prev = it.uid;
+    }
+    return p;
+  }
+  processSeq(visibleChildren(dtree), [{ from: dtree.uid, kind: "seq", noMerge: false }], dtree.uid);
+  for (const s of out.steps) for (const l of loopsOf.get(s.uid) || []) out.edges.push(l);
+  const seen = /* @__PURE__ */ new Set([""]);
+  for (const s of out.steps) if (!seen.has(s.lane)) {
+    seen.add(s.lane);
+    out.lanes.push(s.lane);
+  }
+  out.hasLanes = out.lanes.length > 1;
+  return out;
+}
+function flowLayout(struct, { sizes, chipSize = () => ({ width: 40, height: 20 }), labelWidth = () => 0, anchor = { x: 0, y: 0 } }) {
+  const positions = {};
+  const chips = /* @__PURE__ */ new Map();
+  const frames = [];
+  const steps = struct.steps;
+  if (steps.length === 0) return { positions, chips, frames };
+  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
+  const ranks = [...new Set(steps.map((s) => s.rank))].sort((a, b) => a - b);
+  const cell = /* @__PURE__ */ new Map();
+  for (const s of steps) {
+    const k = `${s.rank}
+${s.lane}`;
+    if (!cell.has(k)) cell.set(k, []);
+    cell.get(k).push(s);
+  }
+  const rowH = /* @__PURE__ */ new Map();
+  for (const r of ranks) rowH.set(r, 0);
+  for (const s of steps) rowH.set(s.rank, Math.max(rowH.get(s.rank), sz(s.uid).height));
+  const rowY = /* @__PURE__ */ new Map();
+  let y = 0;
+  for (const r of ranks) {
+    rowY.set(r, y);
+    y += rowH.get(r) + FLOW_ROW_GAP;
+  }
+  const totalH = y - FLOW_ROW_GAP;
+  const gapBetween = (a, b) => Math.max(FLOW_H_GAP, Math.max(labelWidth(a.uid), labelWidth(b.uid)) + 24);
+  const cellW = (members) => {
+    let w = 0;
+    members.forEach((m, i) => {
+      w += sz(m.uid).width + (i ? gapBetween(members[i - 1], m) : 0);
+    });
+    return w;
+  };
+  const chipRects = /* @__PURE__ */ new Map();
+  for (const s of steps) {
+    if (s.chips.length) chipRects.set(s.uid, s.chips.map((c, i) => ({ ...c, ...chipSize(s.uid, i, c) })));
+  }
+  const inner2 = /* @__PURE__ */ new Map();
+  const over = /* @__PURE__ */ new Map();
+  for (const lane of struct.lanes) {
+    inner2.set(lane, 0);
+    over.set(lane, 0);
+  }
+  for (const [k, members] of cell) {
+    const lane = k.slice(k.indexOf("\n") + 1);
+    inner2.set(lane, Math.max(inner2.get(lane), cellW(members)));
+  }
+  for (const s of steps) {
+    const cr = chipRects.get(s.uid);
+    if (cr) over.set(s.lane, Math.max(over.get(s.lane), cr[0].width / 2));
+  }
+  const colX = /* @__PURE__ */ new Map();
+  const colW = /* @__PURE__ */ new Map();
+  let x = 0;
+  for (const lane of struct.lanes) {
+    const w = inner2.get(lane) + 2 * FLOW_PAD + over.get(lane);
+    colX.set(lane, x);
+    colW.set(lane, w);
+    x += w + FLOW_LANE_GAP;
+  }
+  for (const [k, members] of cell) {
+    const [rs, lane] = [Number(k.slice(0, k.indexOf("\n"))), k.slice(k.indexOf("\n") + 1)];
+    let cx = colX.get(lane) + FLOW_PAD + (inner2.get(lane) - cellW(members)) / 2;
+    members.forEach((m, i) => {
+      if (i) cx += gapBetween(members[i - 1], m);
+      const s = sz(m.uid);
+      positions[m.uid] = { x: cx, y: rowY.get(rs) + (rowH.get(rs) - s.height) / 2 };
+      cx += s.width;
+    });
+  }
+  const dx = anchor.x - positions[struct.root].x;
+  const dy = anchor.y - positions[struct.root].y;
+  for (const uid of Object.keys(positions)) positions[uid] = { x: positions[uid].x + dx, y: positions[uid].y + dy };
+  for (const s of steps) {
+    const cr = chipRects.get(s.uid);
+    if (!cr) continue;
+    const p = positions[s.uid];
+    const w = sz(s.uid).width;
+    let cx = p.x + w - cr[0].width / 2;
+    chips.set(s.uid, cr.map((c, i) => {
+      if (i) cx -= c.width + 4;
+      return { ...c, x: cx, y: p.y - c.height / 2 };
+    }));
+  }
+  for (const lane of struct.lanes) {
+    if (lane === "") continue;
+    frames.push({ name: lane, x: colX.get(lane) + dx, y: -FLOW_PAD + dy, width: colW.get(lane), height: totalH + 2 * FLOW_PAD });
+  }
+  return { positions, chips, frames };
+}
+function exitDistance(r, tx, ty) {
+  const cx = r.x + r.width / 2;
+  const cy = r.y + r.height / 2;
+  const dx = tx - cx;
+  const dy = ty - cy;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return { ux: 0, uy: 1, d: 0, cx, cy };
+  const hw = r.width / 2;
+  const hh = r.height / 2;
+  let s;
+  if (r.type === "diamond") s = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+  else if (r.type === "ellipse") s = 1 / Math.hypot(dx / hw, dy / hh);
+  else s = 1 / Math.max(Math.abs(dx) / hw, Math.abs(dy) / hh);
+  return { ux: dx / len, uy: dy / len, d: s * len, cx, cy };
+}
+function flowRoute(a, b, adjacent, gap) {
+  let sx;
+  let sy;
+  let ex;
+  let ey;
+  if (adjacent) {
+    sx = a.x + a.width / 2;
+    sy = a.y + a.height;
+    ex = b.x + b.width / 2;
+    ey = b.y;
+  } else {
+    const bx = b.x + b.width / 2;
+    const by = b.y + b.height / 2;
+    const ax = a.x + a.width / 2;
+    const ay = a.y + a.height / 2;
+    const ea = exitDistance(a, bx, by);
+    const eb = exitDistance(b, ax, ay);
+    sx = ea.cx + ea.ux * (ea.d + gap);
+    sy = ea.cy + ea.uy * (ea.d + gap);
+    ex = eb.cx + eb.ux * (eb.d + gap);
+    ey = eb.cy + eb.uy * (eb.d + gap);
+  }
+  return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
+}
+
+// src/model/mindmap.js
+var MAX_TEXT_WIDTH = 240;
+var PAD_X = 14;
+var PAD_Y = 10;
+var LINE_HEIGHT = 1.25;
+var SIBLING_GAP = 18;
+var LEVEL_GAP = 70;
+var RADIAL_RADIUS = 220;
+var RADIAL_STEP = 180;
+var MAX_DISPLAY = 280;
+var REF_MAX = 60;
+var ROOT_COLOR = "#ffec99";
+var BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
+var LAYOUTS = Object.freeze(["right", "down", "left", "up", "radial"]);
+var CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
+var isCauseLayout = (layout2) => layout2 === "cause" || layout2 === "fishbone";
+var EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
+var isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);
+var HIDDEN_RE = /^\s*BT_attr[A-Za-z0-9_]*::/;
+var isHiddenString = (s) => typeof s === "string" && HIDDEN_RE.test(s);
+var TASK_RE = /^\{\{\[\[(TODO|DONE)\]\]\}\} ?/;
+function taskParts(s) {
+  if (typeof s !== "string") return { state: null, prefix: "", rest: "" };
+  const m = TASK_RE.exec(s);
+  if (!m) return { state: null, prefix: "", rest: s };
+  return { state: m[1], prefix: m[0], rest: s.slice(m[0].length) };
+}
+var taskState = (s) => taskParts(s).state;
+var fontSizeForDepth = (depth) => depth === 0 ? 24 : depth === 1 ? 20 : 16;
+function pick2(obj, name) {
+  if (!obj || typeof obj !== "object") return void 0;
+  const v = obj[`:block/${name}`];
+  return v !== void 0 ? v : obj[name];
+}
+function treeFromPull(pull, opts = {}) {
+  const prune2 = opts.prune instanceof Set ? opts.prune : null;
+  const cap = Number.isFinite(opts.maxVisible) ? opts.maxVisible : Infinity;
+  let visible = 0;
+  let truncated = false;
+  function conv(p, isRoot) {
+    const uid = pick2(p, "uid");
+    if (typeof uid !== "string") return null;
+    const string = pick2(p, "string");
+    const str = typeof string === "string" ? string : "";
+    if (isExcludedString(str)) return null;
+    if (!isRoot && isHiddenString(str)) return null;
+    if (!isRoot && prune2 && prune2.has(uid)) return null;
+    if (visible >= cap) {
+      truncated = true;
+      return null;
+    }
+    visible += 1;
+    const open6 = pick2(p, "open") !== false;
+    const raw = pick2(p, "children");
+    const kids2 = Array.isArray(raw) ? raw.slice() : [];
+    kids2.sort((a, b) => (pick2(a, "order") ?? 0) - (pick2(b, "order") ?? 0));
+    const node = { uid, string: str, open: open6, children: [] };
+    for (const k of kids2) {
+      const c = conv(k, false);
+      if (c) node.children.push(c);
+    }
+    return node;
+  }
+  if (!pull || typeof pull !== "object") return null;
+  const tree = conv(pull, true);
+  if (tree && truncated) tree.truncated = true;
+  return tree;
+}
+var isFolded = (node) => node.open === false && node.children.length > 0;
+function countHidden(node) {
+  let n = 0;
+  const stack2 = [...node.children];
+  while (stack2.length) {
+    const c = stack2.pop();
+    n += 1;
+    for (const k of c.children) stack2.push(k);
+  }
+  return n;
+}
+var visibleChildren = (node) => node.open === false ? [] : node.children;
+function visibleNodes(tree) {
+  const out = [];
+  function walk2(node, parent, depth, branch, branchIndex) {
+    out.push({ node, parent, depth, branch, branchIndex });
+    const kids2 = visibleChildren(node);
+    for (let i = 0; i < kids2.length; i++) {
+      const k = kids2[i];
+      if (depth === 0) walk2(k, node, 1, k.uid, i);
+      else walk2(k, node, depth + 1, branch, branchIndex);
+    }
+  }
+  if (tree) walk2(tree, null, 0, null, -1);
+  return out;
+}
+var allUids = (tree) => {
+  const set = /* @__PURE__ */ new Set();
+  const stack2 = tree ? [tree] : [];
+  while (stack2.length) {
+    const n = stack2.pop();
+    set.add(n.uid);
+    for (const c of n.children) stack2.push(c);
+  }
+  return set;
+};
+var RE_IMG = /!\[([^\]]*)\]\([^)]*\)/g;
+var RE_LINK = /\[([^\]]*)\]\([^)]*\)/g;
+var RE_REF = /\(\(([^()\s]+)\)\)/g;
+var RE_TAG_BR = /#\[\[([^\]]+)\]\]/g;
+var RE_PAGE = /\[\[([^\]]+)\]\]/g;
+var RE_TAG = /(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
+var RE_BOLD = /\*\*(.+?)\*\*/g;
+var RE_ITAL = /__(.+?)__/g;
+var RE_HL = /\^\^(.+?)\^\^/g;
+var RE_STRIKE = /~~(.+?)~~/g;
+function hasComponent(s) {
+  return s.indexOf("{{") !== -1 && s.indexOf("}}", s.indexOf("{{")) !== -1;
+}
+function replaceComponents(s) {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === "{" && s[i + 1] === "{") {
+      let depth = 0;
+      let j = i;
+      let end = -1;
+      while (j < s.length) {
+        if (s[j] === "{" && s[j + 1] === "{") {
+          depth += 1;
+          j += 2;
+          continue;
+        }
+        if (s[j] === "}" && s[j + 1] === "}") {
+          depth -= 1;
+          j += 2;
+          if (depth === 0) {
+            end = j;
+            break;
+          }
+          continue;
+        }
+        j += 1;
+      }
+      if (end === -1) {
+        out += s.slice(i);
+        break;
+      }
+      out += "⧉";
+      i = end;
+    } else {
+      out += s[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+function fresh(re) {
+  re.lastIndex = 0;
+  return re;
+}
+function hasMarkup(s) {
+  if (typeof s !== "string" || s === "" || s.length > MAX_DISPLAY) return true;
+  if (hasComponent(s) && replaceComponents(s) !== s) return true;
+  for (const re of [RE_IMG, RE_LINK, RE_REF, RE_TAG_BR, RE_PAGE, RE_TAG, RE_BOLD, RE_ITAL, RE_HL, RE_STRIKE]) {
+    if (fresh(re).test(s)) return true;
+  }
+  return false;
+}
+function rewrite(s, resolveRef, depthLimit) {
+  let t = s;
+  if (hasComponent(t)) t = replaceComponents(t);
+  t = t.replace(RE_IMG, (_, alt) => `▣ ${alt}`);
+  t = t.replace(RE_LINK, (_, txt) => txt);
+  t = t.replace(RE_REF, (_, uid) => {
+    if (depthLimit <= 0) return "…";
+    let ref;
+    try {
+      ref = resolveRef ? resolveRef(uid) : null;
+    } catch {
+      ref = null;
+    }
+    if (typeof ref !== "string") return "…";
+    let r = rewrite(ref, () => "…", 0);
+    if (r.length > REF_MAX) r = `${r.slice(0, REF_MAX - 1)}…`;
+    return r;
+  });
+  t = t.replace(RE_TAG_BR, (_, x) => x);
+  t = t.replace(RE_PAGE, (_, x) => x);
+  t = t.replace(RE_TAG, (_, pre, x) => pre + x);
+  t = t.replace(RE_BOLD, (_, x) => x);
+  t = t.replace(RE_ITAL, (_, x) => x);
+  t = t.replace(RE_HL, (_, x) => x);
+  t = t.replace(RE_STRIKE, (_, x) => x);
+  return t;
+}
+function plainText(s, resolveRef) {
+  if (typeof s !== "string" || s === "") return "·";
+  const tp = taskParts(s);
+  let t;
+  if (tp.state) {
+    const glyph = tp.state === "DONE" ? "☑" : "☐";
+    t = tp.rest === "" ? glyph : `${glyph} ${rewrite(tp.rest, resolveRef, 1)}`;
+  } else t = rewrite(s, resolveRef, 1);
+  if (t.length > MAX_DISPLAY) t = `${t.slice(0, MAX_DISPLAY - 1)}…`;
+  if (t === "") return "·";
+  return t;
+}
+var RE_TAG_SCAN = /#\[\[([^\]]+)\]\]|(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
+function tagColor(s, map) {
+  if (typeof s !== "string" || !map || typeof map.get !== "function" || map.size === 0) return void 0;
+  const tp = taskParts(s);
+  if (tp.state) {
+    const c = map.get(tp.state.toLowerCase());
+    if (c) return c;
+  }
+  const re = new RegExp(RE_TAG_SCAN.source, "gu");
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const name = (m[1] !== void 0 ? m[1] : m[3]).toLowerCase();
+    const c = map.get(name);
+    if (c) return c;
+  }
+  return void 0;
+}
+function editableText(node, displayed, { star = false } = {}) {
+  if (!node || typeof displayed !== "string") return null;
+  let text = displayed;
+  if (isFolded(node)) {
+    const suffix = ` (+${countHidden(node)})`;
+    if (!text.endsWith(suffix)) return null;
+    text = text.slice(0, -suffix.length);
+  }
+  if (star && text.startsWith("★ ")) text = text.slice(2);
+  const tp = taskParts(node.string);
+  if (tp.state) {
+    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
+    else if (text === "☐" || text === "☑") text = "";
+  }
+  if (hasMarkup(tp.rest)) return null;
+  if (text === "" || text === "·") return null;
+  const next = tp.prefix + text;
+  return next === node.string ? null : next;
+}
+var CARRIER_RE = /^([^:\n`{]{1,60})::$/;
+var carrierName = (s) => {
+  if (typeof s !== "string") return null;
+  const m = CARRIER_RE.exec(s.trim());
+  if (!m) return null;
+  const name = m[1].trim();
+  return name === "" || name.startsWith("BT_attr") ? null : name;
+};
+function visualTree(tree, { attrEdges = false } = {}) {
+  if (!tree || !attrEdges) return tree;
+  function conv(node) {
+    if (node.open === false || node.children.length === 0) return node;
+    const out = [];
+    let changed = false;
+    for (const c of node.children) {
+      const name = c.open !== false && c.children.length > 0 ? carrierName(c.string) : null;
+      if (name !== null) {
+        changed = true;
+        const label = plainText(name);
+        for (const k of c.children) {
+          const kk = conv(k);
+          out.push({ ...kk, edgeLabel: label, via: c.uid });
+        }
+      } else {
+        const cc = conv(c);
+        if (cc !== c) changed = true;
+        out.push(cc);
+      }
+    }
+    return changed ? { ...node, children: out } : node;
+  }
+  return conv(tree);
+}
+function wrapLines2(text, maxWidth, measure3) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    if (para === "") {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    const flush = () => {
+      out.push(line);
+      line = "";
+    };
+    for (const word of para.split(" ")) {
+      const cand = line === "" ? word : `${line} ${word}`;
+      if (measure3(cand) <= maxWidth) {
+        line = cand;
+        continue;
+      }
+      if (line !== "") flush();
+      if (measure3(word) <= maxWidth) {
+        line = word;
+        continue;
+      }
+      let chunk = "";
+      for (const ch of Array.from(word)) {
+        if (chunk !== "" && measure3(chunk + ch) > maxWidth) {
+          out.push(chunk);
+          chunk = ch;
+        } else chunk += ch;
+      }
+      line = chunk;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function nodeSize(text, fontSize, measure3, maxWidth = MAX_TEXT_WIDTH) {
+  const m = (s) => measure3(s, fontSize);
+  const lines = wrapLines2(text, maxWidth, m);
+  let tw = 0;
+  for (const l of lines) tw = Math.max(tw, m(l));
+  const textWidth = Math.max(1, Math.ceil(tw));
+  const textHeight = lines.length * fontSize * LINE_HEIGHT;
+  return {
+    width: textWidth + 2 * PAD_X,
+    height: textHeight + 2 * PAD_Y,
+    textWidth,
+    textHeight,
+    lines,
+    text: lines.join("\n")
+  };
+}
+function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+  const pos = {};
+  if (!tree) return pos;
+  const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
+  const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
+  if (layout2 === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
+  if (layout2 === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
+  const dirL = layout2 === "cause" ? "left" : layout2;
+  const horizontal = dirL === "right" || dirL === "left";
+  const cross = (n) => horizontal ? sz(n).height : sz(n).width;
+  const ext = /* @__PURE__ */ new Map();
+  const free = (n) => visibleChildren(n).filter((k) => !isPinned(k));
+  function extent(n) {
+    let span = 0;
+    const kids2 = free(n);
+    for (let i = 0; i < kids2.length; i++) span += extent(kids2[i]) + (i ? SIBLING_GAP : 0);
+    for (const k of visibleChildren(n)) if (isPinned(k)) extent(k);
+    const e = Math.max(cross(n), span);
+    ext.set(n, { e, span });
+    return e;
+  }
+  function place2(n, x, y) {
+    pos[n.uid] = { x, y };
+    const s = sz(n);
+    const { span } = ext.get(n);
+    const kids2 = free(n);
+    let cursor = (horizontal ? y + s.height / 2 : x + s.width / 2) - span / 2;
+    for (const k of kids2) {
+      const ks = sz(k);
+      const e = ext.get(k).e;
+      const c = cursor + (e - cross(k)) / 2;
+      const gap = gapOf(k.uid);
+      let kx;
+      let ky;
+      if (dirL === "right") {
+        kx = x + s.width + gap;
+        ky = c;
+      } else if (dirL === "left") {
+        kx = x - gap - ks.width;
+        ky = c;
+      } else if (dirL === "down") {
+        kx = c;
+        ky = y + s.height + gap;
+      } else {
+        kx = c;
+        ky = y - gap - ks.height;
+      }
+      place2(k, kx, ky);
+      cursor += e + SIBLING_GAP;
+    }
+    for (const k of visibleChildren(n)) if (isPinned(k)) place2(k, pinned[k.uid].x, pinned[k.uid].y);
+  }
+  extent(tree);
+  place2(tree, root.x, root.y);
+  return pos;
+}
+var FISH_BONE_OFFSET = 50;
+var FISH_SLOT_PAD = 60;
+var FISH_RIB_GAP = 40;
+function fishboneLayout({ tree, sizes, pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
+  const positions = {};
+  const slotX = {};
+  if (!tree) return { positions, spine: null, slotX };
+  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
+  const rs = sz(tree.uid);
+  positions[tree.uid] = { x: root.x, y: root.y };
+  const spineY = root.y + rs.height / 2;
+  const kids2 = visibleChildren(tree);
+  if (kids2.length === 0) return { positions, spine: null, slotX };
+  const isPinned = (k) => pinned[k.uid] && Number.isFinite(pinned[k.uid].x) && Number.isFinite(pinned[k.uid].y);
+  const free = kids2.filter((k) => !isPinned(k));
+  const parts = free.map((k) => {
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: { x: 0, y: 0 } });
+    const abs = /* @__PURE__ */ new Set();
+    const mark = (n, inside2) => {
+      for (const c of visibleChildren(n)) {
+        const p = inside2 || isPinned(c);
+        if (p) abs.add(c.uid);
+        mark(c, p);
+      }
+    };
+    mark(k, false);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const uid of Object.keys(rel)) {
+      if (abs.has(uid)) continue;
+      const s = sz(uid);
+      minX = Math.min(minX, rel[uid].x);
+      maxX = Math.max(maxX, rel[uid].x + s.width);
+      minY = Math.min(minY, rel[uid].y);
+      maxY = Math.max(maxY, rel[uid].y + s.height);
+    }
+    return { k, rel, abs, minX, maxX, minY, maxY, width: maxX - minX };
+  });
+  let cursor = root.x;
+  for (let j = 0; j * 2 < parts.length; j++) {
+    const above = parts[2 * j];
+    const below = parts[2 * j + 1];
+    const maxw = Math.max(above.width, below ? below.width : 0);
+    const spineX = cursor - 20;
+    const right = spineX - FISH_RIB_GAP;
+    for (const part of [above, below]) {
+      if (!part) continue;
+      const dx = right - part.maxX;
+      const dy = part === above ? spineY - FISH_BONE_OFFSET - part.maxY : spineY + FISH_BONE_OFFSET - part.minY;
+      for (const uid of Object.keys(part.rel)) positions[uid] = part.abs.has(uid) ? { ...part.rel[uid] } : { x: part.rel[uid].x + dx, y: part.rel[uid].y + dy };
+      slotX[part.k.uid] = spineX;
+    }
+    cursor -= maxw + FISH_SLOT_PAD;
+  }
+  const x1 = free.length ? cursor : root.x - 80;
+  for (const k of kids2) {
+    if (!isPinned(k)) continue;
+    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: pinned[k.uid] });
+    for (const uid of Object.keys(rel)) positions[uid] = rel[uid];
+    slotX[k.uid] = Math.min(root.x, Math.max(x1, pinned[k.uid].x + sz(k.uid).width));
+  }
+  return { positions, spine: { x1, x2: root.x, y: spineY }, slotX };
+}
+function radial(tree, sz, isPinned, pinned, rootPos, pos) {
+  const rs = sz(tree);
+  const cx = rootPos.x + rs.width / 2;
+  const cy = rootPos.y + rs.height / 2;
+  pos[tree.uid] = { x: rootPos.x, y: rootPos.y };
+  function fan(n, ncx, ncy, angle, width, first) {
+    const kids2 = visibleChildren(n);
+    const m = kids2.length;
+    for (let i = 0; i < m; i++) {
+      const k = kids2[i];
+      const ks = sz(k);
+      const a = first ? -Math.PI / 2 + 2 * Math.PI * i / m : angle - width / 2 + width * (i + 0.5) / m;
+      const w = first ? 2 * Math.PI / m : width / m;
+      let kcx;
+      let kcy;
+      let dirA = a;
+      if (isPinned(k)) {
+        kcx = pinned[k.uid].x + ks.width / 2;
+        kcy = pinned[k.uid].y + ks.height / 2;
+        dirA = Math.atan2(kcy - cy, kcx - cx);
+        pos[k.uid] = { x: pinned[k.uid].x, y: pinned[k.uid].y };
+        fan(k, kcx, kcy, dirA, w, false);
+        continue;
+      }
+      const r = first ? RADIAL_RADIUS : RADIAL_STEP;
+      kcx = ncx + r * Math.cos(a);
+      kcy = ncy + r * Math.sin(a);
+      pos[k.uid] = { x: kcx - ks.width / 2, y: kcy - ks.height / 2 };
+      fan(k, kcx, kcy, a, w, false);
+    }
+  }
+  fan(tree, cx, cy, 0, 2 * Math.PI, true);
+  return pos;
+}
+function nearestInDirection(from, candidates, dir) {
+  const fx = from.x + from.width / 2;
+  const fy = from.y + from.height / 2;
+  let best = null;
+  let bestD = Infinity;
+  for (const c of candidates) {
+    if (c.id === from.id) continue;
+    const dx = c.x + c.width / 2 - fx;
+    const dy = c.y + c.height / 2 - fy;
+    const inCone = dir === "right" ? dx > 0 && Math.abs(dy) <= dx : dir === "left" ? dx < 0 && Math.abs(dy) <= -dx : dir === "down" ? dy > 0 && Math.abs(dx) <= dy : dir === "up" ? dy < 0 && Math.abs(dx) <= -dy : false;
+    if (!inCone) continue;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = c.id;
+    }
+  }
+  return best;
+}
+
+// src/model/page-card.js
+var NAME_CAP = 8;
+var NAME_LEN = 40;
+function parseAttr(string) {
+  if (typeof string !== "string") return null;
+  const at = string.indexOf("::");
+  if (at <= 0) return null;
+  const name = string.slice(0, at).trim();
+  if (!name || /[[\]{}#`]/.test(name)) return null;
+  return { name, value: string.slice(at + 2).trim(), bt: name.startsWith("BT_attr") };
+}
+function chosenAttrs(text) {
+  const out = [];
+  for (const part of String(text ?? "").split(",")) {
+    const name = part.trim();
+    if (!name || name.length > NAME_LEN) continue;
+    if (/[[\]{}#`]/.test(name) || name.includes("::")) continue;
+    if (out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= NAME_CAP) break;
+  }
+  return out;
+}
+function attrRows(children, names) {
+  const list = Array.isArray(children) ? children : [];
+  const rows = [];
+  for (const name of names || []) {
+    if (typeof name !== "string" || !name) continue;
+    const hit = list.find((child) => parseAttr(child?.string)?.name === name) || null;
+    const parsed = hit ? parseAttr(hit.string) : null;
+    const bt = name.startsWith("BT_attr") || !!parsed?.bt;
+    rows.push({
+      name,
+      value: parsed?.value || "",
+      uid: typeof hit?.uid === "string" ? hit.uid : null,
+      editable: !bt
+    });
+  }
+  return rows;
+}
+function attrWrite(name, value) {
+  if (typeof name !== "string" || !name || name.startsWith("BT_attr")) return { action: "none" };
+  const next = String(value ?? "").trim();
+  if (!next) return { action: "delete" };
+  return { action: "write", string: `${name}:: ${next}` };
+}
+
+// src/model/query-live.js
+var QUERY_PAGE_CAP = 4;
+var SKIP = /* @__PURE__ */ new Set(["TODO", "DONE", "query"]);
+function queryPageTitles(string) {
+  if (typeof string !== "string" || !string) return [];
+  const out = [];
+  const re = /\[\[([^[\]]+)\]\]/g;
+  let match;
+  while (match = re.exec(string)) {
+    const title = match[1].trim();
+    if (!title || SKIP.has(title) || out.includes(title)) continue;
+    out.push(title);
+    if (out.length >= QUERY_PAGE_CAP) break;
+  }
+  return out;
+}
+
 // src/view/embeds.js
 var EMBED_BLOCK_CAP = 30;
 var WATCH_CAP = 150;
+var QUERY_WATCH_CAP = 16;
 var NOT_FOUND_RETRIES = [300, 1e3, 3e3];
 var HOUR_MS = 60 * 60 * 1e3;
 var KEYBOARD_LEAVES = /* @__PURE__ */ new Set(["keyboard", "escape", "enter", "focus-lost"]);
@@ -3208,6 +4156,8 @@ function createEmbedOverlay({
   },
   onLoaded = () => {
   },
+  onToggleTask = null,
+  onAttrEdit = null,
   menuSelector = ROAM_MENU_SELECTOR
 }) {
   const view2 = doc.defaultView;
@@ -3222,6 +4172,8 @@ function createEmbedOverlay({
   let midnightTimer = null;
   let visListening = false;
   let watchCapLogged = false;
+  let queryCapLogged = false;
+  let queryWatchCount = 0;
   const requestFrame = (cb) => typeof view2?.requestAnimationFrame === "function" ? view2.requestAnimationFrame(cb) : setTimeout(cb, 16);
   const cancelFrame = (id) => typeof view2?.cancelAnimationFrame === "function" ? view2.cancelAnimationFrame(id) : clearTimeout(id);
   const unmountHosts = (portal) => {
@@ -3248,9 +4200,137 @@ function createEmbedOverlay({
     }
     return el;
   };
+  const listen = (el, type, fn) => {
+    el.addEventListener?.(type, fn);
+  };
+  const plexusMeta = (el) => {
+    const liveQuery = typeof el?.customData?.plexus?.liveQuery === "string" ? el.customData.plexus.liveQuery : "";
+    const raw = el?.customData?.plexus?.attrs;
+    const attrs = Array.isArray(raw) ? raw.filter((name) => typeof name === "string" && name) : [];
+    return { liveQuery, attrs };
+  };
+  const sameAttrs = (a, b) => a.length === b.length && a.every((name, i) => name === b[i]);
+  function releaseQueryWatches(portal) {
+    const list = portal.queryWatches || [];
+    portal.queryWatches = [];
+    for (const off of list) {
+      queryWatchCount = Math.max(0, queryWatchCount - 1);
+      try {
+        off();
+      } catch (error) {
+        console.warn("[plexus] query unwatch failed", error);
+      }
+    }
+  }
+  function watchQueryPages(portal) {
+    const key = queryPageTitles(portal.liveQuery).join("\n");
+    if (portal.queryKey === key) return;
+    releaseQueryWatches(portal);
+    portal.queryKey = key;
+    if (!key || typeof host.pageUidByTitle !== "function" || typeof host.watchPageRefs !== "function") return;
+    for (const title of key.split("\n")) {
+      if (queryWatchCount >= QUERY_WATCH_CAP) {
+        if (!queryCapLogged) {
+          queryCapLogged = true;
+          console.warn(`[plexus] query watch cap ${QUERY_WATCH_CAP} reached`);
+        }
+        break;
+      }
+      let uid = null;
+      try {
+        uid = host.pageUidByTitle(title);
+      } catch {
+        uid = null;
+      }
+      if (!uid) continue;
+      let dispose = null;
+      try {
+        dispose = host.watchPageRefs(uid, () => {
+          dirty.add(portal);
+          schedule();
+        });
+      } catch (error) {
+        console.warn("[plexus] query watch failed", error);
+        continue;
+      }
+      if (typeof dispose !== "function") continue;
+      portal.queryWatches.push(dispose);
+      queryWatchCount += 1;
+    }
+  }
+  const paintQuery = (portal) => {
+    unmountHosts(portal);
+    portal.body.textContent = "";
+    portal.root.className = "plexus-portal plexus-embed";
+    portal.title.textContent = "Query";
+    const q = portal.liveQuery || "";
+    if (!q) {
+      const empty = doc.createElement("div");
+      empty.className = "plexus-embed-empty";
+      empty.textContent = "No query";
+      portal.body.append(empty);
+      return;
+    }
+    renderInto(portal, portal.body, q, "plexus-embed-block");
+    if (!queryPageTitles(q).length) {
+      const note = doc.createElement("div");
+      note.className = "plexus-embed-empty";
+      note.textContent = "No page to watch";
+      portal.body.append(note);
+    }
+  };
+  const paintTask = (portal, content, task) => {
+    const box = doc.createElement("input");
+    box.type = "checkbox";
+    box.className = "plexus-task-check";
+    box.checked = task.state === "DONE";
+    listen(box, "pointerdown", (event) => event.stopPropagation?.());
+    listen(box, "click", (event) => {
+      event.stopPropagation?.();
+      const want = box.checked;
+      Promise.resolve(onToggleTask(content.uid)).then((next) => {
+        if (!next) box.checked = !want;
+      }).catch((error) => {
+        box.checked = !want;
+        console.warn("[plexus] task toggle failed", error);
+      });
+    });
+    portal.body.append(box);
+    renderInto(portal, portal.body, task.rest || "", "plexus-embed-block");
+  };
+  const paintAttrs = (portal, content) => {
+    for (const row of attrRows(content.children, portal.attrs)) {
+      const line = doc.createElement("div");
+      line.className = "plexus-attr-row";
+      const lab = doc.createElement("span");
+      lab.className = "plexus-attr-name";
+      lab.textContent = row.name;
+      line.append(lab);
+      if (row.editable && typeof onAttrEdit === "function") {
+        const input = doc.createElement("input");
+        input.className = "plexus-attr-value";
+        input.value = row.value;
+        listen(input, "pointerdown", (event) => event.stopPropagation?.());
+        listen(input, "keydown", (event) => {
+          event.stopPropagation?.();
+          if (event.key !== "Enter") return;
+          event.preventDefault?.();
+          Promise.resolve(onAttrEdit({ pageUid: content.uid, name: row.name, value: input.value, uid: row.uid })).catch((error) => console.warn("[plexus] attribute edit failed", error));
+        });
+        line.append(input);
+      } else {
+        const span = doc.createElement("span");
+        span.className = "plexus-attr-value plexus-attr-locked";
+        span.textContent = row.value;
+        line.append(span);
+      }
+      portal.body.append(line);
+    }
+  };
   const paint = (portal, content, today = null) => {
     unmountHosts(portal);
     portal.body.textContent = "";
+    portal.root.className = "plexus-portal plexus-embed";
     if (today) {
       portal.title.textContent = `Today · ${today.title || ""}`;
       if (!content) {
@@ -3264,8 +4344,17 @@ function createEmbedOverlay({
       portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
     }
     if (!content) return;
+    if (!today && content.kind === "page" && portal.attrs?.length) {
+      paintAttrs(portal, content);
+      return;
+    }
     let budget = EMBED_BLOCK_CAP;
-    if (content.kind !== "page" && content.string) {
+    const task = !today && content.kind !== "page" ? taskParts(content.string) : null;
+    if (task?.state && typeof onToggleTask === "function") {
+      portal.root.className = "plexus-portal plexus-embed plexus-embed--task";
+      paintTask(portal, content, task);
+      budget -= 1;
+    } else if (content.kind !== "page" && content.string) {
       renderInto(portal, portal.body, content.string, "plexus-embed-block");
       budget -= 1;
     }
@@ -3343,6 +4432,20 @@ function createEmbedOverlay({
     }
     const gen = ++portal.gen;
     const parsed = parseEmbedRef(portal.ref);
+    if (parsed?.kind === "query") {
+      if (disposed || portal.dead || gen !== portal.gen) return;
+      paintQuery(portal);
+      watchQueryPages(portal);
+      releaseWatch(portal);
+      try {
+        onLoaded({ anchorId: portal.id, ref: portal.ref, content: { kind: "query", string: portal.liveQuery || "", title: "", children: [] } });
+      } catch (error) {
+        console.warn("[plexus] onLoaded failed", error);
+      }
+      return;
+    }
+    releaseQueryWatches(portal);
+    portal.queryKey = "";
     const isToday = parsed?.kind === "today";
     let ref = portal.ref;
     let today = null;
@@ -3430,7 +4533,8 @@ function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { id: el.id, root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false };
+    const meta = plexusMeta(el);
+    const portal = { id: el.id, root, title, body, hosts: /* @__PURE__ */ new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false, liveQuery: meta.liveQuery, attrs: meta.attrs, queryWatches: [], queryKey: "" };
     applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
@@ -3451,6 +4555,8 @@ function createEmbedOverlay({
     portal.dead = true;
     dirty.delete(portal);
     releaseWatch(portal);
+    releaseQueryWatches(portal);
+    portal.queryKey = "";
     unmountHosts(portal);
     portal.root.remove();
     armMidnight();
@@ -3471,12 +4577,25 @@ function createEmbedOverlay({
     for (const el of anchors) {
       let portal = portals.get(el.id);
       const ref = el.customData.plexus.embed;
+      let refChanged = false;
       if (portal && portal.ref !== ref) {
+        refChanged = true;
         portal.ref = ref;
+        const meta = plexusMeta(el);
+        portal.liveQuery = meta.liveQuery;
+        portal.attrs = meta.attrs;
         if (!portal.editing) releaseWatch(portal);
         void load(portal);
       }
       if (!portal) portal = create(el);
+      else if (!refChanged) {
+        const meta = plexusMeta(el);
+        if (portal.liveQuery !== meta.liveQuery || !sameAttrs(portal.attrs || [], meta.attrs)) {
+          portal.liveQuery = meta.liveQuery;
+          portal.attrs = meta.attrs;
+          if (!portal.editing) void load(portal);
+        }
+      }
       const place2 = embedPlacement(el, app.state, containerRect);
       if (portal.editing) {
         const s2 = portal.session;
@@ -3938,6 +5057,136 @@ function createEmbedOverlay({
   };
 }
 
+// src/model/ref-lines.js
+var REF_LINE_CAP = 12;
+function cardTexts(content) {
+  const out = [];
+  const walk2 = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.string === "string" && node.string) out.push(node.string);
+    if (typeof node.title === "string" && node.title) out.push(`[[${node.title}]]`);
+    for (const child of node.children || []) walk2(child);
+  };
+  walk2(content);
+  return out;
+}
+function token(ref) {
+  const parsed = parseEmbedRef(ref);
+  if (!parsed || parsed.kind === "query" || parsed.kind === "today") return null;
+  if (parsed.kind === "page") return `[[${parsed.title}]]`;
+  if (parsed.kind === "block") return `((${parsed.uid}))`;
+  return null;
+}
+function mentions(texts, ref) {
+  const needle = token(ref);
+  if (!needle) return false;
+  return (texts || []).some((text) => typeof text === "string" && text.includes(needle));
+}
+function hoveredRefLines({ hoveredId, cards } = {}) {
+  const list = Array.isArray(cards) ? cards : [];
+  const me = list.find((card) => card && card.id === hoveredId);
+  if (!me) return [];
+  const lines = [];
+  for (const other of list) {
+    if (!other || other.id === me.id) continue;
+    if (!mentions(me.texts, other.ref) && !mentions(other.texts, me.ref)) continue;
+    lines.push({
+      fromId: me.id,
+      toId: other.id,
+      x1: me.x + me.width / 2,
+      y1: me.y + me.height / 2,
+      x2: other.x + other.width / 2,
+      y2: other.y + other.height / 2
+    });
+    if (lines.length >= REF_LINE_CAP) break;
+  }
+  return lines;
+}
+function embedAtPoint(elements, appState, x, y) {
+  const point = viewportToScene({ x, y, appState });
+  const list = embedAnchors(elements);
+  for (let i = list.length - 1; i >= 0; i--) {
+    const el = list[i];
+    if (point.x >= el.x && point.x <= el.x + el.width && point.y >= el.y && point.y <= el.y + el.height) return el.id;
+  }
+  return null;
+}
+
+// src/view/ref-lines.js
+function installRefLines({ doc, app, containerEl, texts, requestFrame = globalThis.requestAnimationFrame, cancelFrame = globalThis.cancelAnimationFrame } = {}) {
+  if (!containerEl || typeof containerEl.addEventListener !== "function") return () => {
+  };
+  const svg = typeof doc?.createElementNS === "function" ? doc.createElementNS("http://www.w3.org/2000/svg", "svg") : doc.createElement("svg");
+  svg.setAttribute?.("class", "plexus-ref-lines");
+  if ("className" in svg && typeof svg.className === "string") svg.className = "plexus-ref-lines";
+  containerEl.append?.(svg);
+  let frame = 0;
+  let queued = false;
+  let hoverId = null;
+  const clear = () => {
+    const nodes = typeof svg.querySelectorAll === "function" ? [...svg.querySelectorAll("line")] : [];
+    for (const node of nodes) node.remove?.();
+  };
+  const paint = () => {
+    frame = 0;
+    clear();
+    if (!hoverId) return;
+    const elements = app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [];
+    const saved = texts instanceof Map ? texts : /* @__PURE__ */ new Map();
+    const cards = embedAnchors(elements).map((el) => {
+      const row = saved.get(el.id);
+      return {
+        id: el.id,
+        ref: el.customData?.plexus?.embed,
+        texts: row?.texts || [],
+        x: el.x,
+        y: el.y,
+        width: el.width,
+        height: el.height
+      };
+    });
+    const lines = hoveredRefLines({ hoveredId: hoverId, cards });
+    const rect = containerEl.getBoundingClientRect?.() || { left: 0, top: 0 };
+    for (const line of lines) {
+      const a = sceneToViewport({ x: line.x1, y: line.y1, appState: app?.state });
+      const b = sceneToViewport({ x: line.x2, y: line.y2, appState: app?.state });
+      const node = typeof doc.createElementNS === "function" ? doc.createElementNS("http://www.w3.org/2000/svg", "line") : doc.createElement("line");
+      node.setAttribute?.("x1", String(a.x - rect.left));
+      node.setAttribute?.("y1", String(a.y - rect.top));
+      node.setAttribute?.("x2", String(b.x - rect.left));
+      node.setAttribute?.("y2", String(b.y - rect.top));
+      svg.append?.(node);
+    }
+  };
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    const run = () => {
+      queued = false;
+      paint();
+    };
+    if (requestFrame) frame = requestFrame(run);
+    else run();
+  };
+  const onMove = (event) => {
+    const elements = app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [];
+    hoverId = embedAtPoint(elements, app?.state, event?.clientX, event?.clientY);
+    schedule();
+  };
+  const onLeave = () => {
+    hoverId = null;
+    schedule();
+  };
+  containerEl.addEventListener("pointermove", onMove);
+  containerEl.addEventListener("pointerleave", onLeave);
+  return () => {
+    containerEl.removeEventListener?.("pointermove", onMove);
+    containerEl.removeEventListener?.("pointerleave", onLeave);
+    if (frame && cancelFrame) cancelFrame(frame);
+    svg.remove?.();
+  };
+}
+
 // src/model/links.js
 var URL_RE = /^https:\/\/roamresearch\.com\/#\/app\/([^/?#]+)\/page\/([A-Za-z0-9_-]+)\/?$/;
 function parseRoamLink(link, graphName) {
@@ -4025,7 +5274,7 @@ var BACKLINK_WATCH_CAP = 150;
 var BACKLINK_ROW_CAP = 20;
 var MERGE_TOLERANCE = 2;
 var REGION_REFETCH_MS = 3e3;
-var REFS_PATTERN = "[{:block/_refs [:block/uid :block/string {:block/page [:node/title :block/uid]}]}]";
+var REFS_PATTERN2 = "[{:block/_refs [:block/uid :block/string {:block/page [:node/title :block/uid]}]}]";
 var WATCH_PATTERN = "[{:block/_refs [:block/uid]}]";
 var IMAGE_KINDS = /* @__PURE__ */ new Set(["imgrect", "imgpoly"]);
 var union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
@@ -4074,7 +5323,7 @@ function createCanvasBacklinks({
   function loadRefs(lookup) {
     let raw;
     try {
-      raw = api.data.pull(REFS_PATTERN, lookup);
+      raw = api.data.pull(REFS_PATTERN2, lookup);
     } catch (error) {
       warn7("backlinks pull failed", error);
       return [];
@@ -5579,7 +6828,7 @@ function noteLines(notes) {
 }
 function createCropPopover({ doc, delayMs = 300 }) {
   let portal = null;
-  let token = 0;
+  let token2 = 0;
   let timer = null;
   let scrollTarget = null;
   const hovers = /* @__PURE__ */ new Set();
@@ -5590,7 +6839,7 @@ function createCropPopover({ doc, delayMs = 300 }) {
     doc.removeEventListener?.("mousedown", onDismiss, true);
   }
   function hide() {
-    token += 1;
+    token2 += 1;
     if (timer != null) clearTimeout(timer);
     timer = null;
     unlisten();
@@ -5670,10 +6919,10 @@ function createCropPopover({ doc, delayMs = 300 }) {
     return list;
   }
   function show(anchor, getEntry) {
-    const mine = ++token;
+    const mine = ++token2;
     Promise.resolve().then(() => getEntry()).then((entry) => {
       const lines = noteLines(entry?.notes);
-      if (mine !== token || anchor.isConnected === false || !entry || !entry.url && lines.length === 0) return;
+      if (mine !== token2 || anchor.isConnected === false || !entry || !entry.url && lines.length === 0) return;
       const box = place2(anchor, entry);
       portal?.remove();
       portal = doc.createElement("div");
@@ -5692,7 +6941,7 @@ function createCropPopover({ doc, delayMs = 300 }) {
         img.style.width = `${box.w}px`;
         img.style.height = `${box.h}px`;
         img.onerror = () => {
-          if (mine === token) hide();
+          if (mine === token2) hide();
         };
         img.src = entry.url;
         if (entry.peek) {
@@ -7341,8 +8590,8 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
       console.warn("[plexus] guard toast failed", error);
     }
   };
-  const dropPending = (token) => {
-    if (!token || pending === token) pending = null;
+  const dropPending = (token2) => {
+    if (!token2 || pending === token2) pending = null;
   };
   let nextId = 1;
   function push(drawingUid, entry) {
@@ -7391,10 +8640,10 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
     const { drawingUid, next, label = "Change", captureUpdate, appState, onApplyAnyway } = opts;
     const key = `${drawingUid}|${label}|${n}|${m}`;
     if (pending && pending.key === key && now() < pending.until) return;
-    const token = { key, until: now() + ACTION_MS };
+    const token2 = { key, until: now() + ACTION_MS };
     const sig = signature(current6);
     const run = () => {
-      dropPending(token);
+      dropPending(token2);
       if (disposed) return;
       if (!isActive(app, drawingUid)) {
         toast("Drawing is no longer open");
@@ -7415,8 +8664,8 @@ function createWriteGuard({ toaster: toaster2, ringSize = 5, maxDrawings = MAX_D
         toast("Could not apply the change", { kind: "error" });
       }
     };
-    pending = token;
-    toast(`Not applied: would remove ${n} of ${m}`, { kind: "error", action: { label: "Apply anyway", run }, onHide: () => dropPending(token) });
+    pending = token2;
+    toast(`Not applied: would remove ${n} of ${m}`, { kind: "error", action: { label: "Apply anyway", run }, onHide: () => dropPending(token2) });
   }
   function list(drawingUid) {
     const ring = rings.get(drawingUid) ?? [];
@@ -7507,7 +8756,7 @@ var FRAME_PRESETS2 = Object.freeze({
   "Mobile": Object.freeze({ width: 390, height: 844 })
 });
 var DEFAULT_PRESET2 = "16:9";
-var LAYOUTS = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
+var LAYOUTS2 = Object.freeze({ grid: { cols: 2, rows: 2 }, strip: { cols: 4, rows: 1 } });
 var rnd2 = () => Math.floor(Math.random() * 2 ** 31);
 var isFrameLike = (el) => !!el && (el.type === "frame" || el.type === "magicframe");
 var orderOf2 = (el) => {
@@ -7542,7 +8791,7 @@ function nextSlideSlot(elements, gap = FRAME_GAP) {
 }
 function layoutFrames({ kind = "grid", preset = DEFAULT_PRESET2, centre = { x: 0, y: 0 }, gap = FRAME_GAP } = {}) {
   const size = presetSize(preset);
-  const shape = LAYOUTS[kind];
+  const shape = LAYOUTS2[kind];
   if (!size || !shape) return [];
   const { cols, rows } = shape;
   const totalW = cols * size.width + (cols - 1) * gap;
@@ -7631,860 +8880,6 @@ function arrowLabelRect({ x, y, points }, w, h) {
 }
 function arrowLabelWrapWidth(arrowWidth, fontSize) {
   return Math.max(0.7 * arrowWidth, 11 * fontSize);
-}
-
-// src/model/flow.js
-var FLOW_LAYOUT = "flow";
-var FLOW_DECISION_WRAP = 160;
-var FLOW_ROOT_FONT = 20;
-var FLOW_STEP_FONT = 16;
-var FLOW_CHIP_FONT = 12;
-var FLOW_PAD = 24;
-var FLOW_H_GAP = 40;
-var FLOW_ROW_GAP = 70;
-var FLOW_LANE_GAP = 40;
-var LANE_BLOCK_RE = /^\s*Lane::/;
-var LANE_VALUE_RE = /^\s*Lane::\s*([\s\S]*)$/;
-var REF_ONLY_RE = /^\(\(([^()\s]+)\)\)$/;
-var LABEL_RE = /^([^:\s[\]{}()#][^:\n[\]{}()#]{0,11}):[ \t]+/;
-var TOKEN_SRC = String.raw`#(?:decision|end|hazard|CCP\d*)(?![\p{L}\p{N}_/-])|#lane/[\p{L}\p{N}_/-]+|#\[\[(?:lane/[^\]]+|CCP[^\]]*|hazard)\]\]`;
-var SUFFIX_RE = new RegExp(String.raw`(?:(?:^|[ \t]+)(?:${TOKEN_SRC}))+[ \t]*$`, "iu");
-var TOKEN_RE = new RegExp(TOKEN_SRC, "giu");
-var INLINE_LANE_RE = /#\[\[lane\/([^\]]+)\]\]|(?:^|[\s(])#lane\/([\p{L}\p{N}_/-]+)/giu;
-var tidy = (s) => String(s).replace(/\s+/g, " ").trim();
-var tagsOf = (suffix) => suffix ? suffix.match(TOKEN_RE) || [] : [];
-var hasTag = (suffix, name) => tagsOf(suffix).some((t) => t.toLowerCase() === `#${name}`);
-function flowParts(string, { branch = false } = {}) {
-  const s = typeof string === "string" ? string : "";
-  const tp = taskParts(s);
-  let rest = tp.rest;
-  let label = "";
-  if (branch) {
-    const m = LABEL_RE.exec(rest);
-    if (m) {
-      label = m[1];
-      rest = rest.slice(m[0].length);
-    }
-  }
-  const sm = SUFFIX_RE.exec(rest);
-  return { task: tp.prefix, label, body: sm ? rest.slice(0, sm.index) : rest, suffix: sm ? sm[0] : "" };
-}
-function isDecision(string, opts) {
-  const p = flowParts(string, opts);
-  return p.body.trimEnd().endsWith("?") || hasTag(p.suffix, "decision");
-}
-function chipsOf(string, opts) {
-  const out = [];
-  let ccp = null;
-  let hazard = false;
-  for (const t of tagsOf(flowParts(string, opts).suffix)) {
-    const low = t.toLowerCase();
-    if (ccp === null && (low.startsWith("#ccp") || low.startsWith("#[[ccp"))) {
-      const rest = low.startsWith("#[[") ? t.slice(3, -2).replace(/^CCP/i, "").trim() : t.slice(4).trim();
-      ccp = rest ? `CCP ${rest}` : "CCP";
-    } else if (low === "#hazard" || low === "#[[hazard]]") hazard = true;
-  }
-  if (ccp !== null) out.push({ kind: "ccp", text: ccp });
-  if (hazard) out.push({ kind: "hazard", text: "Hazard" });
-  return out;
-}
-function laneOf(node) {
-  if (!node) return null;
-  for (const c of node.children || []) {
-    const m2 = LANE_VALUE_RE.exec(typeof c.string === "string" ? c.string : "");
-    if (!m2) continue;
-    const v = m2[1].trim();
-    if (v === "") continue;
-    const name = tidy(plainText(v));
-    if (name !== "" && name !== "·") return name;
-  }
-  const s = typeof node.string === "string" ? node.string : "";
-  const re = new RegExp(INLINE_LANE_RE.source, "giu");
-  const m = re.exec(s);
-  if (m) {
-    const name = tidy(m[1] !== void 0 ? m[1] : m[2]);
-    if (name !== "") return name;
-  }
-  return null;
-}
-var isLaneBlock = (c) => LANE_BLOCK_RE.test(typeof c.string === "string" ? c.string : "");
-var refTarget = (c) => {
-  const m = REF_ONLY_RE.exec(typeof c.string === "string" ? c.string.trim() : "");
-  return m ? m[1] : null;
-};
-var hasDrawableKids = (c) => c.children.some((k) => !isLaneBlock(k) && refTarget(k) === null);
-function flowControls(tree) {
-  const controls = /* @__PURE__ */ new Set();
-  const refs = /* @__PURE__ */ new Map();
-  if (!tree) return { controls, refs };
-  const steps = /* @__PURE__ */ new Set([tree.uid]);
-  const cands = [];
-  (function walk2(n) {
-    for (const c of n.children) {
-      if (isLaneBlock(c)) {
-        controls.add(c.uid);
-        continue;
-      }
-      const t = refTarget(c);
-      if (t !== null && !hasDrawableKids(c)) cands.push({ uid: c.uid, parent: n.uid, target: t });
-      else steps.add(c.uid);
-      walk2(c);
-    }
-  })(tree);
-  for (const c of cands) {
-    if (controls.has(c.parent)) {
-      controls.add(c.uid);
-      continue;
-    }
-    if (!steps.has(c.target) || c.target === c.uid || c.target === c.parent) continue;
-    controls.add(c.uid);
-    refs.set(c.uid, c);
-  }
-  return { controls, refs };
-}
-function prune(n, controls) {
-  return { ...n, children: n.children.filter((c) => !controls.has(c.uid)).map((c) => prune(c, controls)) };
-}
-function drawnTree(tree, { layout: layout2, attrEdges = false } = {}) {
-  if (!tree) return tree;
-  if (layout2 !== FLOW_LAYOUT) return visualTree(tree, { attrEdges });
-  return prune(tree, flowControls(tree).controls);
-}
-function flowEditable(node, displayed, { branch = false } = {}) {
-  if (!node || typeof displayed !== "string") return null;
-  let text = displayed;
-  if (isFolded(node)) {
-    const suffix = ` (+${countHidden(node)})`;
-    if (!text.endsWith(suffix)) return null;
-    text = text.slice(0, -suffix.length);
-  }
-  const parts = flowParts(node.string, { branch });
-  if (parts.task) {
-    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
-    else if (text === "☐" || text === "☑") text = "";
-  }
-  if (hasMarkup(parts.body)) return null;
-  if (text === "" || text === "·") return null;
-  const next = parts.task + (parts.label ? `${parts.label}: ` : "") + text + parts.suffix;
-  return next === node.string ? null : next;
-}
-function flowStructure(tree) {
-  const out = { root: tree ? tree.uid : null, steps: [], byUid: /* @__PURE__ */ new Map(), edges: [], lanes: [""], hasLanes: false, dtree: null };
-  if (!tree) return out;
-  const { controls, refs } = flowControls(tree);
-  const dtree = prune(tree, controls);
-  out.dtree = dtree;
-  const raw = /* @__PURE__ */ new Map();
-  const parentRaw = /* @__PURE__ */ new Map();
-  (function idx(n, p) {
-    raw.set(n.uid, n);
-    parentRaw.set(n.uid, p);
-    for (const c of n.children) if (!controls.has(c.uid)) idx(c, n.uid);
-  })(tree, null);
-  const visible = /* @__PURE__ */ new Set();
-  (function vis(n) {
-    visible.add(n.uid);
-    for (const c of visibleChildren(n)) vis(c);
-  })(dtree);
-  const resolve = (uid) => {
-    let u = uid;
-    while (u != null && !visible.has(u)) u = parentRaw.get(u) ?? null;
-    return u;
-  };
-  const loopsOf = /* @__PURE__ */ new Map();
-  for (const r of refs.values()) {
-    const p = raw.get(r.parent);
-    if (!p || !visible.has(r.parent) || p.open === false) continue;
-    const to = resolve(r.target);
-    if (to == null || to === r.parent) continue;
-    if (!loopsOf.has(r.parent)) loopsOf.set(r.parent, []);
-    loopsOf.get(r.parent).push({ from: r.parent, to, kind: "loop", label: "", primary: false, via: r.uid });
-  }
-  const add = (node, parentUid, type, rank, lane, pred, branchHead, label, chips) => {
-    const step = { uid: node.uid, node, parentUid, pred, rank, lane, type, branchHead, label, chips };
-    out.steps.push(step);
-    out.byUid.set(node.uid, step);
-    return step;
-  };
-  add(dtree, null, "root", 0, "", null, false, "", []);
-  function processStep(node, parentUid, pending, laneFromUid, branchHead) {
-    const parts = flowParts(node.string, { branch: branchHead });
-    const kids2 = visibleChildren(node);
-    const dec = isDecision(node.string, { branch: branchHead });
-    const withBranches = dec && kids2.length > 0;
-    const isEnd = !dec && hasTag(parts.suffix, "end");
-    const tagEnd = hasTag(parts.suffix, "end");
-    const laneFrom = out.byUid.get(laneFromUid);
-    const primary = pending.length === 1 && pending[0].kind !== "merge" ? pending[0] : null;
-    const rank = pending.length ? 1 + Math.max(...pending.map((p) => out.byUid.get(p.from).rank)) : laneFrom.rank + 1;
-    const explicit = laneOf(raw.get(node.uid));
-    const lane = explicit !== null ? explicit : primary ? out.byUid.get(primary.from).lane : laneFrom.lane;
-    const step = add(node, parentUid, dec ? "decision" : isEnd ? "end" : "step", rank, lane, primary ? primary.from : null, branchHead && !!primary, parts.label, chipsOf(node.string, { branch: branchHead }));
-    if (primary) out.edges.push({ from: primary.from, to: node.uid, kind: primary.kind, label: branchHead ? parts.label : "", primary: true });
-    else for (const p of pending) out.edges.push({ from: p.from, to: node.uid, kind: "merge", label: "", primary: false });
-    if (withBranches) {
-      const tails = [];
-      for (const k of kids2) {
-        for (const t of processStep(k, node.uid, [{ from: node.uid, kind: "branch" }], node.uid, true)) {
-          if (!t.noMerge) tails.push({ from: t.from, kind: "merge", noMerge: false });
-        }
-      }
-      return tails;
-    }
-    const own = tagEnd ? [] : [{ from: node.uid, kind: "seq", noMerge: (loopsOf.get(node.uid) || []).length > 0 }];
-    if (kids2.length === 0) return own;
-    const rest = processSeq(kids2, own, node.uid);
-    return tagEnd ? [] : rest;
-  }
-  function processSeq(items, pending, ownerUid) {
-    let p = pending;
-    let prev = ownerUid;
-    for (const it of items) {
-      p = processStep(it, ownerUid, p, prev, false);
-      prev = it.uid;
-    }
-    return p;
-  }
-  processSeq(visibleChildren(dtree), [{ from: dtree.uid, kind: "seq", noMerge: false }], dtree.uid);
-  for (const s of out.steps) for (const l of loopsOf.get(s.uid) || []) out.edges.push(l);
-  const seen = /* @__PURE__ */ new Set([""]);
-  for (const s of out.steps) if (!seen.has(s.lane)) {
-    seen.add(s.lane);
-    out.lanes.push(s.lane);
-  }
-  out.hasLanes = out.lanes.length > 1;
-  return out;
-}
-function flowLayout(struct, { sizes, chipSize = () => ({ width: 40, height: 20 }), labelWidth = () => 0, anchor = { x: 0, y: 0 } }) {
-  const positions = {};
-  const chips = /* @__PURE__ */ new Map();
-  const frames = [];
-  const steps = struct.steps;
-  if (steps.length === 0) return { positions, chips, frames };
-  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
-  const ranks = [...new Set(steps.map((s) => s.rank))].sort((a, b) => a - b);
-  const cell = /* @__PURE__ */ new Map();
-  for (const s of steps) {
-    const k = `${s.rank}
-${s.lane}`;
-    if (!cell.has(k)) cell.set(k, []);
-    cell.get(k).push(s);
-  }
-  const rowH = /* @__PURE__ */ new Map();
-  for (const r of ranks) rowH.set(r, 0);
-  for (const s of steps) rowH.set(s.rank, Math.max(rowH.get(s.rank), sz(s.uid).height));
-  const rowY = /* @__PURE__ */ new Map();
-  let y = 0;
-  for (const r of ranks) {
-    rowY.set(r, y);
-    y += rowH.get(r) + FLOW_ROW_GAP;
-  }
-  const totalH = y - FLOW_ROW_GAP;
-  const gapBetween = (a, b) => Math.max(FLOW_H_GAP, Math.max(labelWidth(a.uid), labelWidth(b.uid)) + 24);
-  const cellW = (members) => {
-    let w = 0;
-    members.forEach((m, i) => {
-      w += sz(m.uid).width + (i ? gapBetween(members[i - 1], m) : 0);
-    });
-    return w;
-  };
-  const chipRects = /* @__PURE__ */ new Map();
-  for (const s of steps) {
-    if (s.chips.length) chipRects.set(s.uid, s.chips.map((c, i) => ({ ...c, ...chipSize(s.uid, i, c) })));
-  }
-  const inner2 = /* @__PURE__ */ new Map();
-  const over = /* @__PURE__ */ new Map();
-  for (const lane of struct.lanes) {
-    inner2.set(lane, 0);
-    over.set(lane, 0);
-  }
-  for (const [k, members] of cell) {
-    const lane = k.slice(k.indexOf("\n") + 1);
-    inner2.set(lane, Math.max(inner2.get(lane), cellW(members)));
-  }
-  for (const s of steps) {
-    const cr = chipRects.get(s.uid);
-    if (cr) over.set(s.lane, Math.max(over.get(s.lane), cr[0].width / 2));
-  }
-  const colX = /* @__PURE__ */ new Map();
-  const colW = /* @__PURE__ */ new Map();
-  let x = 0;
-  for (const lane of struct.lanes) {
-    const w = inner2.get(lane) + 2 * FLOW_PAD + over.get(lane);
-    colX.set(lane, x);
-    colW.set(lane, w);
-    x += w + FLOW_LANE_GAP;
-  }
-  for (const [k, members] of cell) {
-    const [rs, lane] = [Number(k.slice(0, k.indexOf("\n"))), k.slice(k.indexOf("\n") + 1)];
-    let cx = colX.get(lane) + FLOW_PAD + (inner2.get(lane) - cellW(members)) / 2;
-    members.forEach((m, i) => {
-      if (i) cx += gapBetween(members[i - 1], m);
-      const s = sz(m.uid);
-      positions[m.uid] = { x: cx, y: rowY.get(rs) + (rowH.get(rs) - s.height) / 2 };
-      cx += s.width;
-    });
-  }
-  const dx = anchor.x - positions[struct.root].x;
-  const dy = anchor.y - positions[struct.root].y;
-  for (const uid of Object.keys(positions)) positions[uid] = { x: positions[uid].x + dx, y: positions[uid].y + dy };
-  for (const s of steps) {
-    const cr = chipRects.get(s.uid);
-    if (!cr) continue;
-    const p = positions[s.uid];
-    const w = sz(s.uid).width;
-    let cx = p.x + w - cr[0].width / 2;
-    chips.set(s.uid, cr.map((c, i) => {
-      if (i) cx -= c.width + 4;
-      return { ...c, x: cx, y: p.y - c.height / 2 };
-    }));
-  }
-  for (const lane of struct.lanes) {
-    if (lane === "") continue;
-    frames.push({ name: lane, x: colX.get(lane) + dx, y: -FLOW_PAD + dy, width: colW.get(lane), height: totalH + 2 * FLOW_PAD });
-  }
-  return { positions, chips, frames };
-}
-function exitDistance(r, tx, ty) {
-  const cx = r.x + r.width / 2;
-  const cy = r.y + r.height / 2;
-  const dx = tx - cx;
-  const dy = ty - cy;
-  const len = Math.hypot(dx, dy);
-  if (len === 0) return { ux: 0, uy: 1, d: 0, cx, cy };
-  const hw = r.width / 2;
-  const hh = r.height / 2;
-  let s;
-  if (r.type === "diamond") s = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
-  else if (r.type === "ellipse") s = 1 / Math.hypot(dx / hw, dy / hh);
-  else s = 1 / Math.max(Math.abs(dx) / hw, Math.abs(dy) / hh);
-  return { ux: dx / len, uy: dy / len, d: s * len, cx, cy };
-}
-function flowRoute(a, b, adjacent, gap) {
-  let sx;
-  let sy;
-  let ex;
-  let ey;
-  if (adjacent) {
-    sx = a.x + a.width / 2;
-    sy = a.y + a.height;
-    ex = b.x + b.width / 2;
-    ey = b.y;
-  } else {
-    const bx = b.x + b.width / 2;
-    const by = b.y + b.height / 2;
-    const ax = a.x + a.width / 2;
-    const ay = a.y + a.height / 2;
-    const ea = exitDistance(a, bx, by);
-    const eb = exitDistance(b, ax, ay);
-    sx = ea.cx + ea.ux * (ea.d + gap);
-    sy = ea.cy + ea.uy * (ea.d + gap);
-    ex = eb.cx + eb.ux * (eb.d + gap);
-    ey = eb.cy + eb.uy * (eb.d + gap);
-  }
-  return { x: sx, y: sy, points: [[0, 0], [ex - sx, ey - sy]] };
-}
-
-// src/model/mindmap.js
-var MAX_TEXT_WIDTH = 240;
-var PAD_X = 14;
-var PAD_Y = 10;
-var LINE_HEIGHT = 1.25;
-var SIBLING_GAP = 18;
-var LEVEL_GAP = 70;
-var RADIAL_RADIUS = 220;
-var RADIAL_STEP = 180;
-var MAX_DISPLAY = 280;
-var REF_MAX = 60;
-var ROOT_COLOR = "#ffec99";
-var BRANCH_COLORS = Object.freeze(["#a5d8ff", "#b2f2bb", "#ffc9c9", "#d0bfff", "#ffd8a8"]);
-var LAYOUTS2 = Object.freeze(["right", "down", "left", "up", "radial"]);
-var CAUSE_LAYOUTS = Object.freeze(["cause", "fishbone"]);
-var isCauseLayout = (layout2) => layout2 === "cause" || layout2 === "fishbone";
-var EXCLUDED_RE = /^\s*(?:\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\}|\{\{\[\[plexus-)/;
-var isExcludedString = (s) => typeof s === "string" && EXCLUDED_RE.test(s);
-var HIDDEN_RE = /^\s*BT_attr[A-Za-z0-9_]*::/;
-var isHiddenString = (s) => typeof s === "string" && HIDDEN_RE.test(s);
-var TASK_RE = /^\{\{\[\[(TODO|DONE)\]\]\}\} ?/;
-function taskParts(s) {
-  if (typeof s !== "string") return { state: null, prefix: "", rest: "" };
-  const m = TASK_RE.exec(s);
-  if (!m) return { state: null, prefix: "", rest: s };
-  return { state: m[1], prefix: m[0], rest: s.slice(m[0].length) };
-}
-var taskState = (s) => taskParts(s).state;
-var fontSizeForDepth = (depth) => depth === 0 ? 24 : depth === 1 ? 20 : 16;
-function pick2(obj, name) {
-  if (!obj || typeof obj !== "object") return void 0;
-  const v = obj[`:block/${name}`];
-  return v !== void 0 ? v : obj[name];
-}
-function treeFromPull(pull, opts = {}) {
-  const prune2 = opts.prune instanceof Set ? opts.prune : null;
-  const cap = Number.isFinite(opts.maxVisible) ? opts.maxVisible : Infinity;
-  let visible = 0;
-  let truncated = false;
-  function conv(p, isRoot) {
-    const uid = pick2(p, "uid");
-    if (typeof uid !== "string") return null;
-    const string = pick2(p, "string");
-    const str = typeof string === "string" ? string : "";
-    if (isExcludedString(str)) return null;
-    if (!isRoot && isHiddenString(str)) return null;
-    if (!isRoot && prune2 && prune2.has(uid)) return null;
-    if (visible >= cap) {
-      truncated = true;
-      return null;
-    }
-    visible += 1;
-    const open6 = pick2(p, "open") !== false;
-    const raw = pick2(p, "children");
-    const kids2 = Array.isArray(raw) ? raw.slice() : [];
-    kids2.sort((a, b) => (pick2(a, "order") ?? 0) - (pick2(b, "order") ?? 0));
-    const node = { uid, string: str, open: open6, children: [] };
-    for (const k of kids2) {
-      const c = conv(k, false);
-      if (c) node.children.push(c);
-    }
-    return node;
-  }
-  if (!pull || typeof pull !== "object") return null;
-  const tree = conv(pull, true);
-  if (tree && truncated) tree.truncated = true;
-  return tree;
-}
-var isFolded = (node) => node.open === false && node.children.length > 0;
-function countHidden(node) {
-  let n = 0;
-  const stack2 = [...node.children];
-  while (stack2.length) {
-    const c = stack2.pop();
-    n += 1;
-    for (const k of c.children) stack2.push(k);
-  }
-  return n;
-}
-var visibleChildren = (node) => node.open === false ? [] : node.children;
-function visibleNodes(tree) {
-  const out = [];
-  function walk2(node, parent, depth, branch, branchIndex) {
-    out.push({ node, parent, depth, branch, branchIndex });
-    const kids2 = visibleChildren(node);
-    for (let i = 0; i < kids2.length; i++) {
-      const k = kids2[i];
-      if (depth === 0) walk2(k, node, 1, k.uid, i);
-      else walk2(k, node, depth + 1, branch, branchIndex);
-    }
-  }
-  if (tree) walk2(tree, null, 0, null, -1);
-  return out;
-}
-var allUids = (tree) => {
-  const set = /* @__PURE__ */ new Set();
-  const stack2 = tree ? [tree] : [];
-  while (stack2.length) {
-    const n = stack2.pop();
-    set.add(n.uid);
-    for (const c of n.children) stack2.push(c);
-  }
-  return set;
-};
-var RE_IMG = /!\[([^\]]*)\]\([^)]*\)/g;
-var RE_LINK = /\[([^\]]*)\]\([^)]*\)/g;
-var RE_REF = /\(\(([^()\s]+)\)\)/g;
-var RE_TAG_BR = /#\[\[([^\]]+)\]\]/g;
-var RE_PAGE = /\[\[([^\]]+)\]\]/g;
-var RE_TAG = /(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
-var RE_BOLD = /\*\*(.+?)\*\*/g;
-var RE_ITAL = /__(.+?)__/g;
-var RE_HL = /\^\^(.+?)\^\^/g;
-var RE_STRIKE = /~~(.+?)~~/g;
-function hasComponent(s) {
-  return s.indexOf("{{") !== -1 && s.indexOf("}}", s.indexOf("{{")) !== -1;
-}
-function replaceComponents(s) {
-  let out = "";
-  let i = 0;
-  while (i < s.length) {
-    if (s[i] === "{" && s[i + 1] === "{") {
-      let depth = 0;
-      let j = i;
-      let end = -1;
-      while (j < s.length) {
-        if (s[j] === "{" && s[j + 1] === "{") {
-          depth += 1;
-          j += 2;
-          continue;
-        }
-        if (s[j] === "}" && s[j + 1] === "}") {
-          depth -= 1;
-          j += 2;
-          if (depth === 0) {
-            end = j;
-            break;
-          }
-          continue;
-        }
-        j += 1;
-      }
-      if (end === -1) {
-        out += s.slice(i);
-        break;
-      }
-      out += "⧉";
-      i = end;
-    } else {
-      out += s[i];
-      i += 1;
-    }
-  }
-  return out;
-}
-function fresh(re) {
-  re.lastIndex = 0;
-  return re;
-}
-function hasMarkup(s) {
-  if (typeof s !== "string" || s === "" || s.length > MAX_DISPLAY) return true;
-  if (hasComponent(s) && replaceComponents(s) !== s) return true;
-  for (const re of [RE_IMG, RE_LINK, RE_REF, RE_TAG_BR, RE_PAGE, RE_TAG, RE_BOLD, RE_ITAL, RE_HL, RE_STRIKE]) {
-    if (fresh(re).test(s)) return true;
-  }
-  return false;
-}
-function rewrite(s, resolveRef, depthLimit) {
-  let t = s;
-  if (hasComponent(t)) t = replaceComponents(t);
-  t = t.replace(RE_IMG, (_, alt) => `▣ ${alt}`);
-  t = t.replace(RE_LINK, (_, txt) => txt);
-  t = t.replace(RE_REF, (_, uid) => {
-    if (depthLimit <= 0) return "…";
-    let ref;
-    try {
-      ref = resolveRef ? resolveRef(uid) : null;
-    } catch {
-      ref = null;
-    }
-    if (typeof ref !== "string") return "…";
-    let r = rewrite(ref, () => "…", 0);
-    if (r.length > REF_MAX) r = `${r.slice(0, REF_MAX - 1)}…`;
-    return r;
-  });
-  t = t.replace(RE_TAG_BR, (_, x) => x);
-  t = t.replace(RE_PAGE, (_, x) => x);
-  t = t.replace(RE_TAG, (_, pre, x) => pre + x);
-  t = t.replace(RE_BOLD, (_, x) => x);
-  t = t.replace(RE_ITAL, (_, x) => x);
-  t = t.replace(RE_HL, (_, x) => x);
-  t = t.replace(RE_STRIKE, (_, x) => x);
-  return t;
-}
-function plainText(s, resolveRef) {
-  if (typeof s !== "string" || s === "") return "·";
-  const tp = taskParts(s);
-  let t;
-  if (tp.state) {
-    const glyph = tp.state === "DONE" ? "☑" : "☐";
-    t = tp.rest === "" ? glyph : `${glyph} ${rewrite(tp.rest, resolveRef, 1)}`;
-  } else t = rewrite(s, resolveRef, 1);
-  if (t.length > MAX_DISPLAY) t = `${t.slice(0, MAX_DISPLAY - 1)}…`;
-  if (t === "") return "·";
-  return t;
-}
-var RE_TAG_SCAN = /#\[\[([^\]]+)\]\]|(^|[\s(])#([\p{L}\p{N}_/-]+(?:[.:][\p{L}\p{N}_/-]+)*)/gu;
-function tagColor(s, map) {
-  if (typeof s !== "string" || !map || typeof map.get !== "function" || map.size === 0) return void 0;
-  const tp = taskParts(s);
-  if (tp.state) {
-    const c = map.get(tp.state.toLowerCase());
-    if (c) return c;
-  }
-  const re = new RegExp(RE_TAG_SCAN.source, "gu");
-  let m;
-  while ((m = re.exec(s)) !== null) {
-    const name = (m[1] !== void 0 ? m[1] : m[3]).toLowerCase();
-    const c = map.get(name);
-    if (c) return c;
-  }
-  return void 0;
-}
-function editableText(node, displayed, { star = false } = {}) {
-  if (!node || typeof displayed !== "string") return null;
-  let text = displayed;
-  if (isFolded(node)) {
-    const suffix = ` (+${countHidden(node)})`;
-    if (!text.endsWith(suffix)) return null;
-    text = text.slice(0, -suffix.length);
-  }
-  if (star && text.startsWith("★ ")) text = text.slice(2);
-  const tp = taskParts(node.string);
-  if (tp.state) {
-    if (text.startsWith("☐ ") || text.startsWith("☑ ")) text = text.slice(2);
-    else if (text === "☐" || text === "☑") text = "";
-  }
-  if (hasMarkup(tp.rest)) return null;
-  if (text === "" || text === "·") return null;
-  const next = tp.prefix + text;
-  return next === node.string ? null : next;
-}
-var CARRIER_RE = /^([^:\n`{]{1,60})::$/;
-var carrierName = (s) => {
-  if (typeof s !== "string") return null;
-  const m = CARRIER_RE.exec(s.trim());
-  if (!m) return null;
-  const name = m[1].trim();
-  return name === "" || name.startsWith("BT_attr") ? null : name;
-};
-function visualTree(tree, { attrEdges = false } = {}) {
-  if (!tree || !attrEdges) return tree;
-  function conv(node) {
-    if (node.open === false || node.children.length === 0) return node;
-    const out = [];
-    let changed = false;
-    for (const c of node.children) {
-      const name = c.open !== false && c.children.length > 0 ? carrierName(c.string) : null;
-      if (name !== null) {
-        changed = true;
-        const label = plainText(name);
-        for (const k of c.children) {
-          const kk = conv(k);
-          out.push({ ...kk, edgeLabel: label, via: c.uid });
-        }
-      } else {
-        const cc = conv(c);
-        if (cc !== c) changed = true;
-        out.push(cc);
-      }
-    }
-    return changed ? { ...node, children: out } : node;
-  }
-  return conv(tree);
-}
-function wrapLines2(text, maxWidth, measure3) {
-  const out = [];
-  for (const para of String(text).split("\n")) {
-    if (para === "") {
-      out.push("");
-      continue;
-    }
-    let line = "";
-    const flush = () => {
-      out.push(line);
-      line = "";
-    };
-    for (const word of para.split(" ")) {
-      const cand = line === "" ? word : `${line} ${word}`;
-      if (measure3(cand) <= maxWidth) {
-        line = cand;
-        continue;
-      }
-      if (line !== "") flush();
-      if (measure3(word) <= maxWidth) {
-        line = word;
-        continue;
-      }
-      let chunk = "";
-      for (const ch of Array.from(word)) {
-        if (chunk !== "" && measure3(chunk + ch) > maxWidth) {
-          out.push(chunk);
-          chunk = ch;
-        } else chunk += ch;
-      }
-      line = chunk;
-    }
-    out.push(line);
-  }
-  return out;
-}
-function nodeSize(text, fontSize, measure3, maxWidth = MAX_TEXT_WIDTH) {
-  const m = (s) => measure3(s, fontSize);
-  const lines = wrapLines2(text, maxWidth, m);
-  let tw = 0;
-  for (const l of lines) tw = Math.max(tw, m(l));
-  const textWidth = Math.max(1, Math.ceil(tw));
-  const textHeight = lines.length * fontSize * LINE_HEIGHT;
-  return {
-    width: textWidth + 2 * PAD_X,
-    height: textHeight + 2 * PAD_Y,
-    textWidth,
-    textHeight,
-    lines,
-    text: lines.join("\n")
-  };
-}
-function layoutTree({ tree, sizes, layout: layout2 = "right", pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
-  const pos = {};
-  if (!tree) return pos;
-  const sz = (n) => sizes[n.uid] || { width: 0, height: 0 };
-  const isPinned = (n) => n.uid !== tree.uid && pinned[n.uid] && Number.isFinite(pinned[n.uid].x) && Number.isFinite(pinned[n.uid].y);
-  if (layout2 === "radial") return radial(tree, sz, isPinned, pinned, root, pos);
-  if (layout2 === "fishbone") return fishboneLayout({ tree, sizes, pinned, root, gapOf }).positions;
-  const dirL = layout2 === "cause" ? "left" : layout2;
-  const horizontal = dirL === "right" || dirL === "left";
-  const cross = (n) => horizontal ? sz(n).height : sz(n).width;
-  const ext = /* @__PURE__ */ new Map();
-  const free = (n) => visibleChildren(n).filter((k) => !isPinned(k));
-  function extent(n) {
-    let span = 0;
-    const kids2 = free(n);
-    for (let i = 0; i < kids2.length; i++) span += extent(kids2[i]) + (i ? SIBLING_GAP : 0);
-    for (const k of visibleChildren(n)) if (isPinned(k)) extent(k);
-    const e = Math.max(cross(n), span);
-    ext.set(n, { e, span });
-    return e;
-  }
-  function place2(n, x, y) {
-    pos[n.uid] = { x, y };
-    const s = sz(n);
-    const { span } = ext.get(n);
-    const kids2 = free(n);
-    let cursor = (horizontal ? y + s.height / 2 : x + s.width / 2) - span / 2;
-    for (const k of kids2) {
-      const ks = sz(k);
-      const e = ext.get(k).e;
-      const c = cursor + (e - cross(k)) / 2;
-      const gap = gapOf(k.uid);
-      let kx;
-      let ky;
-      if (dirL === "right") {
-        kx = x + s.width + gap;
-        ky = c;
-      } else if (dirL === "left") {
-        kx = x - gap - ks.width;
-        ky = c;
-      } else if (dirL === "down") {
-        kx = c;
-        ky = y + s.height + gap;
-      } else {
-        kx = c;
-        ky = y - gap - ks.height;
-      }
-      place2(k, kx, ky);
-      cursor += e + SIBLING_GAP;
-    }
-    for (const k of visibleChildren(n)) if (isPinned(k)) place2(k, pinned[k.uid].x, pinned[k.uid].y);
-  }
-  extent(tree);
-  place2(tree, root.x, root.y);
-  return pos;
-}
-var FISH_BONE_OFFSET = 50;
-var FISH_SLOT_PAD = 60;
-var FISH_RIB_GAP = 40;
-function fishboneLayout({ tree, sizes, pinned = {}, root = { x: 0, y: 0 }, gapOf = () => LEVEL_GAP }) {
-  const positions = {};
-  const slotX = {};
-  if (!tree) return { positions, spine: null, slotX };
-  const sz = (uid) => sizes[uid] || { width: 0, height: 0 };
-  const rs = sz(tree.uid);
-  positions[tree.uid] = { x: root.x, y: root.y };
-  const spineY = root.y + rs.height / 2;
-  const kids2 = visibleChildren(tree);
-  if (kids2.length === 0) return { positions, spine: null, slotX };
-  const isPinned = (k) => pinned[k.uid] && Number.isFinite(pinned[k.uid].x) && Number.isFinite(pinned[k.uid].y);
-  const free = kids2.filter((k) => !isPinned(k));
-  const parts = free.map((k) => {
-    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: { x: 0, y: 0 } });
-    const abs = /* @__PURE__ */ new Set();
-    const mark = (n, inside2) => {
-      for (const c of visibleChildren(n)) {
-        const p = inside2 || isPinned(c);
-        if (p) abs.add(c.uid);
-        mark(c, p);
-      }
-    };
-    mark(k, false);
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const uid of Object.keys(rel)) {
-      if (abs.has(uid)) continue;
-      const s = sz(uid);
-      minX = Math.min(minX, rel[uid].x);
-      maxX = Math.max(maxX, rel[uid].x + s.width);
-      minY = Math.min(minY, rel[uid].y);
-      maxY = Math.max(maxY, rel[uid].y + s.height);
-    }
-    return { k, rel, abs, minX, maxX, minY, maxY, width: maxX - minX };
-  });
-  let cursor = root.x;
-  for (let j = 0; j * 2 < parts.length; j++) {
-    const above = parts[2 * j];
-    const below = parts[2 * j + 1];
-    const maxw = Math.max(above.width, below ? below.width : 0);
-    const spineX = cursor - 20;
-    const right = spineX - FISH_RIB_GAP;
-    for (const part of [above, below]) {
-      if (!part) continue;
-      const dx = right - part.maxX;
-      const dy = part === above ? spineY - FISH_BONE_OFFSET - part.maxY : spineY + FISH_BONE_OFFSET - part.minY;
-      for (const uid of Object.keys(part.rel)) positions[uid] = part.abs.has(uid) ? { ...part.rel[uid] } : { x: part.rel[uid].x + dx, y: part.rel[uid].y + dy };
-      slotX[part.k.uid] = spineX;
-    }
-    cursor -= maxw + FISH_SLOT_PAD;
-  }
-  const x1 = free.length ? cursor : root.x - 80;
-  for (const k of kids2) {
-    if (!isPinned(k)) continue;
-    const rel = layoutTree({ tree: k, sizes, layout: "left", pinned, gapOf, root: pinned[k.uid] });
-    for (const uid of Object.keys(rel)) positions[uid] = rel[uid];
-    slotX[k.uid] = Math.min(root.x, Math.max(x1, pinned[k.uid].x + sz(k.uid).width));
-  }
-  return { positions, spine: { x1, x2: root.x, y: spineY }, slotX };
-}
-function radial(tree, sz, isPinned, pinned, rootPos, pos) {
-  const rs = sz(tree);
-  const cx = rootPos.x + rs.width / 2;
-  const cy = rootPos.y + rs.height / 2;
-  pos[tree.uid] = { x: rootPos.x, y: rootPos.y };
-  function fan(n, ncx, ncy, angle, width, first) {
-    const kids2 = visibleChildren(n);
-    const m = kids2.length;
-    for (let i = 0; i < m; i++) {
-      const k = kids2[i];
-      const ks = sz(k);
-      const a = first ? -Math.PI / 2 + 2 * Math.PI * i / m : angle - width / 2 + width * (i + 0.5) / m;
-      const w = first ? 2 * Math.PI / m : width / m;
-      let kcx;
-      let kcy;
-      let dirA = a;
-      if (isPinned(k)) {
-        kcx = pinned[k.uid].x + ks.width / 2;
-        kcy = pinned[k.uid].y + ks.height / 2;
-        dirA = Math.atan2(kcy - cy, kcx - cx);
-        pos[k.uid] = { x: pinned[k.uid].x, y: pinned[k.uid].y };
-        fan(k, kcx, kcy, dirA, w, false);
-        continue;
-      }
-      const r = first ? RADIAL_RADIUS : RADIAL_STEP;
-      kcx = ncx + r * Math.cos(a);
-      kcy = ncy + r * Math.sin(a);
-      pos[k.uid] = { x: kcx - ks.width / 2, y: kcy - ks.height / 2 };
-      fan(k, kcx, kcy, a, w, false);
-    }
-  }
-  fan(tree, cx, cy, 0, 2 * Math.PI, true);
-  return pos;
-}
-function nearestInDirection(from, candidates, dir) {
-  const fx = from.x + from.width / 2;
-  const fy = from.y + from.height / 2;
-  let best = null;
-  let bestD = Infinity;
-  for (const c of candidates) {
-    if (c.id === from.id) continue;
-    const dx = c.x + c.width / 2 - fx;
-    const dy = c.y + c.height / 2 - fy;
-    const inCone = dir === "right" ? dx > 0 && Math.abs(dy) <= dx : dir === "left" ? dx < 0 && Math.abs(dy) <= -dx : dir === "down" ? dy > 0 && Math.abs(dx) <= dy : dir === "up" ? dy < 0 && Math.abs(dx) <= -dy : false;
-    if (!inCone) continue;
-    const d = dx * dx + dy * dy;
-    if (d < bestD) {
-      bestD = d;
-      best = c.id;
-    }
-  }
-  return best;
 }
 
 // src/model/build.js
@@ -11828,7 +12223,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         toast(FLOW_LAYOUT_HINT);
         return null;
       }
-      const next = LAYOUTS2[(LAYOUTS2.indexOf(cur) + 1) % LAYOUTS2.length];
+      const next = LAYOUTS[(LAYOUTS.indexOf(cur) + 1) % LAYOUTS.length];
       commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: next }) : e), [sel.root]);
       toast(`Layout: ${next}`);
       return null;
@@ -11843,7 +12238,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     function setLayout(layout2) {
       const sel = selectedNode();
       const rootEl = sel ? rootElement(sel.root) : null;
-      if (!rootEl || ![...LAYOUTS2, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout2)) return false;
+      if (!rootEl || ![...LAYOUTS, ...CAUSE_LAYOUTS, FLOW_LAYOUT].includes(layout2)) return false;
       const done2 = commit((list) => list.map((e) => e.id === rootEl.id ? patchMarker(e, { layout: layout2 }) : e), [sel.root]);
       if (done2) toast(`Layout: ${layout2} (${CHANGE_BACK})`);
       return done2;
@@ -15452,8 +15847,8 @@ var rectFor = (app, bbox, v) => {
   return { left, top, width: (bbox[2] - bbox[0]) * v.zoom, height: (bbox[3] - bbox[1]) * v.zoom };
 };
 function animateView(app, target, { animate = true, doc = globalThis.document, raf = globalThis.requestAnimationFrame, now = () => Date.now(), duration = 400 } = {}) {
-  const token = {};
-  tokens.set(app, token);
+  const token2 = {};
+  tokens.set(app, token2);
   if (!animate || typeof raf !== "function") {
     return Promise.resolve({ moved: writeView(app, target), aborted: false });
   }
@@ -15476,7 +15871,7 @@ function animateView(app, target, { animate = true, doc = globalThis.document, r
       finished = true;
       off();
       if (cacheKey) safeUpdate(app, { shouldCacheIgnoreZoom: false });
-      if (tokens.get(app) === token) tokens.delete(app);
+      if (tokens.get(app) === token2) tokens.delete(app);
       resolve(result);
     };
     const abort = () => finish({ moved: true, aborted: true });
@@ -15487,7 +15882,7 @@ function animateView(app, target, { animate = true, doc = globalThis.document, r
     if (cacheKey) safeUpdate(app, { shouldCacheIgnoreZoom: true });
     const step = () => {
       if (finished) return;
-      if (tokens.get(app) !== token || doc && activeEditor(doc)?.app !== app) return abort();
+      if (tokens.get(app) !== token2 || doc && activeEditor(doc)?.app !== app) return abort();
       const t = now();
       if (t0 == null) t0 = t;
       const p = Math.min(1, (t - t0) / duration);
@@ -16620,14 +17015,14 @@ function rewriteSvgTitles(svg, lookup) {
   if (typeof svg !== "string" || typeof lookup !== "function" || !svg.includes("[[")) return svg;
   return svg.replace(/>([^<]*)</g, (full, text) => {
     if (!text.includes("[[")) return full;
-    const next = text.replace(/\[\[([^[\]]+)\]\]/g, (token, title) => {
+    const next = text.replace(/\[\[([^[\]]+)\]\]/g, (token2, title) => {
       let url = null;
       try {
         url = lookup(String(title));
       } catch {
         url = null;
       }
-      if (!url) return token;
+      if (!url) return token2;
       return `<a href="${esc(url)}">${esc(title)}</a>`;
     });
     return `>${next}<`;
@@ -16683,7 +17078,7 @@ function createLiveShow({
   let index = 0;
   let build = 0;
   let timer = null;
-  let token = 0;
+  let token2 = 0;
   let dead = false;
   const targetOf = (frame) => fitZoom({ bbox: elementBounds(frame), viewportWidth: vw, viewportHeight: vh });
   const status = () => {
@@ -16693,7 +17088,7 @@ function createLiveShow({
     }
   };
   const stop = () => {
-    token += 1;
+    token2 += 1;
     if (timer != null) cancel(timer);
     timer = null;
   };
@@ -16709,11 +17104,11 @@ function createLiveShow({
       return;
     }
     stop();
-    const mine = token;
+    const mine = token2;
     const from = readView?.() || to;
     const t0 = clock();
     const frame = (t) => {
-      if (dead || mine !== token) return;
+      if (dead || mine !== token2) return;
       const same3 = t === t0;
       const p = same3 ? 1 : Math.min(1, (t - t0) / ms);
       const e = ease(p);
@@ -16955,20 +17350,20 @@ function readString(text, start) {
   }
   throw fail("Unterminated string", start);
 }
-function atom(token, start) {
-  if (token === "nil") return null;
-  if (token === "true") return true;
-  if (token === "false") return false;
-  if (token.charCodeAt(0) === 58) {
-    if (token.length === 1) throw fail("Empty keyword", start);
-    return token.slice(1);
+function atom(token2, start) {
+  if (token2 === "nil") return null;
+  if (token2 === "true") return true;
+  if (token2 === "false") return false;
+  if (token2.charCodeAt(0) === 58) {
+    if (token2.length === 1) throw fail("Empty keyword", start);
+    return token2.slice(1);
   }
-  if (NUMBER_RE.test(token)) return Number(token);
-  if (NUMERIC_START_RE.test(token)) throw fail(`Invalid number "${token}"`, start);
-  if (token === "NaN") return NaN;
-  if (token === "Infinity") return Infinity;
-  if (token === "-Infinity") return -Infinity;
-  return token;
+  if (NUMBER_RE.test(token2)) return Number(token2);
+  if (NUMERIC_START_RE.test(token2)) throw fail(`Invalid number "${token2}"`, start);
+  if (token2 === "NaN") return NaN;
+  if (token2 === "Infinity") return Infinity;
+  if (token2 === "-Infinity") return -Infinity;
+  return token2;
 }
 function finishMap(items, opener) {
   if (items.length % 2 !== 0) throw fail("Odd number of forms in map", opener);
@@ -17536,7 +17931,7 @@ var READY_MS = 15e3;
 var FALLBACK_MS = 6e4;
 var CLICK_GAP_MS = 250;
 var REVOKE_MS = 5e3;
-var NAME_CAP = 120;
+var NAME_CAP2 = 120;
 var BLEED_MM = 0.5;
 var PAPER = { letter: [215.9, 279.4], a4: [210, 297] };
 var SLIDE_MM = [254, 142.875];
@@ -17709,7 +18104,7 @@ function pngFileName(drawing, index, total, name) {
   const nn = String(index + 1).padStart(width, "0");
   const frame = String(name ?? "").trim() || `Frame ${index + 1}`;
   const base2 = safeName(`${String(drawing ?? "").trim() || "Drawing"} - ${nn} ${frame}`);
-  return `${base2.slice(0, NAME_CAP - 4)}.png`;
+  return `${base2.slice(0, NAME_CAP2 - 4)}.png`;
 }
 function downloadPngs({
   doc,
@@ -18009,15 +18404,15 @@ function tagToken(raw) {
   return name ? `#[[${name}]]` : "";
 }
 function appendTagText(text, raw) {
-  const token = tagToken(raw);
+  const token2 = tagToken(raw);
   const src = String(text ?? "");
-  if (!token) return src;
-  if (src.includes(token)) return src;
-  return src.trim() ? `${src.trim()} ${token}` : token;
+  if (!token2) return src;
+  if (src.includes(token2)) return src;
+  return src.trim() ? `${src.trim()} ${token2}` : token2;
 }
 function textHasTag(text, raw) {
-  const token = tagToken(raw);
-  return !!token && String(text ?? "").includes(token);
+  const token2 = tagToken(raw);
+  return !!token2 && String(text ?? "").includes(token2);
 }
 function elementText(el) {
   if (!el || typeof el !== "object") return "";
@@ -18373,6 +18768,21 @@ function dropElement(elements, fromId) {
 }
 function sourceText(el) {
   return elementText(el);
+}
+
+// src/model/task-card.js
+var MACRO_LEN = "{{[[TODO]]}}".length;
+function taskLabel(string) {
+  const parts = taskParts(string);
+  if (!parts.state) return null;
+  const rest = parts.rest.trim();
+  return rest || "Task";
+}
+function toggleTaskString(string) {
+  const parts = taskParts(string);
+  if (!parts.state || typeof string !== "string") return null;
+  const next = parts.state === "TODO" ? "DONE" : "TODO";
+  return `{{[[${next}]]}}${string.slice(MACRO_LEN)}`;
 }
 
 // src/view/insert-picker.js
@@ -18875,7 +19285,7 @@ function createActions({
       const { caption, hasRef } = captionRefsInfo(elements, captionIds(region, elements), frameEl?.name ? { frameName: frameEl.name } : void 0);
       if (!hasRef || !caption) return null;
       const have = refTokens(region.caption);
-      const missing = [...refTokens(caption)].some((token) => !have.has(token));
+      const missing = [...refTokens(caption)].some((token2) => !have.has(token2));
       return { region, caption, current: region.caption, block, missing };
     } catch (error) {
       console.warn("[plexus] caption plan failed", error);
@@ -19760,8 +20170,8 @@ function createActions({
       name = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
       if (!name) return null;
     }
-    const token = tagToken(name);
-    if (!token) {
+    const token2 = tagToken(name);
+    if (!token2) {
       toaster2.show("That tag name will not work", { kind: "error" });
       return null;
     }
@@ -19787,15 +20197,15 @@ function createActions({
     });
     if (!ok) return null;
     const kids2 = safe2(() => host.pullBlock(editor.drawingUid)?.children) || [];
-    if (!kids2.some((child) => String(child?.string ?? "").includes(token))) {
-      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: token });
+    if (!kids2.some((child) => String(child?.string ?? "").includes(token2))) {
+      const made = await host.createBlock?.({ parentUid: editor.drawingUid, order: "last", string: token2 });
       if (!made) {
         toaster2.show("Could not add the tag ref", { kind: "error" });
         return null;
       }
     }
     toaster2.show("Tag added");
-    return token;
+    return token2;
   }
   function openEditor() {
     const editor = native.activeEditor(doc);
@@ -20228,6 +20638,160 @@ function createActions({
       }
       toaster2.show(plan.action === "delete" ? "Name removed" : "Name saved");
       return plan.action;
+    });
+  }
+  async function placeCard(editor, elements, label) {
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, label)) {
+      toaster2.show("Could not add the card", { kind: "error" });
+      return false;
+    }
+    return true;
+  }
+  async function taskCard(focusedUid) {
+    return once("taskCard", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      let uid = null;
+      let created = false;
+      let label = "Task";
+      if (isId(focusedUid)) {
+        const block = safe2(() => host.pullBlock(focusedUid));
+        const named = taskLabel(block?.string);
+        if (named) {
+          uid = focusedUid;
+          label = named;
+        }
+      }
+      if (!uid) {
+        const text = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+        if (text == null || !String(text).trim()) return null;
+        label = String(text).trim();
+        try {
+          uid = await host.createBlock({ parentUid: editor.drawingUid, order: "last", string: `{{[[TODO]]}} ${label}` });
+          created = true;
+        } catch (error) {
+          console.warn("[plexus] task create failed", error);
+          toaster2.show("Could not create the task", { kind: "error" });
+          return null;
+        }
+      }
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: `((${uid}))`, label, x: centre.x - 180, y: centre.y - 60, width: 360, height: 120 });
+      if (!await placeCard(editor, elements, "Task card")) {
+        if (created) {
+          try {
+            await host.deleteBlock(uid);
+          } catch (error) {
+            console.warn("[plexus] task cleanup failed", error);
+          }
+        }
+        return null;
+      }
+      toaster2.show("Task card added");
+      return uid;
+    });
+  }
+  async function toggleTask(uid) {
+    if (!isId(uid)) return null;
+    const block = safe2(() => host.pullBlock(uid));
+    const next = toggleTaskString(block?.string);
+    if (!next) return null;
+    try {
+      await api.data.block.update({ block: { uid, string: next } });
+    } catch (error) {
+      console.warn("[plexus] task toggle failed", error);
+      toaster2.show("Could not update the task", { kind: "error" });
+      return null;
+    }
+    return next;
+  }
+  async function pageCard() {
+    return once("pageCard", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const typed = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+      const title = cleanTitle(typed);
+      if (!title) return null;
+      const before = safe2(() => host.pageUidByTitle(title));
+      let pageUid;
+      try {
+        pageUid = await host.ensurePage(title);
+      } catch (error) {
+        console.warn("[plexus] page card failed", error);
+        toaster2.show("Could not open that page", { kind: "error" });
+        return null;
+      }
+      const created = !before;
+      const named = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+      const dropNew = async () => {
+        if (!created || !pageUid) return;
+        try {
+          await api.data.page.delete({ page: { uid: pageUid } });
+        } catch (error) {
+          console.warn("[plexus] page cleanup failed", error);
+        }
+      };
+      if (named == null) {
+        await dropNew();
+        return null;
+      }
+      const names = chosenAttrs(named);
+      if (!names.length) {
+        toaster2.show("Name at least one attribute");
+        await dropNew();
+        return null;
+      }
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: `[[${title}]]`, label: title, x: centre.x - 180, y: centre.y - 100, width: 360, height: 200 });
+      elements[0].customData = mergePlexusData(elements[0].customData, { attrs: names });
+      if (!await placeCard(editor, elements, "Page card")) {
+        await dropNew();
+        return null;
+      }
+      toaster2.show("Page card added");
+      return pageUid;
+    });
+  }
+  async function setPageAttr({ pageUid, name, value, uid } = {}) {
+    const plan = attrWrite(name, value);
+    if (plan.action === "none") return "locked";
+    if (isId(uid)) {
+      const current6 = safe2(() => host.pullBlock(uid));
+      if (parseAttr(current6?.string)?.bt) return "locked";
+      try {
+        if (plan.action === "delete") await host.deleteBlock(uid);
+        else await api.data.block.update({ block: { uid, string: plan.string } });
+      } catch (error) {
+        console.warn("[plexus] attribute edit failed", error);
+        toaster2.show("Could not save the attribute", { kind: "error" });
+        return null;
+      }
+      return plan.action === "delete" ? "delete" : "update";
+    }
+    if (plan.action === "delete" || !isId(pageUid)) return "none";
+    try {
+      await host.createBlock({ parentUid: pageUid, order: "last", string: plan.string });
+    } catch (error) {
+      console.warn("[plexus] attribute edit failed", error);
+      toaster2.show("Could not save the attribute", { kind: "error" });
+      return null;
+    }
+    return "create";
+  }
+  async function liveQuery() {
+    return once("liveQuery", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const typed = await askCaption({ initial: "{{[[query]]: {and: [[TODO]] [[]]}}}", select: true, escape: "cancel", rect: null, drawing: true });
+      if (typed == null || !String(typed).trim()) return null;
+      const raw = String(typed).trim();
+      const stored = raw.includes("{{") ? raw : `{{[[query]]: ${raw}}}`;
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: QUERY_REF, label: "Query", x: centre.x - 210, y: centre.y - 120, width: 420, height: 240 });
+      elements[0].customData = mergePlexusData(elements[0].customData, { liveQuery: stored });
+      if (!await placeCard(editor, elements, "Live query")) return null;
+      toaster2.show(queryPageTitles(stored).length ? "Live query added" : "Query added. No page to watch");
+      return elements[0].id;
     });
   }
   async function syncExport(app, drawingUid) {
@@ -20803,6 +21367,11 @@ function createActions({
     turnInto: (mode) => turnInto(mode),
     insertImageOrDrawing: () => insertImageOrDrawing(),
     setDrawingName: (uid) => setDrawingName(uid),
+    taskCard: (uid) => taskCard(uid),
+    toggleTask: (uid) => toggleTask(uid),
+    pageCard: () => pageCard(),
+    setPageAttr: (row) => setPageAttr(row),
+    liveQuery: () => liveQuery(),
     keepExportImage: () => keepExportImage(),
     keepLinkedReferences: (uid) => keepLinkedReferences(uid),
     syncOnClose: (app, drawingUid) => syncOnClose(app, drawingUid),
@@ -22080,9 +22649,9 @@ function createActions({
   }
   async function refreshAfterCloseOnce(drawingUid, mountHash) {
     if (!isId(drawingUid) || disposed) return 0;
-    const token = {};
-    closePolls.set(drawingUid, token);
-    const live3 = () => !disposed && closePolls.get(drawingUid) === token;
+    const token2 = {};
+    closePolls.set(drawingUid, token2);
+    const live3 = () => !disposed && closePolls.get(drawingUid) === token2;
     const end = Date.now() + closeWindowMs;
     let last = mountHash ?? "";
     let count = 0;
@@ -22107,7 +22676,7 @@ function createActions({
         await sleep(closePollMs);
       }
     } finally {
-      if (closePolls.get(drawingUid) === token) closePolls.delete(drawingUid);
+      if (closePolls.get(drawingUid) === token2) closePolls.delete(drawingUid);
     }
   }
   async function refreshCrops(uid) {
@@ -22156,7 +22725,7 @@ function createActions({
     const patches = /* @__PURE__ */ new Map();
     for (const anchor of embedAnchors(scene)) {
       const parsed = parseEmbedRef(anchor.customData.plexus.embed);
-      if (!parsed || parsed.kind === "today") continue;
+      if (!parsed || parsed.kind === "today" || parsed.kind === "query") continue;
       const bound = (anchor.boundElements || []).find((b) => b?.type === "text");
       const text = bound ? byId.get(bound.id) : null;
       if (!text || text.isDeleted || text.type !== "text" || text.containerId !== anchor.id) continue;
@@ -22167,7 +22736,7 @@ function createActions({
         content = null;
       }
       if (!content || typeof content.then === "function") continue;
-      const label = embedLabel(content.string || content.title);
+      const label = embedLabel(taskLabel(content.string || "") || content.string || content.title);
       if (!label || label === (text.originalText ?? text.text)) continue;
       const laid = layoutAnchorLabel({
         label,
@@ -22733,10 +23302,10 @@ function createActions({
   }
   async function runPresent(fn) {
     if (presentOwner) return null;
-    const token = {};
-    presentOwner = token;
+    const token2 = {};
+    presentOwner = token2;
     const release = () => {
-      if (presentOwner === token) presentOwner = null;
+      if (presentOwner === token2) presentOwner = null;
     };
     try {
       return await fn(release);
@@ -23533,9 +24102,9 @@ function paintDrawingName(outer, name) {
 // src/model/dates.js
 var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 var MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-var prefixIndex = (names, token) => {
-  if (token.length < 3) return -1;
-  return names.findIndex((n) => n.startsWith(token));
+var prefixIndex = (names, token2) => {
+  if (token2.length < 3) return -1;
+  return names.findIndex((n) => n.startsWith(token2));
 };
 function monthDay(now, month, day) {
   if (!Number.isInteger(day) || day < 1 || day > 31) return null;
@@ -23622,12 +24191,12 @@ function findTrigger(text, caret) {
   }
   return findHash(text, caret, lineStart);
 }
-function replaceTrigger(text, caret, trigger, token) {
+function replaceTrigger(text, caret, trigger, token2) {
   const closer = trigger.kind === "page" ? "]]" : trigger.kind === "block" ? "))" : "";
   const rest = text.slice(caret);
   const lead = /^[^\n[\]()]*/.exec(rest)[0];
   const cut2 = closer && rest.startsWith(closer, lead.length) ? caret + lead.length + closer.length : caret;
-  return { text: text.slice(0, trigger.start) + token + text.slice(cut2), caret: trigger.start + token.length };
+  return { text: text.slice(0, trigger.start) + token2 + text.slice(cut2), caret: trigger.start + token2.length };
 }
 function pageAlias(alias) {
   if (typeof alias !== "string") return "";
@@ -25199,6 +25768,9 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     turnIntoItem,
     { id: "insert-image", label: "Plexus: Insert image or drawing…", enabled: can(() => !!drawingUid), run: call("insert-image", () => actions.insertImageOrDrawing()) },
     { id: "drawing-name", label: "Plexus: Drawing name…", enabled: can(() => !!drawingUid), run: call("drawing-name", () => actions.setDrawingName(drawingUid)) },
+    { id: "task-card", label: "Plexus: Task card…", enabled: can(() => !!drawingUid), run: call("task-card", () => actions.taskCard?.()) },
+    { id: "page-card", label: "Plexus: Page card…", enabled: can(() => !!drawingUid), run: call("page-card", () => actions.pageCard?.()) },
+    { id: "live-query", label: "Plexus: Live query…", enabled: can(() => !!drawingUid), run: call("live-query", () => actions.liveQuery?.()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
     { id: "settings", label: "Plexus: Region settings…", enabled: true, run: () => openSettings() },
@@ -27816,8 +28388,8 @@ function createFontMeasurer({ doc = globalThis.document } = {}) {
 }
 var defaultMeasure = null;
 var layouts = /* @__PURE__ */ new WeakMap();
-function tokenTarget(token) {
-  return token.kind === "block" ? { type: "block", uid: token.uid } : { type: "page", title: token.title };
+function tokenTarget(token2) {
+  return token2.kind === "block" ? { type: "block", uid: token2.uid } : { type: "page", title: token2.title };
 }
 function layoutOf(element, measure3) {
   let byId = layouts.get(measure3);
@@ -27907,8 +28479,8 @@ function hitToken({ element, point, measure: measure3 } = {}) {
     if (!best || tok.end - tok.start < best.end - best.start) best = tok;
   }
   if (!best) return null;
-  const { segs, ...token } = best;
-  return token;
+  const { segs, ...token2 } = best;
+  return token2;
 }
 function elementTokens({ element, measure: measure3 } = {}) {
   if (!element || element.type !== "text") return [];
@@ -27978,13 +28550,13 @@ function installTextLinks({
   function decide(e) {
     const hit = locate(e);
     if (!hit) return null;
-    const token = hitToken({ element: hit.text, point: hit.point, measure: measurer });
-    if (token) return { tokens: [token] };
+    const token2 = hitToken({ element: hit.text, point: hit.point, measure: measurer });
+    if (token2) return { tokens: [token2] };
     const all = elementTokens({ element: hit.text, measure: measurer });
     return all.length ? { tokens: all } : null;
   }
-  function exists(token) {
-    const t = tokenTarget(token);
+  function exists(token2) {
+    const t = tokenTarget(token2);
     try {
       const found = t.type === "block" ? api.data.pull("[:block/uid]", [":block/uid", t.uid]) : api.data.pull("[:block/uid]", [":node/title", t.title]);
       return !!found;
@@ -27993,10 +28565,10 @@ function installTextLinks({
       return false;
     }
   }
-  function go(token, sidebar) {
+  function go(token2, sidebar) {
     if (disposed) return;
-    const target = tokenTarget(token);
-    if (!exists(token)) {
+    const target = tokenTarget(token2);
+    if (!exists(token2)) {
       toast?.(target.type === "block" ? "Block not found" : `No page named ${target.title}`);
       return;
     }
@@ -28045,11 +28617,11 @@ function installTextLinks({
         r.style.backgroundColor = k === i ? "rgb(213, 218, 223)" : "";
       });
     };
-    const choose = (token, sidebar) => {
+    const choose = (token2, sidebar) => {
       closeChooser(false);
-      go(token, sidebar);
+      go(token2, sidebar);
     };
-    tokens2.forEach((token, k) => {
+    tokens2.forEach((token2, k) => {
       const row = doc.createElement("div");
       row.className = "dont-unfocus-block";
       row.style.padding = "6px";
@@ -28057,12 +28629,12 @@ function installTextLinks({
       row.style.borderRadius = "2px";
       const inner2 = doc.createElement("div");
       inner2.className = "rm-autocomplete-result";
-      inner2.textContent = labelOf(token);
+      inner2.textContent = labelOf(token2);
       row.append(inner2);
       row.addEventListener("mousemove", () => setActive(k));
       row.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        choose(token, ev.shiftKey);
+        choose(token2, ev.shiftKey);
       });
       scroll.append(row);
       rows.push(row);
@@ -29753,6 +30325,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           }
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
+          const cardText = /* @__PURE__ */ new Map();
+          mounted.disposers.push(installRefLines({ doc, app, containerEl: el, texts: cardText }));
           const overlay = createEmbedOverlay({
             doc,
             api,
@@ -29762,7 +30336,12 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             zIndex: outer ? baseZIndex(doc, outer) : 1e3,
             toast: (message) => toaster2.show(message, { kind: "error" }),
             onStateChange: () => toolbar.refresh(),
-            onLoaded: () => actions.scheduleEmbedLabels(app)
+            onLoaded: (info) => {
+              actions.scheduleEmbedLabels(app);
+              if (info?.anchorId) cardText.set(info.anchorId, { ref: info.ref, texts: cardTexts(info.content) });
+            },
+            onToggleTask: (uid) => actions.toggleTask(uid),
+            onAttrEdit: (row) => actions.setPageAttr(row)
           });
           mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
@@ -30217,6 +30796,18 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "drawingName", label: "Drawing name…", run: (ctx) => {
         if (!actions) return unavailable("drawingName");
         return Promise.resolve(actions.setDrawingName(ctx?.focusedUid)).catch((error) => console.warn("[plexus] drawing name failed", error));
+      } },
+      { id: "taskCard", label: "Task card…", run: (ctx) => {
+        if (!actions) return unavailable("taskCard");
+        return Promise.resolve(actions.taskCard(ctx?.focusedUid)).catch((error) => console.warn("[plexus] task card failed", error));
+      } },
+      { id: "pageCard", label: "Page card…", run: () => {
+        if (!actions) return unavailable("pageCard");
+        return Promise.resolve(actions.pageCard()).catch((error) => console.warn("[plexus] page card failed", error));
+      } },
+      { id: "liveQuery", label: "Live query…", run: () => {
+        if (!actions) return unavailable("liveQuery");
+        return Promise.resolve(actions.liveQuery()).catch((error) => console.warn("[plexus] live query failed", error));
       } },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];

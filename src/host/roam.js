@@ -10,6 +10,7 @@ const DRAWING_START = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
 const DRAWINGS_CAP = 50;
 const EMBED_CAP = 30;
 const EMBED_PATTERN = "[:block/uid :block/string :node/title {:block/page [:node/title]} {:block/children [:block/uid :block/string :block/order {:block/children [:block/uid :block/string :block/order]}]}]";
+const REFS_PATTERN = "[:block/uid {:block/_refs [:block/uid]}]";
 const EMBED_UID = /^[A-Za-z0-9_-]{9}$/;
 const CARDS_STRING = "{{[[plexus-cards]]}}";
 const PATH_CAP = 100;
@@ -454,7 +455,9 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
       for (const n of [...(nodes || [])].sort(byOrder)) {
         if (budget <= 0) break;
         budget--;
-        out.push({ string: n[":block/string"] ?? "", children: depth > 1 ? take(n[":block/children"], depth - 1) : [] });
+        const row = { string: n[":block/string"] ?? "", children: depth > 1 ? take(n[":block/children"], depth - 1) : [] };
+        if (typeof n[":block/uid"] === "string" && n[":block/uid"]) row.uid = n[":block/uid"];
+        out.push(row);
       }
       return out;
     };
@@ -465,6 +468,21 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
       pageTitle: isPage ? "" : (raw[":block/page"]?.[":node/title"] ?? ""),
       string: isPage ? "" : (raw[":block/string"] ?? ""),
       children: take(raw[":block/children"], isPage ? 1 : 2),
+    };
+  }
+
+  function watchPageRefs(uid, cb) {
+    if (!uid || typeof api.data?.addPullWatch !== "function") return () => {};
+    const ident = `[:block/uid "${String(uid).replace(/["\\]/g, "")}"]`;
+    const handler = (before, after) => {
+      try { cb(before, after); } catch (error) { console.warn("[plexus] query watch callback failed", error); }
+    };
+    api.data.addPullWatch(REFS_PATTERN, ident, handler);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      try { api.data.removePullWatch(REFS_PATTERN, ident, handler); } catch (error) { console.warn("[plexus] removePullWatch failed", error); }
     };
   }
 
@@ -517,5 +535,6 @@ export function createRoamHost({ api = globalThis.roamAlphaAPI, withLockFn = wit
     blockUidFromNode,
     pullEmbedContent,
     watchEmbed,
+    watchPageRefs,
   };
 }

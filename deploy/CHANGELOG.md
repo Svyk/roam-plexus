@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.27.0]
+- A task card embeds a to-do or done block. A checkbox swaps the Roam macro. The rest of the text stays. Better Tasks attribute blocks are shown and not written.
+- A live query node renders the query. A pull watch on each named page, at most four, repaints. A query with no page stays a snapshot.
+- A page card shows the attributes you name. Enter writes that attribute. An existing page is reused. Better Tasks attributes are shown and not written.
+- Hovering an embed draws lines to other embeds on this canvas that mention each other. Lines leave with the pointer. At most twelve.
+- The palette stays two entries. The command list is 67.
+
 ## [0.26.0]
 - Selected text becomes a page or a block. A prompt confirms the title. An existing title is reused. It becomes an embed or a link, and arrows follow. An image becomes a block and leaves the canvas. Turn back restores the text.
 - This page lists images and drawings. Enter fits inside 480 by 360. Shift+Enter is the pixel size or the drawing bounds. The file address is reused and linked to the source. addFiles is not called. A drawing inserts an embed.

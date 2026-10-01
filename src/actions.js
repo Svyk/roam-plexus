@@ -3,7 +3,7 @@ import { commonBounds, elementBounds, regionSceneBBox, cropSvgToFraction, normal
 import { rewriteSvgTitles, roamPageUrl } from "./model/pagelink.js";
 import { createLiveShow, rememberIndex, saveIndex, viewPatch } from "./view/live-present.js";
 import { createExportDialog } from "./view/export-dialog.js";
-import { embedAnchors, embedLabel, layoutAnchorLabel, makeEmbedAnchor, parseEmbedRef } from "./model/embeds.js";
+import { QUERY_REF, embedAnchors, embedLabel, layoutAnchorLabel, makeEmbedAnchor, mergePlexusData, parseEmbedRef } from "./model/embeds.js";
 import { LEGACY_QUERY, isLegacyDrawingString, legacyReport, legacySummary, legacyToElements, parseLegacyDrawing, rowsFromQuery } from "./model/legacy.js";
 import { orderFrames, buildTier, containingRegion, coverBoxes, hiddenIds, idsForBuild, idsWithoutOccluders, maxBuild, nextStep, patchPlexus } from "./model/slides.js";
 import { DEFAULT_PRESET, frameId, applyOrderRewrite, bumped, childrenOutside, frameAt, layoutFrames, nearestFrame, nextSlideSlot, planOrders, presetFrame, presetSize, reformatRect, selectedFrameOf, withOrder } from "./model/frames.js";
@@ -27,6 +27,9 @@ import { EXPORT_MARK, LINKS_MARK, appendTagText, collectTargets, elementsToAdd, 
 import { drawingName, namePlan } from "./model/drawing-name.js";
 import { cappedBounds, fitSize, imageParts, placedImage, reuseFileId, stageReusedFile } from "./model/image-insert.js";
 import { blockRef, dropElement, imageMarkdown, pageRef, sourceText, splitTitleBody, turnBackToText, turnIntoEmbed, turnIntoLink } from "./model/turninto.js";
+import { taskLabel, toggleTaskString } from "./model/task-card.js";
+import { attrWrite, chosenAttrs, parseAttr } from "./model/page-card.js";
+import { queryPageTitles } from "./model/query-live.js";
 import { openInsertPicker } from "./view/insert-picker.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1782,6 +1785,150 @@ export function createActions({
     });
   }
 
+  async function placeCard(editor, elements, label) {
+    if (!insertGuarded(editor.app, editor.drawingUid, elements, label)) {
+      toaster.show("Could not add the card", { kind: "error" });
+      return false;
+    }
+    return true;
+  }
+
+  async function taskCard(focusedUid) {
+    return once("taskCard", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      let uid = null;
+      let created = false;
+      let label = "Task";
+      if (isId(focusedUid)) {
+        const block = safe(() => host.pullBlock(focusedUid));
+        const named = taskLabel(block?.string);
+        if (named) { uid = focusedUid; label = named; }
+      }
+      if (!uid) {
+        const text = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+        if (text == null || !String(text).trim()) return null;
+        label = String(text).trim();
+        try {
+          uid = await host.createBlock({ parentUid: editor.drawingUid, order: "last", string: `{{[[TODO]]}} ${label}` });
+          created = true;
+        } catch (error) {
+          console.warn("[plexus] task create failed", error);
+          toaster.show("Could not create the task", { kind: "error" });
+          return null;
+        }
+      }
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: `((${uid}))`, label, x: centre.x - 180, y: centre.y - 60, width: 360, height: 120 });
+      if (!await placeCard(editor, elements, "Task card")) {
+        if (created) { try { await host.deleteBlock(uid); } catch (error) { console.warn("[plexus] task cleanup failed", error); } }
+        return null;
+      }
+      toaster.show("Task card added");
+      return uid;
+    });
+  }
+
+  async function toggleTask(uid) {
+    if (!isId(uid)) return null;
+    const block = safe(() => host.pullBlock(uid));
+    const next = toggleTaskString(block?.string);
+    if (!next) return null;
+    try {
+      await api.data.block.update({ block: { uid, string: next } });
+    } catch (error) {
+      console.warn("[plexus] task toggle failed", error);
+      toaster.show("Could not update the task", { kind: "error" });
+      return null;
+    }
+    return next;
+  }
+
+  async function pageCard() {
+    return once("pageCard", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const typed = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+      const title = cleanTitle(typed);
+      if (!title) return null;
+      const before = safe(() => host.pageUidByTitle(title));
+      let pageUid;
+      try {
+        pageUid = await host.ensurePage(title);
+      } catch (error) {
+        console.warn("[plexus] page card failed", error);
+        toaster.show("Could not open that page", { kind: "error" });
+        return null;
+      }
+      const created = !before;
+      const named = await askCaption({ initial: "", select: true, escape: "cancel", rect: null, drawing: true });
+      const dropNew = async () => {
+        if (!created || !pageUid) return;
+        try { await api.data.page.delete({ page: { uid: pageUid } }); } catch (error) { console.warn("[plexus] page cleanup failed", error); }
+      };
+      if (named == null) { await dropNew(); return null; }
+      const names = chosenAttrs(named);
+      if (!names.length) {
+        toaster.show("Name at least one attribute");
+        await dropNew();
+        return null;
+      }
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: `[[${title}]]`, label: title, x: centre.x - 180, y: centre.y - 100, width: 360, height: 200 });
+      elements[0].customData = mergePlexusData(elements[0].customData, { attrs: names });
+      if (!await placeCard(editor, elements, "Page card")) {
+        await dropNew();
+        return null;
+      }
+      toaster.show("Page card added");
+      return pageUid;
+    });
+  }
+
+  async function setPageAttr({ pageUid, name, value, uid } = {}) {
+    const plan = attrWrite(name, value);
+    if (plan.action === "none") return "locked";
+    if (isId(uid)) {
+      const current = safe(() => host.pullBlock(uid));
+      if (parseAttr(current?.string)?.bt) return "locked";
+      try {
+        if (plan.action === "delete") await host.deleteBlock(uid);
+        else await api.data.block.update({ block: { uid, string: plan.string } });
+      } catch (error) {
+        console.warn("[plexus] attribute edit failed", error);
+        toaster.show("Could not save the attribute", { kind: "error" });
+        return null;
+      }
+      return plan.action === "delete" ? "delete" : "update";
+    }
+    if (plan.action === "delete" || !isId(pageUid)) return "none";
+    try {
+      await host.createBlock({ parentUid: pageUid, order: "last", string: plan.string });
+    } catch (error) {
+      console.warn("[plexus] attribute edit failed", error);
+      toaster.show("Could not save the attribute", { kind: "error" });
+      return null;
+    }
+    return "create";
+  }
+
+  async function liveQuery() {
+    return once("liveQuery", async () => {
+      const editor = openEditor();
+      if (!editor) return null;
+      const typed = await askCaption({ initial: "{{[[query]]: {and: [[TODO]] [[]]}}}", select: true, escape: "cancel", rect: null, drawing: true });
+      if (typed == null || !String(typed).trim()) return null;
+      const raw = String(typed).trim();
+      const stored = raw.includes("{{") ? raw : `{{[[query]]: ${raw}}}`;
+      const centre = viewCentre(editor.app);
+      const elements = makeEmbedAnchor({ ref: QUERY_REF, label: "Query", x: centre.x - 210, y: centre.y - 120, width: 420, height: 240 });
+      elements[0].customData = mergePlexusData(elements[0].customData, { liveQuery: stored });
+      if (!await placeCard(editor, elements, "Live query")) return null;
+      toaster.show(queryPageTitles(stored).length ? "Live query added" : "Query added. No page to watch");
+      return elements[0].id;
+    });
+  }
+
   async function syncExport(app, drawingUid) {
     if (!app || !isId(drawingUid)) return { action: "skip" };
     const children = safe(() => host.pullBlock(drawingUid)?.children) || [];
@@ -2384,6 +2531,11 @@ export function createActions({
     turnInto: (mode) => turnInto(mode),
     insertImageOrDrawing: () => insertImageOrDrawing(),
     setDrawingName: (uid) => setDrawingName(uid),
+    taskCard: (uid) => taskCard(uid),
+    toggleTask: (uid) => toggleTask(uid),
+    pageCard: () => pageCard(),
+    setPageAttr: (row) => setPageAttr(row),
+    liveQuery: () => liveQuery(),
     keepExportImage: () => keepExportImage(),
     keepLinkedReferences: (uid) => keepLinkedReferences(uid),
     syncOnClose: (app, drawingUid) => syncOnClose(app, drawingUid),
@@ -3785,14 +3937,14 @@ export function createActions({
     const patches = new Map();
     for (const anchor of embedAnchors(scene)) {
       const parsed = parseEmbedRef(anchor.customData.plexus.embed);
-      if (!parsed || parsed.kind === "today") continue;
+      if (!parsed || parsed.kind === "today" || parsed.kind === "query") continue;
       const bound = (anchor.boundElements || []).find((b) => b?.type === "text");
       const text = bound ? byId.get(bound.id) : null;
       if (!text || text.isDeleted || text.type !== "text" || text.containerId !== anchor.id) continue;
       let content = null;
       try { content = host.pullEmbedContent(parsed.ref); } catch { content = null; }
       if (!content || typeof content.then === "function") continue;
-      const label = embedLabel(content.string || content.title);
+      const label = embedLabel(taskLabel(content.string || "") || content.string || content.title);
       if (!label || label === (text.originalText ?? text.text)) continue;
       const laid = layoutAnchorLabel({
         label, x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height,

@@ -1,9 +1,13 @@
 import { embedAnchors, parseEmbedRef, TODAY_REF } from "../model/embeds.js";
 import { sceneToViewport } from "../model/scene.js";
 import { subscribeViewport } from "../host/native.js";
+import { taskParts } from "../model/mindmap.js";
+import { attrRows } from "../model/page-card.js";
+import { queryPageTitles } from "../model/query-live.js";
 
 export const EMBED_BLOCK_CAP = 30;
 export const WATCH_CAP = 150;
+const QUERY_WATCH_CAP = 16;
 const NOT_FOUND_RETRIES = [300, 1000, 3000];
 const HOUR_MS = 60 * 60 * 1000;
 const KEYBOARD_LEAVES = new Set(["keyboard", "escape", "enter", "focus-lost"]);
@@ -99,6 +103,8 @@ export function createEmbedOverlay({
   toast = () => {},
   onStateChange = () => {},
   onLoaded = () => {},
+  onToggleTask = null,
+  onAttrEdit = null,
   menuSelector = ROAM_MENU_SELECTOR,
 }) {
   const view = doc.defaultView;
@@ -113,6 +119,8 @@ export function createEmbedOverlay({
   let midnightTimer = null;
   let visListening = false;
   let watchCapLogged = false;
+  let queryCapLogged = false;
+  let queryWatchCount = 0;
 
   const requestFrame = (cb) => (typeof view?.requestAnimationFrame === "function" ? view.requestAnimationFrame(cb) : setTimeout(cb, 16));
   const cancelFrame = (id) => (typeof view?.cancelAnimationFrame === "function" ? view.cancelAnimationFrame(id) : clearTimeout(id));
@@ -139,9 +147,129 @@ export function createEmbedOverlay({
     return el;
   };
 
+  const listen = (el, type, fn) => { el.addEventListener?.(type, fn); };
+
+  const plexusMeta = (el) => {
+    const liveQuery = typeof el?.customData?.plexus?.liveQuery === "string" ? el.customData.plexus.liveQuery : "";
+    const raw = el?.customData?.plexus?.attrs;
+    const attrs = Array.isArray(raw) ? raw.filter((name) => typeof name === "string" && name) : [];
+    return { liveQuery, attrs };
+  };
+
+  const sameAttrs = (a, b) => a.length === b.length && a.every((name, i) => name === b[i]);
+
+  function releaseQueryWatches(portal) {
+    const list = portal.queryWatches || [];
+    portal.queryWatches = [];
+    for (const off of list) {
+      queryWatchCount = Math.max(0, queryWatchCount - 1);
+      try { off(); } catch (error) { console.warn("[plexus] query unwatch failed", error); }
+    }
+  }
+
+  function watchQueryPages(portal) {
+    const key = queryPageTitles(portal.liveQuery).join("\n");
+    if (portal.queryKey === key) return;
+    releaseQueryWatches(portal);
+    portal.queryKey = key;
+    if (!key || typeof host.pageUidByTitle !== "function" || typeof host.watchPageRefs !== "function") return;
+    for (const title of key.split("\n")) {
+      if (queryWatchCount >= QUERY_WATCH_CAP) {
+        if (!queryCapLogged) { queryCapLogged = true; console.warn(`[plexus] query watch cap ${QUERY_WATCH_CAP} reached`); }
+        break;
+      }
+      let uid = null;
+      try { uid = host.pageUidByTitle(title); } catch { uid = null; }
+      if (!uid) continue;
+      let dispose = null;
+      try {
+        dispose = host.watchPageRefs(uid, () => { dirty.add(portal); schedule(); });
+      } catch (error) {
+        console.warn("[plexus] query watch failed", error);
+        continue;
+      }
+      if (typeof dispose !== "function") continue;
+      portal.queryWatches.push(dispose);
+      queryWatchCount += 1;
+    }
+  }
+
+  const paintQuery = (portal) => {
+    unmountHosts(portal);
+    portal.body.textContent = "";
+    portal.root.className = "plexus-portal plexus-embed";
+    portal.title.textContent = "Query";
+    const q = portal.liveQuery || "";
+    if (!q) {
+      const empty = doc.createElement("div");
+      empty.className = "plexus-embed-empty";
+      empty.textContent = "No query";
+      portal.body.append(empty);
+      return;
+    }
+    renderInto(portal, portal.body, q, "plexus-embed-block");
+    if (!queryPageTitles(q).length) {
+      const note = doc.createElement("div");
+      note.className = "plexus-embed-empty";
+      note.textContent = "No page to watch";
+      portal.body.append(note);
+    }
+  };
+
+  const paintTask = (portal, content, task) => {
+    const box = doc.createElement("input");
+    box.type = "checkbox";
+    box.className = "plexus-task-check";
+    box.checked = task.state === "DONE";
+    listen(box, "pointerdown", (event) => event.stopPropagation?.());
+    listen(box, "click", (event) => {
+      event.stopPropagation?.();
+      const want = box.checked;
+      Promise.resolve(onToggleTask(content.uid)).then((next) => {
+        if (!next) box.checked = !want;
+      }).catch((error) => {
+        box.checked = !want;
+        console.warn("[plexus] task toggle failed", error);
+      });
+    });
+    portal.body.append(box);
+    renderInto(portal, portal.body, task.rest || "", "plexus-embed-block");
+  };
+
+  const paintAttrs = (portal, content) => {
+    for (const row of attrRows(content.children, portal.attrs)) {
+      const line = doc.createElement("div");
+      line.className = "plexus-attr-row";
+      const lab = doc.createElement("span");
+      lab.className = "plexus-attr-name";
+      lab.textContent = row.name;
+      line.append(lab);
+      if (row.editable && typeof onAttrEdit === "function") {
+        const input = doc.createElement("input");
+        input.className = "plexus-attr-value";
+        input.value = row.value;
+        listen(input, "pointerdown", (event) => event.stopPropagation?.());
+        listen(input, "keydown", (event) => {
+          event.stopPropagation?.();
+          if (event.key !== "Enter") return;
+          event.preventDefault?.();
+          Promise.resolve(onAttrEdit({ pageUid: content.uid, name: row.name, value: input.value, uid: row.uid })).catch((error) => console.warn("[plexus] attribute edit failed", error));
+        });
+        line.append(input);
+      } else {
+        const span = doc.createElement("span");
+        span.className = "plexus-attr-value plexus-attr-locked";
+        span.textContent = row.value;
+        line.append(span);
+      }
+      portal.body.append(line);
+    }
+  };
+
   const paint = (portal, content, today = null) => {
     unmountHosts(portal);
     portal.body.textContent = "";
+    portal.root.className = "plexus-portal plexus-embed";
     if (today) {
       portal.title.textContent = `Today · ${today.title || ""}`;
       if (!content) {
@@ -155,8 +283,17 @@ export function createEmbedOverlay({
       portal.title.textContent = content ? (content.kind === "page" ? content.title : content.pageTitle) || "" : "Block not found";
     }
     if (!content) return;
+    if (!today && content.kind === "page" && portal.attrs?.length) {
+      paintAttrs(portal, content);
+      return;
+    }
     let budget = EMBED_BLOCK_CAP;
-    if (content.kind !== "page" && content.string) {
+    const task = !today && content.kind !== "page" ? taskParts(content.string) : null;
+    if (task?.state && typeof onToggleTask === "function") {
+      portal.root.className = "plexus-portal plexus-embed plexus-embed--task";
+      paintTask(portal, content, task);
+      budget -= 1;
+    } else if (content.kind !== "page" && content.string) {
       renderInto(portal, portal.body, content.string, "plexus-embed-block");
       budget -= 1;
     }
@@ -229,6 +366,16 @@ export function createEmbedOverlay({
     if (portal.editing) { portal.stale = true; return; }
     const gen = ++portal.gen;
     const parsed = parseEmbedRef(portal.ref);
+    if (parsed?.kind === "query") {
+      if (disposed || portal.dead || gen !== portal.gen) return;
+      paintQuery(portal);
+      watchQueryPages(portal);
+      releaseWatch(portal);
+      try { onLoaded({ anchorId: portal.id, ref: portal.ref, content: { kind: "query", string: portal.liveQuery || "", title: "", children: [] } }); } catch (error) { console.warn("[plexus] onLoaded failed", error); }
+      return;
+    }
+    releaseQueryWatches(portal);
+    portal.queryKey = "";
     const isToday = parsed?.kind === "today";
     let ref = portal.ref;
     let today = null;
@@ -313,7 +460,8 @@ export function createEmbedOverlay({
     body.className = "plexus-embed-body";
     root.append(title, body);
     doc.body.append(root);
-    const portal = { id: el.id, root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false };
+    const meta = plexusMeta(el);
+    const portal = { id: el.id, root, title, body, hosts: new Set(), ref: el.customData.plexus.embed, uid: null, gen: 0, dead: false, theme: null, editing: false, stale: false, removing: false, session: null, todayTitle: null, missing: false, liveQuery: meta.liveQuery, attrs: meta.attrs, queryWatches: [], queryKey: "" };
     applyTheme(portal);
     portals.set(el.id, portal);
     void load(portal);
@@ -334,6 +482,8 @@ export function createEmbedOverlay({
     portal.dead = true;
     dirty.delete(portal);
     releaseWatch(portal);
+    releaseQueryWatches(portal);
+    portal.queryKey = "";
     unmountHosts(portal);
     portal.root.remove();
     armMidnight();
@@ -353,12 +503,25 @@ export function createEmbedOverlay({
     for (const el of anchors) {
       let portal = portals.get(el.id);
       const ref = el.customData.plexus.embed;
+      let refChanged = false;
       if (portal && portal.ref !== ref) {
+        refChanged = true;
         portal.ref = ref;
+        const meta = plexusMeta(el);
+        portal.liveQuery = meta.liveQuery;
+        portal.attrs = meta.attrs;
         if (!portal.editing) releaseWatch(portal);
         void load(portal);
       }
       if (!portal) portal = create(el);
+      else if (!refChanged) {
+        const meta = plexusMeta(el);
+        if (portal.liveQuery !== meta.liveQuery || !sameAttrs(portal.attrs || [], meta.attrs)) {
+          portal.liveQuery = meta.liveQuery;
+          portal.attrs = meta.attrs;
+          if (!portal.editing) void load(portal);
+        }
+      }
       const place = embedPlacement(el, app.state, containerRect);
       if (portal.editing) {
         const s = portal.session;

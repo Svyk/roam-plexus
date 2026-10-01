@@ -6,12 +6,14 @@ const UID_RE = /^[A-Za-z0-9_-]{9}$/;
 
 // Token for the live "today" embed. Only this exact string; "[[today]]" stays an ordinary page ref.
 export const TODAY_REF = "plexus:today";
+export const QUERY_REF = "plexus:query";
 
 // "((uid))", "[[Title]]", a bare 9-char uid or the today token -> { kind, uid?, title?, ref } or null.
 export function parseEmbedRef(text) {
   if (typeof text !== "string") return null;
   const t = text.trim();
   if (t === TODAY_REF) return { kind: "today", ref: TODAY_REF };
+  if (t === QUERY_REF) return { kind: "query", ref: QUERY_REF };
   let m = REF_RE.exec(t);
   if (m) return { kind: "block", uid: m[1], ref: `((${m[1]}))` };
   m = PAGE_RE.exec(t);

@@ -7,6 +7,8 @@ import { createColdRenderer } from "./host/cold-render.js";
 import { createToaster } from "./view/toast.js";
 import { baseZIndex, createEditorToolbar, installBackKey } from "./view/toolbar.js";
 import { createEmbedOverlay, installEmbedF2 } from "./view/embeds.js";
+import { installRefLines } from "./view/ref-lines.js";
+import { cardTexts } from "./model/ref-lines.js";
 import { createCanvasBacklinks } from "./view/backlinks.js";
 import { createPresenter } from "./view/present.js";
 import { installCanvasPaste } from "./view/canvas-paste.js";
@@ -1255,11 +1257,18 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           } catch (error) { console.warn("[plexus] toolbar refresh subscribe failed", error); }
           toolbar.refresh();
           mounted.disposers.push(hover.attach({ app, containerEl: el }));
+          const cardText = new Map();
+          mounted.disposers.push(installRefLines({ doc, app, containerEl: el, texts: cardText }));
           const overlay = createEmbedOverlay({
             doc, api, host, app, containerEl: el, zIndex: outer ? baseZIndex(doc, outer) : 1000,
             toast: (message) => toaster.show(message, { kind: "error" }),
             onStateChange: () => toolbar.refresh(),
-            onLoaded: () => actions.scheduleEmbedLabels(app),
+            onLoaded: (info) => {
+              actions.scheduleEmbedLabels(app);
+              if (info?.anchorId) cardText.set(info.anchorId, { ref: info.ref, texts: cardTexts(info.content) });
+            },
+            onToggleTask: (uid) => actions.toggleTask(uid),
+            onAttrEdit: (row) => actions.setPageAttr(row),
           });
           mounted.overlay = overlay;
           mounted.disposers.push(() => overlay.dispose());
@@ -1641,6 +1650,18 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "drawingName", label: "Drawing name\u2026", run: (ctx) => {
         if (!actions) return unavailable("drawingName");
         return Promise.resolve(actions.setDrawingName(ctx?.focusedUid)).catch((error) => console.warn("[plexus] drawing name failed", error));
+      } },
+      { id: "taskCard", label: "Task card\u2026", run: (ctx) => {
+        if (!actions) return unavailable("taskCard");
+        return Promise.resolve(actions.taskCard(ctx?.focusedUid)).catch((error) => console.warn("[plexus] task card failed", error));
+      } },
+      { id: "pageCard", label: "Page card\u2026", run: () => {
+        if (!actions) return unavailable("pageCard");
+        return Promise.resolve(actions.pageCard()).catch((error) => console.warn("[plexus] page card failed", error));
+      } },
+      { id: "liveQuery", label: "Live query\u2026", run: () => {
+        if (!actions) return unavailable("liveQuery");
+        return Promise.resolve(actions.liveQuery()).catch((error) => console.warn("[plexus] live query failed", error));
       } },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
