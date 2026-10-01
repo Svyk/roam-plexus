@@ -10,6 +10,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Where is this cited? is a command-list item. It opens that popover and writes nothing. The palette stays two entries.
 - Remove embed (block untouched) deletes only the anchor, then toasts that the block is unchanged. A region anchor that leaves toasts the same. Native Delete stays.
 - Cut: toolbar hint and 900 ms pulse.
+- Typing, editor closed, five rounds: -0.054 ms/key. Loaded mean 11.897. Unloaded mean 11.950.
 
 ## [0.17.0]
 

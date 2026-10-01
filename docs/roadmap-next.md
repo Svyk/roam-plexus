@@ -852,14 +852,13 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (52)
+### 6.1 Later (50)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
 | REF-9 | Region click chooser and second-order links | Adds a click to every region open; second-order links are Compass's job | Regions with many links become common | |
 | REF-13 | Multi-image blocks and rotated images | Rare; inverse rotation needs a 90-degree test | The image-index pick (S) can ship alone if needed | |
 | REF-16 | Image occlusion study cards | Reveal needs the hot path | After REF-7 | park |
-| REG-4 | Backlink residuals (page badges, add to canvas, "Where is this cited?") | Let the 0.6.1 counts settle; pull watches bill the host | After a fresh typing bench | |
 | AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
 | AUTH-13 | Styling helpers | Menu weight for marginal wins | The contrast rule can ride with mind-map colours | park |
@@ -905,7 +904,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | DATA-7 | Outline write-queue status chip | Toasts work | Failed outline writes occur | |
 | UX-6 | Per-drawing attributes | Attribute pages clutter All Pages; settings cover current needs | | |
 | UX-8 | Picker triggers (alias on selection, #tag, auto-pair, recents) | IME and auto-pair on the input path | | |
-| UX-10 | Feedback polish | Onboarding is not needed; the "Removed from the drawing, block unchanged" toast is the useful bit | A delete confuses someone | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 | REV-4 | Tags on elements and a tag filter | Typing `#tags` already makes refs; the filter needs the veil | After NAV-9 | park |
 ### Shipped from Later
@@ -919,6 +917,8 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | REF-14 | 0.17.0 | `7dac0b7` | Show as gallery wraps the regions container. Show as list returns to bullets. The container text stays |
 | REF-5 | 0.17.0 | `7dac0b7` | Size, alignment, bare, and padding on a block ref. The region block stays as written |
 | REF-10 | 0.17.0 | `7dac0b7` | A chooser when the selection has more than one kind. Escape cancels. Drill-down cut |
+| REG-4 | 0.18.0 | `e6e9ff4` | Page-link badge, Add to canvas with no arrow, Where is this cited? on the command list |
+| UX-10 | 0.18.0 | `e6e9ff4` | Remove embed deletes only the anchor and toasts that the block is unchanged. Hint and pulse cut |
 
 ### 6.2 Parked (17)
 
@@ -1075,7 +1075,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | REG-1 | Regions layer and geometry editing | P8 |
 | REG-2 | Regions for all frames | P8 (QW) |
 | REG-3 | Region audit and repair | P8 |
-| REG-4 | Backlink residuals | Later |
+| REG-4 | Backlink residuals | 0.18.0 |
 | REG-5 | Copy links, optional URL landing | P8 |
 | AUTH-1 | Embed picker | P9 (QW) |
 | AUTH-2 | Drag bullets onto the canvas | P10 |
@@ -1204,7 +1204,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | UX-7 | Picker: natural dates, create page | P9 |
 | UX-8 | Picker triggers | Later |
 | UX-9 | Preferences bundle | Parked |
-| UX-10 | Feedback polish | Later |
+| UX-10 | Feedback polish | 0.18.0 |
 | UX-11 | Floating mini-toolbar | Parked |
 | UX-12 | Expose hidden native actions | 0.16.0 |
 | REV-1 | Comment pins | Later |
