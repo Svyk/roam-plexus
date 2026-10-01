@@ -34,6 +34,10 @@ import { openInsertPicker } from "./view/insert-picker.js";
 import { nextStampNumber, stackCopies, stampElements, stickyElements } from "./model/stamps.js";
 import { MERMAID_BLOCK, flowchartElements, flowchartFromCards, parseFlowchart } from "./model/flowchart.js";
 import { EXPAND_ROLES, appendExpanded, chooseNeighbours, expandElements, neighbourRows, presentUids, selectedCard } from "./model/neighbours.js";
+import { breadcrumbRows, drawingNameOf, inboxList, refreshTransclusions, threadRows, transcludePatch, transcludeUid } from "./model/nesting.js";
+import { createBuilder } from "./model/build.js";
+import { openNamePrompt } from "./view/name-prompt.js";
+import { openThread, openTray } from "./view/tray.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const noop = () => {};
@@ -571,6 +575,8 @@ export function createActions({
   const newDone = new Map();
   const cards = new Map();
   let pending = null;
+  let closeInbox = () => {};
+  let closeThread = () => {};
 
   const rnd = () => Math.floor(Math.random() * 2 ** 31);
   const refText = (ref) => (ref && typeof ref === "object" ? ref.ref : ref);
@@ -601,6 +607,110 @@ export function createActions({
       return null;
     }
     return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
+  }
+
+  function readCrumb(uid) {
+    const info = host.blockInfo?.(uid);
+    if (!info) {
+      const title = host.pageTitleOf?.(uid);
+      return title ? { isPage: true, title } : null;
+    }
+    let name = "";
+    try { name = drawingNameOf(host.pullBlock?.(uid)?.children || []); }
+    catch (error) { console.warn("[plexus] drawing name failed", error); }
+    return {
+      string: info.string,
+      parentUid: info.parentIsPage ? info.pageUid : info.parentUid,
+      name,
+      isPage: false,
+    };
+  }
+
+  function askLine(title, submitLabel) {
+    if (!doc?.createElement) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const handle = openNamePrompt({
+        doc,
+        title,
+        submitLabel,
+        zIndex: 100004,
+        onSubmit: (value) => finish(String(value ?? "").trim()),
+        onClose: () => finish(null),
+      });
+      if (!handle) finish(null);
+    });
+  }
+
+  function commentParent(editor) {
+    const elements = sceneElements(editor.app);
+    const ids = new Set(native.selectedElementIds(editor.app));
+    const selected = elements.filter((el) => ids.has(el.id) && !el.isDeleted);
+    if (selected.length === 1) {
+      const embed = parseEmbedRef(selected[0]?.customData?.plexus?.embed);
+      if (embed?.kind === "block") return embed.uid;
+    }
+    return editor.drawingUid;
+  }
+
+  function pinElements(uid, label, centre) {
+    let n = 0;
+    const builder = createBuilder({ measure, newId: () => `plxcm${n++}` });
+    builder.text(centre.x, centre.y, label || "Comment", { customData: { plexus: { comment: uid } }, fontSize: 16 });
+    return builder.elements();
+  }
+
+  function showThread(uid) {
+    const block = host.pullBlock?.(uid);
+    if (!block) return null;
+    const thread = threadRows(block);
+    if (doc?.createElement && doc.body?.append) {
+      closeThread();
+      const handle = openThread({
+        doc,
+        thread,
+        zIndex: 100003,
+        onReply: async (text) => {
+          const created = await replyToComment(uid, text);
+          if (!created) return null;
+          const next = host.pullBlock?.(uid);
+          return next ? threadRows(next) : null;
+        },
+      });
+      closeThread = () => handle?.close?.();
+    }
+    return thread;
+  }
+
+  async function replyToComment(uid, text) {
+    const body = String(text ?? "").trim();
+    if (!uid || !body) return null;
+    try {
+      return await host.createBlock({ parentUid: uid, order: "last", string: body });
+    } catch (error) {
+      console.warn("[plexus] comment reply failed", error);
+      toaster.show("Could not add the reply", { kind: "error" });
+      return null;
+    }
+  }
+
+  function inboxRowsNow() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.drawingUid) return { rows: [], total: 0 };
+    const block = host.pullBlock?.(editor.drawingUid);
+    const children = (block?.children || []).map((child) => {
+      if (!String(child?.string ?? "").includes("excalidraw")) return child;
+      let name = "";
+      try { name = drawingNameOf(host.pullBlock?.(child.uid)?.children || []); }
+      catch (error) { console.warn("[plexus] inbox name failed", error); }
+      return name ? { ...child, name } : child;
+    });
+    return inboxList(children, sceneElements(editor.app));
   }
 
   function mermaidChildText(uid) {
@@ -2101,6 +2211,8 @@ export function createActions({
       pending = null;
       cards.clear();
       newDone.clear();
+      closeInbox();
+      closeThread();
       for (const revoke of [...revokers]) revoke();
       for (const stop of [...leaveWatches]) stop();
       leaveSilenced.clear();
@@ -2891,6 +3003,167 @@ export function createActions({
     addCitedEmbed,
 
     installAnchorLeaveWatch,
+
+    breadcrumb(uid) {
+      const start = uid || native.activeEditor(doc)?.drawingUid;
+      if (!start) return [];
+      return breadcrumbRows(start, readCrumb);
+    },
+
+    openCrumb: (row) => once(`crumb:${row?.uid}`, async () => {
+      if (!row?.uid) return null;
+      if (row.page || row.drawing === false) {
+        try { await host.openBlock(row.uid); }
+        catch (error) {
+          console.warn("[plexus] breadcrumb open failed", error);
+          toaster.show("Could not open that block", { kind: "error" });
+          return null;
+        }
+        return row.uid;
+      }
+      return openDrawingOnce(row.uid, { reuseIcon: true, placeholder: true, quiet: true });
+    }),
+
+    nestDrawing: () => once("nest-drawing", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      let created;
+      try {
+        created = await host.createDrawing({ parentUid: editor.drawingUid, order: "last" });
+      } catch (error) {
+        console.warn("[plexus] nest drawing failed", error);
+        toaster.show("Could not nest a drawing", { kind: "error" });
+        return null;
+      }
+      if (!created?.uid) return null;
+      toaster.show("Nested drawing");
+      try { await openDrawingOnce(created.uid, { reuseIcon: true, placeholder: true, quiet: true }); }
+      catch (error) { console.warn("[plexus] open nested drawing failed", error); }
+      return created.uid;
+    }),
+
+    inboxRows: () => inboxRowsNow(),
+
+    openInbox: () => once("inbox", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const { rows, total } = inboxRowsNow();
+      if (!rows.length) {
+        toaster.show("Nothing unplaced");
+        return [];
+      }
+      if (total > rows.length) toaster.show(`${rows.length} of ${total}`);
+      if (doc?.createElement && doc.body?.append) {
+        closeInbox();
+        const handle = openTray({
+          doc,
+          rows,
+          zIndex: 100003,
+          onPick: (uid) => { void placeBlocksRun([`((${uid}))`]); },
+        });
+        closeInbox = () => handle?.close?.();
+      }
+      return rows.map((row) => row.uid);
+    }),
+
+    refreshTransclusions() {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid || editor.app.state?.editingTextElement) return 0;
+      const current = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
+      const next = refreshTransclusions(current, (uid) => {
+        const info = host.blockInfo?.(uid);
+        return info ? String(info.string ?? "") : null;
+      });
+      if (!next) return 0;
+      const ok = guard.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Transclude block",
+        captureUpdate: "NEVER",
+        next: () => next,
+      });
+      return ok ? 1 : 0;
+    },
+
+    transcludeBlock: () => once("transclude", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const ids = new Set(native.selectedElementIds(editor.app));
+      const selected = sceneElements(editor.app).filter((el) => ids.has(el.id) && transcludeUid(el));
+      if (selected.length !== 1) {
+        toaster.show("Select one text element");
+        return null;
+      }
+      const uid = transcludeUid(selected[0]);
+      const info = host.blockInfo?.(uid);
+      if (!info) {
+        toaster.show("Block not found");
+        return null;
+      }
+      const patch = transcludePatch(selected[0], info.string);
+      if (!patch) {
+        toaster.show("Already current");
+        return uid;
+      }
+      const ok = guard.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Transclude block",
+        captureUpdate: "IMMEDIATELY",
+        next: (current) => current.map((el) => (el.id === patch.id ? patch : el)),
+      });
+      if (!ok) {
+        toaster.show("Could not update the text", { kind: "error" });
+        return null;
+      }
+      return uid;
+    }),
+
+    commentPin: (text) => once("comment-pin", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const body = typeof text === "string" ? text.trim() : await askLine("Comment", "Add");
+      if (body == null) return null;
+      if (!body) {
+        toaster.show("Type a comment");
+        return null;
+      }
+      let uid;
+      try {
+        uid = await host.createBlock({ parentUid: commentParent(editor), order: "last", string: body });
+      } catch (error) {
+        console.warn("[plexus] comment pin failed", error);
+        toaster.show("Could not write the comment", { kind: "error" });
+        return null;
+      }
+      const label = body.replace(/\s+/g, " ").trim().slice(0, 40) || "Comment";
+      const elements = pinElements(uid, label, viewCentre(editor.app));
+      if (!insertGuarded(editor.app, editor.drawingUid, elements, "Comment pin")) {
+        toaster.show("Could not add the pin", { kind: "error" });
+        return null;
+      }
+      showThread(uid);
+      return uid;
+    }),
+
+    commentReply: (uid, text) => once("comment-reply", () => replyToComment(uid, text)),
+
+    openCommentThread(uid) {
+      if (!uid) return null;
+      const thread = showThread(uid);
+      if (!thread) toaster.show("Comment not found");
+      return thread;
+    },
 
     openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
 

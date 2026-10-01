@@ -51,6 +51,7 @@ import { openEmbedPicker } from "./view/embed-picker.js";
 import { openCommandList } from "./view/command-list.js";
 import { openDrawingGallery } from "./view/drawing-gallery.js";
 import { openFrameList } from "./view/frame-list.js";
+import { mountBreadcrumb } from "./view/tray.js";
 import { installRefPaste } from "./view/paste.js";
 import { installNoteTool } from "./view/note-tool.js";
 import { createHotkeyRunner, installHotkeyGuard } from "./view/hotkeys.js";
@@ -1215,6 +1216,25 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           try { emitter.emit("editor-open", { uid: mountUid }); }
           catch (error) { console.warn("[plexus] editor-open failed", error); }
           try {
+            const rows = actions?.breadcrumb?.(mountUid) || [];
+            if (rows.length) {
+              const bar = mountBreadcrumb({
+                doc,
+                container: outer || el,
+                rows,
+                onOpen: (row) => actions.openCrumb(row),
+              });
+              mounted.disposers.push(() => bar.close());
+            }
+          } catch (error) { console.warn("[plexus] breadcrumb failed", error); }
+          const refreshRefs = () => {
+            try { actions?.refreshTransclusions?.(); }
+            catch (error) { console.warn("[plexus] transclude refresh failed", error); }
+          };
+          refreshRefs();
+          const refreshTimer = setTimeout(refreshRefs, 400);
+          mounted.disposers.push(() => clearTimeout(refreshTimer));
+          try {
             const prefs = getSettings();
             const before = captureView(app);
             const box = {
@@ -1778,6 +1798,10 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       { id: "frameList", label: "Frame list", run: () => openFrames() },
       { id: "exportMermaid", label: "Export mermaid", run: (ctx) => (actions ? Promise.resolve(actions.exportMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] export mermaid failed", error)) : unavailable("exportMermaid")) },
       { id: "importMermaid", label: "Import mermaid", run: (ctx) => (actions ? Promise.resolve(actions.importMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] import mermaid failed", error)) : unavailable("importMermaid")) },
+      { id: "nestDrawing", label: "Nest drawing", run: () => (actions ? Promise.resolve(actions.nestDrawing()).catch((error) => console.warn("[plexus] nest drawing failed", error)) : unavailable("nestDrawing")) },
+      { id: "inbox", label: "Inbox tray", run: () => (actions ? Promise.resolve(actions.openInbox()).catch((error) => console.warn("[plexus] inbox failed", error)) : unavailable("inbox")) },
+      { id: "transclude", label: "Transclude block", run: () => (actions ? Promise.resolve(actions.transcludeBlock()).catch((error) => console.warn("[plexus] transclude failed", error)) : unavailable("transclude")) },
+      { id: "commentPin", label: "Comment pin", run: () => (actions ? Promise.resolve(actions.commentPin()).catch((error) => console.warn("[plexus] comment pin failed", error)) : unavailable("commentPin")) },
       { id: "settings", label: "Region settings", run: () => openSettings() },
     ];
     let commandListHandle = null;

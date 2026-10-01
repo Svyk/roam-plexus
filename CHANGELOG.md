@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.32.0]
+- Nest drawing creates a child drawing under the open one and opens it. A breadcrumb lists the page and each ancestor drawing. A crumb opens that drawing. The name is the Name child, or Drawing.
+- Inbox tray lists at most twenty-four children of the drawing that are not already on the canvas. Name, mermaid, and region containers stay out. Choosing a row embeds that block.
+- A text element whose text is a block ref copies that block's words into the element. The uid stays on the element. The block is not written. Refresh runs when the editor opens.
+- Comment pin writes a child block and a text pin. The thread is that block's children. A reply adds a child. The block is the only writer.
+- The palette stays two entries. The command list is 86.
+
 ## [0.31.0]
 - Export mermaid writes one mermaid block under the drawing. Its one child starts with flowchart. Import mermaid lays out rectangles and arrows from that child. Other diagrams are left alone. Paste leaves the scene empty. No mermaid library is loaded.
 - Expand on a card adds at most twelve backlinks, children, outgoing refs, or parents. Both parents count. Cards already on the canvas are skipped. New cards sit to the right, with a labelled arrow.

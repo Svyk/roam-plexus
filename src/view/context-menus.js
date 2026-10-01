@@ -6,6 +6,7 @@ import { hotkeyFor } from "../settings.js";
 import { resolveRegionTarget } from "./regionref.js";
 import { ARRANGE_OPS } from "../model/arrange.js";
 import { selectedCard } from "../model/neighbours.js";
+import { transcludeUid } from "../model/nesting.js";
 
 const DRAWING_START = /^\s*\{\{(?:\[\[excalidraw\]\]|excalidraw)\}\}/;
 const PLEXUS_START = /^\s*\{\{\[\[plexus-/;
@@ -624,6 +625,8 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
   try { card = selectedCard(app?.getSceneElementsIncludingDeleted?.() ?? app?.getSceneElements?.() ?? [], selectedIds()); }
   catch { card = null; }
   const freeOne = !!(single && single.type === "text" && !single.containerId);
+  const pinUid = single?.type === "text" && typeof single.customData?.plexus?.comment === "string" ? single.customData.plexus.comment : "";
+  const canTransclude = !!(freeOne && transcludeUid(single));
   const imageOne = !!(single && single.type === "image");
   const embedOne = !!(single && single.type === "rectangle" && typeof single.customData?.plexus?.embed === "string");
   const turnKids = [
@@ -668,6 +671,8 @@ export function plexusCanvasItems({ app, native, actions, openSettings, drawingU
     { id: "expand-children", label: "Plexus: Expand children", enabled: !!card, run: call("expand-children", () => actions.expandNeighbours?.("children")) },
     { id: "expand-refs", label: "Plexus: Expand outgoing refs", enabled: !!card, run: call("expand-refs", () => actions.expandNeighbours?.("refs")) },
     { id: "expand-parents", label: "Plexus: Expand parents", enabled: !!card, run: call("expand-parents", () => actions.expandNeighbours?.("parents")) },
+    { id: "transclude", label: "Plexus: Transclude block", enabled: canTransclude, run: call("transclude", () => actions.transcludeBlock?.()) },
+    { id: "comment-thread", label: "Plexus: Comment thread", enabled: !!pinUid, run: call("comment-thread", () => actions.openCommentThread?.(pinUid)) },
     { id: "live-query", label: "Plexus: Live query\u2026", enabled: can(() => !!drawingUid), run: call("live-query", () => actions.liveQuery?.()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },

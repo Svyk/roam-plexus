@@ -1,4 +1,4 @@
-/* Plexus v0.31.0 | MIT | generated; edit src/ */
+/* Plexus v0.32.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -4195,7 +4195,7 @@ function embedPlacement(el, appState, containerRect) {
   }
   const p = sceneToViewport({ x: sx, y: sy, appState });
   const transform = `translate(${p.x}px, ${p.y}px) scale(${zoom}) rotate(${angle}rad)`;
-  let clip = null;
+  let clip2 = null;
   let hidden = false;
   if (!angle && containerRect) {
     const right = p.x + el.width * zoom;
@@ -4209,10 +4209,10 @@ function embedPlacement(el, appState, containerRect) {
         (bottom - containerRect.bottom) / zoom,
         (containerRect.left - p.x) / zoom
       ].map((v) => Math.max(0, v));
-      if (inset.some((v) => v > 0)) clip = `inset(${inset.map((v) => `${v}px`).join(" ")})`;
+      if (inset.some((v) => v > 0)) clip2 = `inset(${inset.map((v) => `${v}px`).join(" ")})`;
     }
   }
-  return { transform, clip, hidden, width: el.width, height: el.height };
+  return { transform, clip: clip2, hidden, width: el.width, height: el.height };
 }
 function createEmbedOverlay({
   doc,
@@ -4898,7 +4898,7 @@ function createEmbedOverlay({
   }
   function installStoppers(s) {
     const root = s.portal.root;
-    const stop = (e) => e.stopPropagation();
+    const stop2 = (e) => e.stopPropagation();
     const on = (list, type, fn) => {
       root.addEventListener(type, fn);
       list.push(() => root.removeEventListener(type, fn));
@@ -4907,7 +4907,7 @@ function createEmbedOverlay({
       if (MENU_KEYS.has(e.key) && doc.querySelector?.(menuSelector)) return;
       e.stopPropagation();
     };
-    for (const type of KEY_EVENTS) on(s.keyOffs, type, type === "keydown" || type === "keyup" ? stopKey : stop);
+    for (const type of KEY_EVENTS) on(s.keyOffs, type, type === "keydown" || type === "keyup" ? stopKey : stop2);
     for (const type of POINTER_ALWAYS) {
       on(s.pointerOffs, type, (e) => {
         if (type === "pointerdown" || type === "mousedown") s.downInside = true;
@@ -6001,15 +6001,15 @@ function createCanvasBacklinks({
     const el = doc.createElement("button");
     el.className = "plexus-backlink-badge";
     el.type = "button";
-    const stop = (e) => e?.stopPropagation?.();
+    const stop2 = (e) => e?.stopPropagation?.();
     const onClick = (e) => {
       e?.stopPropagation?.();
       e?.preventDefault?.();
       if (popover?.key === key) closePopover();
       else openPopover(key);
     };
-    el.addEventListener("pointerdown", stop);
-    el.addEventListener("mousedown", stop);
+    el.addEventListener("pointerdown", stop2);
+    el.addEventListener("mousedown", stop2);
     el.addEventListener("click", onClick);
     layer.append(el);
     return {
@@ -6023,8 +6023,8 @@ function createCanvasBacklinks({
       y: 0,
       hidden: false,
       detach() {
-        el.removeEventListener("pointerdown", stop);
-        el.removeEventListener("mousedown", stop);
+        el.removeEventListener("pointerdown", stop2);
+        el.removeEventListener("mousedown", stop2);
         el.removeEventListener("click", onClick);
         el.remove();
       }
@@ -6151,9 +6151,9 @@ function createCanvasBacklinks({
     const el = doc.createElement("div");
     el.className = themed("plexus-portal plexus-backlink-popover", app.state?.theme === "dark");
     el.style.zIndex = String(zIndex + 3);
-    const stop = (e) => e?.stopPropagation?.();
-    el.addEventListener("mousedown", stop);
-    el.addEventListener("pointerdown", stop);
+    const stop2 = (e) => e?.stopPropagation?.();
+    el.addEventListener("mousedown", stop2);
+    el.addEventListener("pointerdown", stop2);
     const hosts = [];
     const rowHandlers = [];
     for (const ref of badge.refs.slice(0, BACKLINK_ROW_CAP)) {
@@ -6222,7 +6222,7 @@ function createCanvasBacklinks({
       el.append(more);
     }
     doc.body.append(el);
-    popover = { key, el, hosts, stop, rowHandlers };
+    popover = { key, el, hosts, stop: stop2, rowHandlers };
     doc.addEventListener("keydown", onKey, true);
     doc.addEventListener("mousedown", onOutside, true);
     doc.addEventListener("wheel", onOutside, true);
@@ -7930,12 +7930,12 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
     }
   };
   const stopHover = (el, info) => {
-    const stop = (e) => e.stopPropagation();
-    el.addEventListener("mouseover", stop);
-    el.addEventListener("mouseout", stop);
+    const stop2 = (e) => e.stopPropagation();
+    el.addEventListener("mouseover", stop2);
+    el.addEventListener("mouseout", stop2);
     info.disposers.push(() => {
-      el.removeEventListener?.("mouseover", stop);
-      el.removeEventListener?.("mouseout", stop);
+      el.removeEventListener?.("mouseover", stop2);
+      el.removeEventListener?.("mouseout", stop2);
     });
   };
   const unclaim = (root, info) => {
@@ -11993,13 +11993,13 @@ function installMmChrome({ doc, app, containerEl, getModel, onAdd, onFold } = {}
     el.textContent = text;
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
-    const stop = (e) => {
+    const stop2 = (e) => {
       e.preventDefault?.();
       e.stopPropagation?.();
     };
-    el.addEventListener?.("pointerdown", stop);
+    el.addEventListener?.("pointerdown", stop2);
     el.addEventListener?.("click", (e) => {
-      stop(e);
+      stop2(e);
       run();
     });
     host.append(el);
@@ -12233,7 +12233,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
     let dirty = false;
     let scheduled = null;
     let deleteToasted = false;
-    let clip = null;
+    let clip2 = null;
     let pendingDelete = null;
     let input = null;
     const fontSig = /* @__PURE__ */ new Map();
@@ -13413,16 +13413,16 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         toast("The root cannot be cut");
         return null;
       }
-      clip = { mode, uid: sel.uid, root: sel.root };
+      clip2 = { mode, uid: sel.uid, root: sel.root };
       toast(mode === "cut" ? "Branch cut" : "Branch copied");
       return null;
     }
     async function paste(sel) {
-      if (!clip) {
+      if (!clip2) {
         toast("Cut or copy a branch first");
         return null;
       }
-      const source = clip;
+      const source = clip2;
       const opts = source.root !== sel.root ? { targetRootUid: sel.root } : {};
       const result = source.mode === "cut" ? await writer.moveBranch(source.root, source.uid, sel.uid, opts) : await writer.copyBranch(source.root, source.uid, sel.uid, opts);
       if (!result || result.ok === false) {
@@ -13432,7 +13432,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         else if (reason === "excluded") toast("Drawings cannot be copied here");
         else toast(WRITE_FAILED, { kind: "error" });
       } else {
-        if (source.mode === "cut") clip = null;
+        if (source.mode === "cut") clip2 = null;
         if (result.skipped) toast(`Skipped ${result.skipped} drawing block${result.skipped === 1 ? "" : "s"}`);
       }
       refreshRoot(sel.root);
@@ -13679,7 +13679,7 @@ function createMindMap({ doc, api = globalThis.roamAlphaAPI, writer, measurer, n
         }
         watches.clear();
         trees.clear();
-        clip = null;
+        clip2 = null;
         pendingDelete = null;
         createdAt.clear();
         rootDefaults.clear();
@@ -14509,8 +14509,8 @@ function openRestoreDialog({ doc, zIndex = 1e5, session = [], loadSaved, onResto
       console.warn("[plexus] restore dialog close failed", error);
     }
   };
-  const stop = (e) => e?.stopPropagation?.();
-  for (const type of STOP_EVENTS) root.addEventListener(type, stop);
+  const stop2 = (e) => e?.stopPropagation?.();
+  for (const type of STOP_EVENTS) root.addEventListener(type, stop2);
   root.addEventListener("keydown", (e) => {
     if (e?.key === "Escape") {
       e.preventDefault?.();
@@ -14951,12 +14951,12 @@ function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, repla
   root.style.zIndex = String(Number(zIndex) + 2);
   let closed = false;
   let busy2 = false;
-  const stop = (e) => e?.stopPropagation?.();
+  const stop2 = (e) => e?.stopPropagation?.();
   const close2 = () => {
     if (closed) return;
     closed = true;
     if (current3 === handle) current3 = null;
-    for (const type of ISOLATED2) root.removeEventListener?.(type, stop);
+    for (const type of ISOLATED2) root.removeEventListener?.(type, stop2);
     root.removeEventListener?.("keydown", onKey);
     root.remove?.();
     try {
@@ -14975,7 +14975,7 @@ function openOutlinePreview({ doc, zIndex = 1e5, headings = [], count = 0, repla
       close2();
     }
   };
-  for (const type of ISOLATED2) root.addEventListener(type, stop);
+  for (const type of ISOLATED2) root.addEventListener(type, stop2);
   root.addEventListener("keydown", onKey);
   const button = (label, handler) => {
     const b = el("button", "plexus-toolbar-button", label);
@@ -17759,8 +17759,8 @@ function mountMinimap({ doc, app, outer, getEnabled = () => true, subscribe: sub
   const listen = () => {
     if (off) return;
     try {
-      const stop2 = subscribe2(schedule);
-      off = typeof stop2 === "function" ? stop2 : () => {
+      const stop3 = subscribe2(schedule);
+      off = typeof stop3 === "function" ? stop3 : () => {
       };
     } catch (error) {
       console.warn("[plexus] minimap subscribe failed", error);
@@ -17770,10 +17770,10 @@ function mountMinimap({ doc, app, outer, getEnabled = () => true, subscribe: sub
   };
   const quiet = () => {
     if (off) {
-      const stop2 = off;
+      const stop3 = off;
       off = null;
       try {
-        stop2();
+        stop3();
       } catch (error) {
         console.warn("[plexus] minimap unsubscribe failed", error);
       }
@@ -17797,13 +17797,13 @@ function mountMinimap({ doc, app, outer, getEnabled = () => true, subscribe: sub
     if (!next) return;
     app.updateScene({ appState: { scrollX: next.scrollX, scrollY: next.scrollY }, captureUpdate: "NEVER" });
   };
-  const stop = (event) => {
+  const stop2 = (event) => {
     event?.stopPropagation?.();
     event?.preventDefault?.();
   };
   let dragging = false;
   const onDown = (event) => {
-    stop(event);
+    stop2(event);
     dragging = true;
     try {
       node.setPointerCapture?.(event.pointerId);
@@ -17813,12 +17813,12 @@ function mountMinimap({ doc, app, outer, getEnabled = () => true, subscribe: sub
   };
   const onMove = (event) => {
     if (!dragging) return;
-    stop(event);
+    stop2(event);
     pan(event);
   };
   const onUp = (event) => {
     dragging = false;
-    stop(event);
+    stop2(event);
   };
   node.addEventListener("pointerdown", onDown);
   node.addEventListener("pointermove", onMove);
@@ -18012,12 +18012,12 @@ function openAuditDialog({ doc, rows = [], onOpen = () => {
   const d = el("dialog", `plexus-portal plexus-legacy plexus-audit${dark ? " plexus-audit--dark" : ""}`);
   const summary = el("div", "plexus-legacy-summary");
   const list = el("div", "plexus-legacy-rows plexus-audit-rows");
-  const stop = (e) => e?.stopPropagation?.();
-  for (const type of STOP_EVENTS2) d.addEventListener(type, stop);
+  const stop2 = (e) => e?.stopPropagation?.();
+  for (const type of STOP_EVENTS2) d.addEventListener(type, stop2);
   const close2 = () => {
     if (closed) return;
     closed = true;
-    for (const type of STOP_EVENTS2) d.removeEventListener?.(type, stop);
+    for (const type of STOP_EVENTS2) d.removeEventListener?.(type, stop2);
     d.removeEventListener?.("cancel", close2);
     d.removeEventListener?.("close", close2);
     try {
@@ -18248,7 +18248,7 @@ function createLiveShow({
     } catch {
     }
   };
-  const stop = () => {
+  const stop2 = () => {
     token2 += 1;
     if (timer != null) cancel(timer);
     timer = null;
@@ -18260,11 +18260,11 @@ function createLiveShow({
     build = b;
     status();
     if (!animate || ms === 0) {
-      stop();
+      stop2();
       writeView2?.(to);
       return;
     }
-    stop();
+    stop2();
     const mine = token2;
     const from = readView?.() || to;
     const t0 = clock();
@@ -18315,7 +18315,7 @@ function createLiveShow({
     exit() {
       if (dead) return;
       dead = true;
-      stop();
+      stop2();
       if (saved) writeView2?.(saved);
       try {
         onChrome?.(false);
@@ -20558,6 +20558,305 @@ function flowchartFromCards(elements, selectedIds) {
   return lines.join("\n");
 }
 
+// src/model/nesting.js
+var INBOX_CAP = 24;
+var THREAD_CAP = 20;
+var CRUMB_CAP = 8;
+var DRAWING_RE5 = /^(\{\{\[\[excalidraw\]\]\}\}|\{\{excalidraw\}\})/;
+var SKIP_EXACT = /* @__PURE__ */ new Set(["{{[[mermaid]]}}", "{{[[plexus-cards]]}}", "{{[[plexus-regions]]}}"]);
+function isDrawingString(value) {
+  return DRAWING_RE5.test(String(value ?? "").trim());
+}
+function clip(text, max = 40) {
+  return embedLabel(text, max);
+}
+function breadcrumbRows(uid, read) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  let cur = uid;
+  for (let i = 0; i < CRUMB_CAP && cur && !seen.has(cur); i += 1) {
+    seen.add(cur);
+    let row = null;
+    try {
+      row = read(cur);
+    } catch {
+      row = null;
+    }
+    if (!row) break;
+    if (row.isPage) {
+      out.push({ uid: cur, label: clip(row.title || "Page"), page: true, drawing: false });
+      break;
+    }
+    if (isDrawingString(row.string)) {
+      out.push({ uid: cur, label: clip(row.name || "Drawing"), page: false, drawing: true });
+      cur = row.parentUid || null;
+      continue;
+    }
+    out.push({ uid: cur, label: clip(row.string) || "Block", page: false, drawing: false });
+    break;
+  }
+  return out.reverse();
+}
+function referencedUids(elements) {
+  const found = /* @__PURE__ */ new Set();
+  for (const el of liveElements(elements)) {
+    const plexus = el?.customData?.plexus;
+    if (plexus && typeof plexus === "object") {
+      const embed = parseEmbedRef(plexus.embed);
+      if (embed?.uid) found.add(embed.uid);
+      for (const key of ["transclude", "comment", "query"]) {
+        if (typeof plexus[key] === "string" && plexus[key]) found.add(plexus[key]);
+      }
+    }
+    for (const raw of [el?.link, el?.originalText, el?.text]) {
+      const ref = parseEmbedRef(String(raw ?? "").trim());
+      if (ref?.kind === "block") found.add(ref.uid);
+    }
+  }
+  return found;
+}
+function skipInbox(string) {
+  const text = String(string ?? "").trim();
+  if (!text) return false;
+  if (text.startsWith("Name::")) return true;
+  if (SKIP_EXACT.has(text)) return true;
+  if (text.startsWith("{{[[plexus-")) return true;
+  return false;
+}
+function inboxLabel(child) {
+  if (isDrawingString(child?.string)) return clip(child.name || "Drawing", 60);
+  return clip(child?.string, 60) || "(empty)";
+}
+function inboxList(children, elements) {
+  const placed = referencedUids(elements);
+  const all = [];
+  for (const child of children || []) {
+    if (!child?.uid || placed.has(child.uid) || skipInbox(child.string)) continue;
+    all.push({ uid: child.uid, label: inboxLabel(child) });
+  }
+  return { rows: all.slice(0, INBOX_CAP), total: all.length };
+}
+function transcludeUid(el) {
+  if (!el || el.type !== "text" || el.containerId) return null;
+  const stored = el.customData?.plexus?.transclude;
+  if (typeof stored === "string" && stored) return stored;
+  const ref = parseEmbedRef(String(el.originalText ?? "").trim()) || parseEmbedRef(String(el.text ?? "").trim());
+  return ref?.kind === "block" ? ref.uid : null;
+}
+function transcludePatch(el, blockString) {
+  const uid = transcludeUid(el);
+  if (!uid) return null;
+  const text = embedLabel(blockString, 240) || "(empty)";
+  if (el.customData?.plexus?.transclude === uid && el.text === text && el.originalText === text) return null;
+  return {
+    ...el,
+    text,
+    originalText: text,
+    version: (Number(el.version) || 1) + 1,
+    customData: {
+      ...el.customData && typeof el.customData === "object" ? el.customData : {},
+      plexus: { ...el.customData?.plexus || {}, transclude: uid }
+    }
+  };
+}
+function refreshTransclusions(elements, stringOf) {
+  let changed = false;
+  const next = (elements || []).map((el) => {
+    const uid = transcludeUid(el);
+    if (!uid) return el;
+    let raw = null;
+    try {
+      raw = stringOf(uid);
+    } catch {
+      return el;
+    }
+    if (typeof raw !== "string") return el;
+    const patch = transcludePatch(el, raw);
+    if (!patch) return el;
+    changed = true;
+    return patch;
+  });
+  return changed ? next : null;
+}
+function threadRows(block, cap = THREAD_CAP) {
+  const children = Array.isArray(block?.children) ? block.children : [];
+  return {
+    uid: block?.uid ?? null,
+    text: embedLabel(block?.string, 160) || "(empty)",
+    replies: children.slice(0, cap).map((child) => ({
+      uid: child.uid,
+      text: embedLabel(child.string, 160) || "(empty)"
+    })),
+    total: children.length
+  };
+}
+function drawingNameOf2(children) {
+  return drawingName(children)?.value || "";
+}
+
+// src/view/tray.js
+var MIN_Z = 100003;
+function stop(e) {
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
+function mountRoot(doc, className, zIndex) {
+  const root = doc.createElement("div");
+  root.className = className;
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z));
+  root.addEventListener?.("pointerdown", stop);
+  root.addEventListener?.("mousedown", stop);
+  return root;
+}
+function mountBreadcrumb({ doc, container, rows = [], onOpen } = {}) {
+  if (!doc?.createElement || !rows.length) return { close() {
+  } };
+  const root = mountRoot(doc, "plexus-portal plexus-crumbs", 0);
+  rows.forEach((row, index) => {
+    if (index) {
+      const sep = doc.createElement("span");
+      sep.className = "plexus-crumb-sep";
+      sep.textContent = "/";
+      root.append(sep);
+    }
+    const last = index === rows.length - 1;
+    const el = doc.createElement(last ? "span" : "button");
+    el.className = last ? "plexus-crumb plexus-crumb-current" : "plexus-crumb";
+    el.textContent = row.label;
+    if (!last) {
+      el.type = "button";
+      el.addEventListener?.("click", (event) => {
+        stop(event);
+        try {
+          onOpen?.(row);
+        } catch (error) {
+          console.warn("[plexus] breadcrumb open failed", error);
+        }
+      });
+    }
+    root.append(el);
+  });
+  try {
+    (container || doc.body)?.append?.(root);
+  } catch (error) {
+    console.warn("[plexus] breadcrumb failed", error);
+  }
+  return { root, close() {
+    try {
+      root.remove?.();
+    } catch {
+    }
+  } };
+}
+function openTray({ doc, rows = [], onPick, zIndex = 0 } = {}) {
+  if (!doc?.createElement) return { close() {
+  } };
+  const root = mountRoot(doc, "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-tray", zIndex);
+  const title = doc.createElement("div");
+  title.className = "plexus-picker-header";
+  title.textContent = "Unplaced";
+  const list = doc.createElement("div");
+  list.className = "rm-autocomplete__results-scroll";
+  for (const row of rows) {
+    const button = doc.createElement("button");
+    button.type = "button";
+    button.className = "plexus-tray-row";
+    button.textContent = row.label;
+    button.setAttribute?.("data-uid", row.uid);
+    button.addEventListener?.("click", (event) => {
+      stop(event);
+      try {
+        onPick?.(row.uid);
+      } catch (error) {
+        console.warn("[plexus] inbox place failed", error);
+      }
+    });
+    list.append(button);
+  }
+  root.append(title, list);
+  try {
+    doc.body?.append?.(root);
+  } catch (error) {
+    console.warn("[plexus] inbox failed", error);
+  }
+  return { root, close() {
+    try {
+      root.remove?.();
+    } catch {
+    }
+  } };
+}
+function openThread({ doc, thread, onReply, zIndex = 0 } = {}) {
+  if (!doc?.createElement || !thread) return { close() {
+  } };
+  let dead = false;
+  const root = mountRoot(doc, "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-thread", zIndex);
+  const title = doc.createElement("div");
+  title.className = "plexus-picker-header";
+  title.textContent = "Comment";
+  const list = doc.createElement("div");
+  list.className = "rm-autocomplete__results-scroll";
+  const paint = (current7) => {
+    if (typeof list.replaceChildren === "function") list.replaceChildren();
+    else list.children = [];
+    const head = doc.createElement("div");
+    head.className = "plexus-thread-head";
+    head.textContent = current7?.text || "";
+    list.append(head);
+    for (const reply of current7?.replies || []) {
+      const line = doc.createElement("div");
+      line.className = "plexus-thread-reply";
+      line.textContent = reply.text;
+      list.append(line);
+    }
+  };
+  paint(thread);
+  const input = doc.createElement("input");
+  input.type = "text";
+  input.className = "plexus-name-input";
+  const button = doc.createElement("button");
+  button.type = "button";
+  button.className = "plexus-toolbar-button";
+  button.textContent = "Reply";
+  const send = () => {
+    const text = String(input.value ?? "").trim();
+    if (!text || dead) return;
+    Promise.resolve(onReply?.(text)).then((next) => {
+      input.value = "";
+      if (next && Array.isArray(next.replies)) paint(next);
+    }).catch((error) => {
+      console.warn("[plexus] comment reply failed", error);
+    });
+  };
+  button.addEventListener?.("click", (event) => {
+    stop(event);
+    send();
+  });
+  input.addEventListener?.("keydown", (event) => {
+    event.stopPropagation?.();
+    if (event.key === "Enter") {
+      event.preventDefault?.();
+      send();
+    }
+  });
+  root.append(title, list, input, button);
+  try {
+    doc.body?.append?.(root);
+  } catch (error) {
+    console.warn("[plexus] comment thread failed", error);
+  }
+  return {
+    root,
+    close() {
+      dead = true;
+      try {
+        root.remove?.();
+      } catch {
+      }
+    }
+  };
+}
+
 // src/actions.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var noop = () => {
@@ -21045,6 +21344,10 @@ function createActions({
   const newDone = /* @__PURE__ */ new Map();
   const cards = /* @__PURE__ */ new Map();
   let pending = null;
+  let closeInbox = () => {
+  };
+  let closeThread = () => {
+  };
   const rnd6 = () => Math.floor(Math.random() * 2 ** 31);
   const refText = (ref) => ref && typeof ref === "object" ? ref.ref : ref;
   const isValidDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
@@ -21071,6 +21374,109 @@ function createActions({
       return null;
     }
     return elements.find((el) => !el.containerId)?.id ?? elements[0].id;
+  }
+  function readCrumb(uid) {
+    const info = host.blockInfo?.(uid);
+    if (!info) {
+      const title = host.pageTitleOf?.(uid);
+      return title ? { isPage: true, title } : null;
+    }
+    let name = "";
+    try {
+      name = drawingNameOf2(host.pullBlock?.(uid)?.children || []);
+    } catch (error) {
+      console.warn("[plexus] drawing name failed", error);
+    }
+    return {
+      string: info.string,
+      parentUid: info.parentIsPage ? info.pageUid : info.parentUid,
+      name,
+      isPage: false
+    };
+  }
+  function askLine(title, submitLabel) {
+    if (!doc?.createElement) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const handle = openNamePrompt({
+        doc,
+        title,
+        submitLabel,
+        zIndex: 100004,
+        onSubmit: (value) => finish(String(value ?? "").trim()),
+        onClose: () => finish(null)
+      });
+      if (!handle) finish(null);
+    });
+  }
+  function commentParent(editor) {
+    const elements = sceneElements(editor.app);
+    const ids = new Set(native.selectedElementIds(editor.app));
+    const selected = elements.filter((el) => ids.has(el.id) && !el.isDeleted);
+    if (selected.length === 1) {
+      const embed = parseEmbedRef(selected[0]?.customData?.plexus?.embed);
+      if (embed?.kind === "block") return embed.uid;
+    }
+    return editor.drawingUid;
+  }
+  function pinElements(uid, label, centre) {
+    let n = 0;
+    const builder = createBuilder({ measure: measure3, newId: () => `plxcm${n++}` });
+    builder.text(centre.x, centre.y, label || "Comment", { customData: { plexus: { comment: uid } }, fontSize: 16 });
+    return builder.elements();
+  }
+  function showThread(uid) {
+    const block = host.pullBlock?.(uid);
+    if (!block) return null;
+    const thread = threadRows(block);
+    if (doc?.createElement && doc.body?.append) {
+      closeThread();
+      const handle = openThread({
+        doc,
+        thread,
+        zIndex: 100003,
+        onReply: async (text) => {
+          const created = await replyToComment(uid, text);
+          if (!created) return null;
+          const next = host.pullBlock?.(uid);
+          return next ? threadRows(next) : null;
+        }
+      });
+      closeThread = () => handle?.close?.();
+    }
+    return thread;
+  }
+  async function replyToComment(uid, text) {
+    const body = String(text ?? "").trim();
+    if (!uid || !body) return null;
+    try {
+      return await host.createBlock({ parentUid: uid, order: "last", string: body });
+    } catch (error) {
+      console.warn("[plexus] comment reply failed", error);
+      toaster2.show("Could not add the reply", { kind: "error" });
+      return null;
+    }
+  }
+  function inboxRowsNow() {
+    const editor = native.activeEditor(doc);
+    if (!editor?.drawingUid) return { rows: [], total: 0 };
+    const block = host.pullBlock?.(editor.drawingUid);
+    const children = (block?.children || []).map((child) => {
+      if (!String(child?.string ?? "").includes("excalidraw")) return child;
+      let name = "";
+      try {
+        name = drawingNameOf2(host.pullBlock?.(child.uid)?.children || []);
+      } catch (error) {
+        console.warn("[plexus] inbox name failed", error);
+      }
+      return name ? { ...child, name } : child;
+    });
+    return inboxList(children, sceneElements(editor.app));
   }
   function mermaidChildText(uid) {
     if (!uid || typeof host.blockInfo !== "function") return null;
@@ -22617,8 +23023,10 @@ function createActions({
       pending = null;
       cards.clear();
       newDone.clear();
+      closeInbox();
+      closeThread();
       for (const revoke of [...revokers]) revoke();
-      for (const stop of [...leaveWatches]) stop();
+      for (const stop2 of [...leaveWatches]) stop2();
       leaveSilenced.clear();
     },
     // The drawing image tool is bound to the mounted editor; cancel it when that editor goes away.
@@ -23359,6 +23767,163 @@ function createActions({
     removeSelectedEmbed,
     addCitedEmbed,
     installAnchorLeaveWatch,
+    breadcrumb(uid) {
+      const start = uid || native.activeEditor(doc)?.drawingUid;
+      if (!start) return [];
+      return breadcrumbRows(start, readCrumb);
+    },
+    openCrumb: (row) => once(`crumb:${row?.uid}`, async () => {
+      if (!row?.uid) return null;
+      if (row.page || row.drawing === false) {
+        try {
+          await host.openBlock(row.uid);
+        } catch (error) {
+          console.warn("[plexus] breadcrumb open failed", error);
+          toaster2.show("Could not open that block", { kind: "error" });
+          return null;
+        }
+        return row.uid;
+      }
+      return openDrawingOnce(row.uid, { reuseIcon: true, placeholder: true, quiet: true });
+    }),
+    nestDrawing: () => once("nest-drawing", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      let created;
+      try {
+        created = await host.createDrawing({ parentUid: editor.drawingUid, order: "last" });
+      } catch (error) {
+        console.warn("[plexus] nest drawing failed", error);
+        toaster2.show("Could not nest a drawing", { kind: "error" });
+        return null;
+      }
+      if (!created?.uid) return null;
+      toaster2.show("Nested drawing");
+      try {
+        await openDrawingOnce(created.uid, { reuseIcon: true, placeholder: true, quiet: true });
+      } catch (error) {
+        console.warn("[plexus] open nested drawing failed", error);
+      }
+      return created.uid;
+    }),
+    inboxRows: () => inboxRowsNow(),
+    openInbox: () => once("inbox", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const { rows, total } = inboxRowsNow();
+      if (!rows.length) {
+        toaster2.show("Nothing unplaced");
+        return [];
+      }
+      if (total > rows.length) toaster2.show(`${rows.length} of ${total}`);
+      if (doc?.createElement && doc.body?.append) {
+        closeInbox();
+        const handle = openTray({
+          doc,
+          rows,
+          zIndex: 100003,
+          onPick: (uid) => {
+            void placeBlocksRun([`((${uid}))`]);
+          }
+        });
+        closeInbox = () => handle?.close?.();
+      }
+      return rows.map((row) => row.uid);
+    }),
+    refreshTransclusions() {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid || editor.app.state?.editingTextElement) return 0;
+      const current7 = editor.app.getSceneElementsIncludingDeleted?.() ?? sceneElements(editor.app);
+      const next = refreshTransclusions(current7, (uid) => {
+        const info = host.blockInfo?.(uid);
+        return info ? String(info.string ?? "") : null;
+      });
+      if (!next) return 0;
+      const ok = guard2.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Transclude block",
+        captureUpdate: "NEVER",
+        next: () => next
+      });
+      return ok ? 1 : 0;
+    },
+    transcludeBlock: () => once("transclude", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const ids = new Set(native.selectedElementIds(editor.app));
+      const selected = sceneElements(editor.app).filter((el) => ids.has(el.id) && transcludeUid(el));
+      if (selected.length !== 1) {
+        toaster2.show("Select one text element");
+        return null;
+      }
+      const uid = transcludeUid(selected[0]);
+      const info = host.blockInfo?.(uid);
+      if (!info) {
+        toaster2.show("Block not found");
+        return null;
+      }
+      const patch = transcludePatch(selected[0], info.string);
+      if (!patch) {
+        toaster2.show("Already current");
+        return uid;
+      }
+      const ok = guard2.guardedWrite(editor.app, {
+        drawingUid: editor.drawingUid,
+        label: "Transclude block",
+        captureUpdate: "IMMEDIATELY",
+        next: (current7) => current7.map((el) => el.id === patch.id ? patch : el)
+      });
+      if (!ok) {
+        toaster2.show("Could not update the text", { kind: "error" });
+        return null;
+      }
+      return uid;
+    }),
+    commentPin: (text) => once("comment-pin", async () => {
+      const editor = native.activeEditor(doc);
+      if (!editor?.app || !editor.drawingUid) {
+        toaster2.show("Open a drawing full-screen first", { kind: "error" });
+        return null;
+      }
+      const body = typeof text === "string" ? text.trim() : await askLine("Comment", "Add");
+      if (body == null) return null;
+      if (!body) {
+        toaster2.show("Type a comment");
+        return null;
+      }
+      let uid;
+      try {
+        uid = await host.createBlock({ parentUid: commentParent(editor), order: "last", string: body });
+      } catch (error) {
+        console.warn("[plexus] comment pin failed", error);
+        toaster2.show("Could not write the comment", { kind: "error" });
+        return null;
+      }
+      const label = body.replace(/\s+/g, " ").trim().slice(0, 40) || "Comment";
+      const elements = pinElements(uid, label, viewCentre(editor.app));
+      if (!insertGuarded(editor.app, editor.drawingUid, elements, "Comment pin")) {
+        toaster2.show("Could not add the pin", { kind: "error" });
+        return null;
+      }
+      showThread(uid);
+      return uid;
+    }),
+    commentReply: (uid, text) => once("comment-reply", () => replyToComment(uid, text)),
+    openCommentThread(uid) {
+      if (!uid) return null;
+      const thread = showThread(uid);
+      if (!thread) toaster2.show("Comment not found");
+      return thread;
+    },
     openDrawing: (uid, { sidebar = false, placeholder = false } = {}) => once(`opendrawing:${uid}`, () => openDrawingOnce(uid, { sidebar, reuseIcon: true, placeholder })),
     mindMapFromOutline: (blockUid) => once(`mindmap:${blockUid}`, () => mindMapFromOutlineOnce(blockUid)),
     openRegion: (regionUid, opts) => once(`open:${regionUid}`, () => openRegionOnce(regionUid, opts)),
@@ -25558,10 +26123,10 @@ function createActions({
     } catch (error) {
       console.warn("[plexus] anchor leave watch failed", error);
     }
-    const stop = () => {
+    const stop2 = () => {
       if (stopped) return;
       stopped = true;
-      leaveWatches.delete(stop);
+      leaveWatches.delete(stop2);
       try {
         off?.();
       } catch (error) {
@@ -25569,8 +26134,8 @@ function createActions({
       }
       off = null;
     };
-    leaveWatches.add(stop);
-    return stop;
+    leaveWatches.add(stop2);
+    return stop2;
   }
   async function legacyDryRunOnce() {
     let rows;
@@ -27588,6 +28153,8 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     card = null;
   }
   const freeOne = !!(single && single.type === "text" && !single.containerId);
+  const pinUid = single?.type === "text" && typeof single.customData?.plexus?.comment === "string" ? single.customData.plexus.comment : "";
+  const canTransclude = !!(freeOne && transcludeUid(single));
   const imageOne = !!(single && single.type === "image");
   const embedOne = !!(single && single.type === "rectangle" && typeof single.customData?.plexus?.embed === "string");
   const turnKids = [
@@ -27631,6 +28198,8 @@ function plexusCanvasItems({ app, native, actions, openSettings, drawingUid, gua
     { id: "expand-children", label: "Plexus: Expand children", enabled: !!card, run: call("expand-children", () => actions.expandNeighbours?.("children")) },
     { id: "expand-refs", label: "Plexus: Expand outgoing refs", enabled: !!card, run: call("expand-refs", () => actions.expandNeighbours?.("refs")) },
     { id: "expand-parents", label: "Plexus: Expand parents", enabled: !!card, run: call("expand-parents", () => actions.expandNeighbours?.("parents")) },
+    { id: "transclude", label: "Plexus: Transclude block", enabled: canTransclude, run: call("transclude", () => actions.transcludeBlock?.()) },
+    { id: "comment-thread", label: "Plexus: Comment thread", enabled: !!pinUid, run: call("comment-thread", () => actions.openCommentThread?.(pinUid)) },
     { id: "live-query", label: "Plexus: Live query…", enabled: can(() => !!drawingUid), run: call("live-query", () => actions.liveQuery?.()) },
     { id: "add-notes", label: "Plexus: Add notes", enabled: can(() => actions.selectedFrameId()), run: call("add-notes", () => actions.addNotesForFrame({ drawingUid, frameId: actions.selectedFrameId() })) },
     { id: "mindmap", label: "Plexus: Mind map", enabled: true, kbd: kbd("mindmap"), run: call("mindmap", () => actions.startMindMap()) },
@@ -27831,8 +28400,8 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     return node;
   };
   const d = el("dialog", `plexus-portal plexus-settings${dark ? " plexus-settings--dark" : ""}`);
-  const stop = (e) => e?.stopPropagation?.();
-  for (const type of STOP_EVENTS3) d.addEventListener(type, stop);
+  const stop2 = (e) => e?.stopPropagation?.();
+  for (const type of STOP_EVENTS3) d.addEventListener(type, stop2);
   const stored = (f) => {
     let v;
     try {
@@ -27933,7 +28502,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
     closed = true;
     commit();
     open3.delete(doc);
-    for (const type of STOP_EVENTS3) d.removeEventListener?.(type, stop);
+    for (const type of STOP_EVENTS3) d.removeEventListener?.(type, stop2);
     d.removeEventListener?.("cancel", close2);
     d.removeEventListener?.("close", close2);
     try {
@@ -27966,7 +28535,7 @@ function openSettingsDialog({ doc, get = () => void 0, set = () => {
 // src/view/embed-picker.js
 var TODAY_REF2 = "plexus:today";
 var ACTIVE_BG2 = "rgb(213, 218, 223)";
-var MIN_Z = 100003;
+var MIN_Z2 = 100003;
 var WIDTH = 400;
 var UID_RE5 = /^[A-Za-z0-9_-]{9}$/;
 var SEMANTIC_TIMEOUT = 1500;
@@ -28009,7 +28578,7 @@ function openEmbedPicker({
   let picked = false;
   const root = doc.createElement("div");
   root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker";
-  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z));
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z2));
   const input = doc.createElement("input");
   input.className = "plexus-portal plexus-picker-input";
   input.setAttribute("type", "text");
@@ -28028,13 +28597,13 @@ function openEmbedPicker({
   footer.append(footerTitle);
   main.append(scroll, footer);
   root.append(input, main);
-  const stop = (e) => e.stopPropagation();
-  root.addEventListener("pointerdown", stop);
+  const stop2 = (e) => e.stopPropagation();
+  root.addEventListener("pointerdown", stop2);
   root.addEventListener("mousedown", (e) => {
     if (e.target !== input) e.preventDefault();
     e.stopPropagation();
   });
-  root.addEventListener("click", stop);
+  root.addEventListener("click", stop2);
   function place2() {
     const a = anchorRect || { left: 100, top: 100 };
     let left = a.left ?? 100;
@@ -28381,7 +28950,7 @@ function openEmbedPicker({
 
 // src/view/command-list.js
 var ACTIVE_BG3 = "rgb(213, 218, 223)";
-var MIN_Z2 = 100003;
+var MIN_Z3 = 100003;
 var warn5 = (what, ...rest) => console.warn(`[plexus] ${what}`, ...rest);
 var open5 = /* @__PURE__ */ new WeakMap();
 function filterCommands(commands, query) {
@@ -28412,7 +28981,7 @@ function openCommandList({
   let lastMouse = null;
   const root = doc.createElement("div");
   root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-cmdlist";
-  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z2));
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z3));
   const input = doc.createElement("input");
   input.className = "plexus-portal plexus-picker-input";
   input.setAttribute("type", "text");
@@ -28431,13 +29000,13 @@ function openCommandList({
   footer.append(footerTitle);
   main.append(scroll, footer);
   root.append(input, main);
-  const stop = (e) => e.stopPropagation();
-  root.addEventListener("pointerdown", stop);
+  const stop2 = (e) => e.stopPropagation();
+  root.addEventListener("pointerdown", stop2);
   root.addEventListener("mousedown", (e) => {
     if (e.target !== input) e.preventDefault();
     e.stopPropagation();
   });
-  root.addEventListener("click", stop);
+  root.addEventListener("click", stop2);
   const onDocPointer = (e) => {
     if (!(e?.target && root.contains?.(e.target))) close2();
   };
@@ -28563,8 +29132,8 @@ function openCommandList({
   }
   input.addEventListener("input", onInput);
   input.addEventListener("keydown", onKeydown);
-  input.addEventListener("keyup", stop);
-  input.addEventListener("keypress", stop);
+  input.addEventListener("keyup", stop2);
+  input.addEventListener("keypress", stop2);
   input.addEventListener("blur", onBlur);
   open5.set(doc, { handle, focus });
   try {
@@ -28644,7 +29213,7 @@ async function attachThumbs(rows, { lookup, maxWidth = THUMB_MAX } = {}) {
 }
 
 // src/view/drawing-gallery.js
-var MIN_Z3 = 100003;
+var MIN_Z4 = 100003;
 var openPanels = /* @__PURE__ */ new WeakMap();
 var warn6 = (what, error) => console.warn(`[plexus] drawing gallery ${what} failed`, error);
 function clearNode(node) {
@@ -28663,7 +29232,7 @@ function openDrawingGallery({ doc, api, hashOf, lookup, openDrawing, toast, zInd
   let dead = false;
   const root = doc.createElement("div");
   root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-gallery";
-  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z3));
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z4));
   const main = doc.createElement("div");
   main.className = "rm-autocomplete__results-main";
   const scroll = doc.createElement("div");
@@ -28676,13 +29245,13 @@ function openDrawingGallery({ doc, api, hashOf, lookup, openDrawing, toast, zInd
   footer.append(footerTitle);
   main.append(scroll, footer);
   root.append(main);
-  const stop = (e) => e.stopPropagation?.();
-  root.addEventListener("pointerdown", stop);
+  const stop2 = (e) => e.stopPropagation?.();
+  root.addEventListener("pointerdown", stop2);
   root.addEventListener("mousedown", (e) => {
     e.preventDefault?.();
-    stop(e);
+    stop2(e);
   });
-  root.addEventListener("click", stop);
+  root.addEventListener("click", stop2);
   function close2() {
     if (dead) return;
     dead = true;
@@ -28733,7 +29302,7 @@ function openDrawingGallery({ doc, api, hashOf, lookup, openDrawing, toast, zInd
       label.textContent = row.label;
       line.append(label);
       line.addEventListener("click", (e) => {
-        stop(e);
+        stop2(e);
         const uid = row.uid;
         close2();
         try {
@@ -28787,7 +29356,7 @@ function openDrawingGallery({ doc, api, hashOf, lookup, openDrawing, toast, zInd
 }
 
 // src/view/frame-list.js
-var MIN_Z4 = 100003;
+var MIN_Z5 = 100003;
 var openPanels2 = /* @__PURE__ */ new WeakMap();
 var warn7 = (what, error) => console.warn(`[plexus] frame list ${what} failed`, error);
 function clearNode2(node) {
@@ -28811,7 +29380,7 @@ function openFrameList({ doc, app, container, toast, zIndex = 0 } = {}) {
   const parent = container || doc.body;
   const root = doc.createElement("div");
   root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-picker plexus-framelist";
-  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z4));
+  root.style.zIndex = String(Math.max(zIndex || 0, MIN_Z5));
   const main = doc.createElement("div");
   main.className = "rm-autocomplete__results-main";
   const scroll = doc.createElement("div");
@@ -28824,13 +29393,13 @@ function openFrameList({ doc, app, container, toast, zIndex = 0 } = {}) {
   footer.append(footerTitle);
   main.append(scroll, footer);
   root.append(main);
-  const stop = (e) => e.stopPropagation?.();
-  root.addEventListener("pointerdown", stop);
+  const stop2 = (e) => e.stopPropagation?.();
+  root.addEventListener("pointerdown", stop2);
   root.addEventListener("mousedown", (e) => {
     e.preventDefault?.();
-    stop(e);
+    stop2(e);
   });
-  root.addEventListener("click", stop);
+  root.addEventListener("click", stop2);
   function sceneElements() {
     try {
       return app.scene?.getNonDeletedElements?.() || [];
@@ -28930,7 +29499,7 @@ function openFrameList({ doc, app, container, toast, zIndex = 0 } = {}) {
       jump.textContent = frame.label;
       jump.setAttribute("data-testid", `plexus-frame-${frame.id}`);
       jump.addEventListener("click", (e) => {
-        stop(e);
+        stop2(e);
         const el = sceneElements().find((item) => item.id === frame.id);
         if (!el || typeof app.scrollToContent !== "function") {
           try {
@@ -28955,7 +29524,7 @@ function openFrameList({ doc, app, container, toast, zIndex = 0 } = {}) {
       hide.textContent = hidden.has(frame.id) ? "Show" : "Hide";
       hide.setAttribute("data-testid", `plexus-hide-${frame.id}`);
       hide.addEventListener("click", (e) => {
-        stop(e);
+        stop2(e);
         if (hidden.has(frame.id)) hidden.delete(frame.id);
         else hidden.add(frame.id);
         placeCovers();
@@ -29983,9 +30552,9 @@ function createDock({
       if (e.key === "Escape" && !isTextarea(e.target)) return;
       e.stopPropagation();
     };
-    const stop = (e) => e.stopPropagation();
-    for (const type of KEY_EVENTS2) on(el, type, type === "keydown" || type === "keyup" ? stopKey : stop);
-    for (const type of POINTER_EVENTS) on(el, type, stop);
+    const stop2 = (e) => e.stopPropagation();
+    for (const type of KEY_EVENTS2) on(el, type, type === "keydown" || type === "keyup" ? stopKey : stop2);
+    for (const type of POINTER_EVENTS) on(el, type, stop2);
     on(el, "click", (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       if (e.target?.closest?.(".rm-bullet")) {
@@ -30717,10 +31286,10 @@ function installTextLinks({
       rows.push(row);
     });
     root.append(scroll);
-    const stop = (ev) => ev.stopPropagation();
-    root.addEventListener("keyup", stop);
-    root.addEventListener("keypress", stop);
-    root.addEventListener("pointerdown", stop);
+    const stop2 = (ev) => ev.stopPropagation();
+    root.addEventListener("keyup", stop2);
+    root.addEventListener("keypress", stop2);
+    root.addEventListener("pointerdown", stop2);
     root.addEventListener("mousedown", (ev) => {
       ev.preventDefault?.();
       ev.stopPropagation();
@@ -32365,6 +32934,30 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             console.warn("[plexus] editor-open failed", error);
           }
           try {
+            const rows = actions?.breadcrumb?.(mountUid) || [];
+            if (rows.length) {
+              const bar = mountBreadcrumb({
+                doc,
+                container: outer || el,
+                rows,
+                onOpen: (row) => actions.openCrumb(row)
+              });
+              mounted.disposers.push(() => bar.close());
+            }
+          } catch (error) {
+            console.warn("[plexus] breadcrumb failed", error);
+          }
+          const refreshRefs = () => {
+            try {
+              actions?.refreshTransclusions?.();
+            } catch (error) {
+              console.warn("[plexus] transclude refresh failed", error);
+            }
+          };
+          refreshRefs();
+          const refreshTimer2 = setTimeout(refreshRefs, 400);
+          mounted.disposers.push(() => clearTimeout(refreshTimer2));
+          try {
             const prefs = getSettings();
             const before = captureView(app);
             const box = {
@@ -32597,10 +33190,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
             getSettings,
             onSelect: selectCard,
             onCopy: (text) => {
-              const clip = globalThis.navigator?.clipboard;
+              const clip2 = globalThis.navigator?.clipboard;
               const write = () => {
-                if (!clip?.writeText) throw new Error("[plexus] clipboard unavailable");
-                return clip.writeText(text);
+                if (!clip2?.writeText) throw new Error("[plexus] clipboard unavailable");
+                return clip2.writeText(text);
               };
               Promise.resolve(withClipboard(write)).then(
                 () => toaster2.show("Link copied"),
@@ -33050,6 +33643,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       { id: "frameList", label: "Frame list", run: () => openFrames() },
       { id: "exportMermaid", label: "Export mermaid", run: (ctx) => actions ? Promise.resolve(actions.exportMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] export mermaid failed", error)) : unavailable("exportMermaid") },
       { id: "importMermaid", label: "Import mermaid", run: (ctx) => actions ? Promise.resolve(actions.importMermaid(ctx?.focusedUid)).catch((error) => console.warn("[plexus] import mermaid failed", error)) : unavailable("importMermaid") },
+      { id: "nestDrawing", label: "Nest drawing", run: () => actions ? Promise.resolve(actions.nestDrawing()).catch((error) => console.warn("[plexus] nest drawing failed", error)) : unavailable("nestDrawing") },
+      { id: "inbox", label: "Inbox tray", run: () => actions ? Promise.resolve(actions.openInbox()).catch((error) => console.warn("[plexus] inbox failed", error)) : unavailable("inbox") },
+      { id: "transclude", label: "Transclude block", run: () => actions ? Promise.resolve(actions.transcludeBlock()).catch((error) => console.warn("[plexus] transclude failed", error)) : unavailable("transclude") },
+      { id: "commentPin", label: "Comment pin", run: () => actions ? Promise.resolve(actions.commentPin()).catch((error) => console.warn("[plexus] comment pin failed", error)) : unavailable("commentPin") },
       { id: "settings", label: "Region settings", run: () => openSettings() }
     ];
     let commandListHandle = null;
