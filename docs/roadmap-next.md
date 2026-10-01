@@ -852,15 +852,12 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (55)
+### 6.1 Later (52)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
-| REF-5 | Per-ref size, alignment, bare style, padding | Knobs; the ask was tidy, not options. `refOverrides` becomes an object in P7, so this stays cheap | A real layout need appears | |
 | REF-9 | Region click chooser and second-order links | Adds a click to every region open; second-order links are Compass's job | Regions with many links become common | |
-| REF-10 | Region kind chooser and drill-down targets | Auto-detection works | An ambiguous selection bites | park |
 | REF-13 | Multi-image blocks and rotated images | Rare; inverse rotation needs a 90-degree test | The image-index pick (S) can ship alone if needed | |
-| REF-14 | Gallery layout for the regions container | Horizontal-outline width rules vs 280 px cards unknown | Cheap opt-in experiment | park |
 | REF-16 | Image occlusion study cards | Reveal needs the hot path | After REF-7 | park |
 | REG-4 | Backlink residuals (page badges, add to canvas, "Where is this cited?") | Let the 0.6.1 counts settle; pull watches bill the host | After a fresh typing bench | |
 | AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | UX-12 | 0.16.0 | `a5ee31d` | Lock or unlock selection, and Unlock all, on the command list |
 | DATA-4 | 0.16.0 | `a5ee31d` | Copy diagnostics, on the command list |
 | PERF-2 | 0.16.0 | `a5ee31d` | Crop generation prefix `nN|` when the extension version changes |
+| REF-14 | 0.17.0 | `7dac0b7` | Show as gallery wraps the regions container. Show as list returns to bullets. The container text stays |
+| REF-5 | 0.17.0 | `7dac0b7` | Size, alignment, bare, and padding on a block ref. The region block stays as written |
+| REF-10 | 0.17.0 | `7dac0b7` | A chooser when the selection has more than one kind. Escape cancels. Drill-down cut |
 
 ### 6.2 Parked (17)
 
@@ -1059,16 +1059,16 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | REF-2 | Whole image or drawing: own ref | P7 (QW) |
 | REF-3 | Alias refs as region refs | P7 (QW) |
 | REF-4 | Source peek | P8 |
-| REF-5 | Per-ref size, alignment, bare, padding | Later |
+| REF-5 | Per-ref size, alignment, bare, padding | 0.17.0 |
 | REF-6 | Crop refresh on editor close | P7 (QW) |
 | REF-7 | Crisp 2x/3x hot crops, dark export | P8 |
 | REF-8 | Region metadata chips | P15 |
 | REF-9 | Region click chooser | Later |
-| REF-10 | Region kind chooser | Later |
+| REF-10 | Region kind chooser | 0.17.0 |
 | REF-11 | New region kinds | Parked |
 | REF-12 | Send a region to a page | P16 |
 | REF-13 | Multi-image blocks, rotated images | Later |
-| REF-14 | Gallery layout for regions container | Later |
+| REF-14 | Gallery layout for regions container | 0.17.0 |
 | REF-15 | Auto-caption quality | P7 (QW) |
 | REF-16 | Image occlusion study cards | Later |
 | REF-17 | Pin-drop with caption prompt | P7 (QW) |
