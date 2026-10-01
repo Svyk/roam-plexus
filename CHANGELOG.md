@@ -9,6 +9,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Expand on a card adds at most twelve backlinks, children, outgoing refs, or parents. Both parents count. Cards already on the canvas are skipped. New cards sit to the right, with a labelled arrow.
 - Listeners cover editor open and close, a scene change, paste, drop, and a cancelable link click. spec, help, and validate describe the current API. apiVersion stays 6.
 - The palette stays two entries. The command list is 82.
+- Typing, editor closed, five rounds: +0.164 ms/key. Loaded mean 12.074. Unloaded mean 11.909.
 
 ## [0.30.0]
 - Drawing gallery lists at most forty drawings, newest first. A tile uses the crop cache only. A miss stays blank. Choosing a row opens that drawing.

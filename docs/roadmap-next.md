@@ -852,7 +852,7 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (8)
+### 6.1 Later (5)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
@@ -860,9 +860,6 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
 | EMB-7 | Text-element transclusion of `((uid))` | Two writers on one element | After a spike on which field Roam serializes into the tail | park |
-| GRAPH-2 | Expand neighbours around a card | Compass owns neighbourhoods; needs caps and culling | | |
-| EXP-6 | Mermaid import/export | The native converter is probably absent in Roam's bundle; a parser creeps | Export to `{{mermaid}}` is the easy half | park |
-| API-2 | Event hooks and a self-describing API | Only "change" exists; an unfiltered scene hook runs on every pointer move | Compass or a script needs a hook | |
 | REV-1 | Comment pins with threads | Single reviewer today; Roam's native comment on the region block is the cheap route | Multiple reviewers; after REG-1 | |
 ### Shipped from Later
 
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | NAV-11 | 0.30.0 | `0618712` | Drawing gallery lists at most forty drawings, newest first. A cache miss stays blank. Choosing a row opens that drawing |
 | NAV-6 | 0.30.0 | `0618712` | Frame list shows the open drawing's frames. Choosing one scrolls to it. The outline dock stays the Roam children |
 | AUTH-21 | 0.30.0 | `0618712` | Hide covers a frame on screen. It does not write opacity. Closing the editor drops the covers |
+| EXP-6 | 0.31.0 | `5788da2` | Export writes one mermaid block under the drawing. Its one child starts with flowchart. Import lays out rectangles and arrows. Other diagrams are left alone |
+| GRAPH-2 | 0.31.0 | `5788da2` | Expand on a card adds at most twelve backlinks, children, outgoing refs, or parents. Cards already present are skipped. New cards sit to the right |
+| API-2 | 0.31.0 | `5788da2` | Listeners cover editor open and close, a scene change, paste, drop, and a cancelable link click. apiVersion stays 6 |
 
 ### 6.2 Parked (17)
 
@@ -1122,7 +1122,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | NAV-12 | Floating pins | Parked |
 | NAV-13 | Open in graph / mentions view | 0.19.0 |
 | GRAPH-1 | Arrows as typed relations | P15 |
-| GRAPH-2 | Expand neighbours | Later |
+| GRAPH-2 | Expand neighbours | 0.31.0 |
 | GRAPH-3 | Ref lines between embeds | 0.27.0 |
 | GRAPH-4 | Graph analysis helpers | Rejected |
 | GRAPH-5 | Drawing to outline | P12 |
@@ -1180,12 +1180,12 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | EXP-3 | Frames as PDF pages | P11 |
 | EXP-4 | Scene JSON export/import | 0.25.0 |
 | EXP-5 | Paste canvas elements into a block | P11 |
-| EXP-6 | Mermaid import/export | Later |
+| EXP-6 | Mermaid import/export | 0.31.0 |
 | EXP-7 | Chart from a table | Rejected |
 | EXP-8 | PDF pages into the canvas | Rejected |
 | EXP-9 | Auto-synced export image block | 0.25.0 |
 | API-1 | Builder helpers | P12 |
-| API-2 | Event hooks, self-describing API | Later |
+| API-2 | Event hooks, self-describing API | 0.31.0 |
 | API-3 | Agent surface, scene.describe() | P16 |
 | API-4 | Script engine | Rejected |
 | DATA-1 | Snapshots and restore | P12 |
