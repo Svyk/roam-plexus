@@ -852,13 +852,10 @@ M · value high · depends: API-1 · Fable next 4/4 · Opus later 3/3
 
 Opus column: shown only where the Opus judge differed from Fable's verdict.
 
-### 6.1 Later (14)
+### 6.1 Later (11)
 
 | ID | Item | Why later | Revisit when | Opus |
 |---|---|---|---|---|
-| REF-9 | Region click chooser and second-order links | Adds a click to every region open; second-order links are Compass's job | Regions with many links become common | |
-| REF-13 | Multi-image blocks and rotated images | Rare; inverse rotation needs a 90-degree test | The image-index pick (S) can ship alone if needed | |
-| AUTH-6 | Sticky notes, number stamps, stack | Text elements already work as stamps; sticky paper is aesthetic. Numbered pins on images moved into REF-17 (P7) in review | Canvas number stamps (S) if numbering free-standing points gets tedious | |
 | AUTH-7 | Spawn next connected element | Excalidraw's native Cmd/Ctrl+Arrow flowchart creator is live in Roam's build (`phase4-contract.md:230-232`) and may already do it; MM-12 covers process flows | After the DATA-5 probe (P7) records what the native keys do | |
 | AUTH-16 | Nested drawings with breadcrumb | Hierarchy already lives in the outline; slow editor switching; soft cold tiles | A nesting workflow appears | park |
 | AUTH-20 | Inbox tray of unplaced blocks | The NAV-7 dock with "already embedded" marks does the same | The dock proves too heavy | |
@@ -919,6 +916,9 @@ Opus column: shown only where the Opus judge differed from Fable's verdict.
 | MM-10 | 0.28.0 | `9012476` | A link opens that outline beside this map |
 | AUTH-13 | 0.28.0 | `9012476` | Contrast picks black or white ink from the fill |
 | GRAPH-11 | 0.28.0 | `9012476` | One plain text follows the region caption. Markup and conflict write nothing |
+| REF-13 | 0.29.0 | `50508cc` | A block with several images uses S to pick the next one. A rotated drawing image keeps its angle |
+| REF-9 | 0.29.0 | `50508cc` | Two or more links in a region caption open a chooser. One link still opens the region |
+| AUTH-6 | 0.29.0 | `50508cc` | A sticky is a yellow note with bound text. A number stamp is the next number. Stack places one copy underneath |
 
 ### 6.2 Parked (17)
 
@@ -983,7 +983,7 @@ The P0-P6 ledger in [`roadmap.md`](roadmap.md) carries six open items. Where eac
 | 1x cold crops may be revisited (user, 2026-09-28) | REF-7, P8 |
 | Opening a drawing in the sidebar restores Roam's stored sidebar windows | CMP-1 risk and P8 gate item 8 (Compass "Open in sidebar"); re-recorded if Roam's behavior is unchanged |
 | Embed of a not-yet-existing `[[Title]]` page does not watch for the page to appear (needs a title-keyed watch) | AUTH-1 risk and P9 gate item 2 ("Create page X" then embed) |
-| `createPlainImageRegion` targets image index 0 only | REF-13, Later |
+| `createPlainImageRegion` cycles the image with S | REF-13, 0.29.0 |
 | Frame kinds: cold-crop frame label at `frame.y - 20.5` must match the hot SVG | REF-7 risk and P8 gate item 10 (2x capture); PRES-3's `frameRendering {name: false}` must hide the same label in both paths |
 
 ## 7. Fable's view
@@ -1063,11 +1063,11 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | REF-6 | Crop refresh on editor close | P7 (QW) |
 | REF-7 | Crisp 2x/3x hot crops, dark export | P8 |
 | REF-8 | Region metadata chips | P15 |
-| REF-9 | Region click chooser | Later |
+| REF-9 | Region click chooser | 0.29.0 |
 | REF-10 | Region kind chooser | 0.17.0 |
 | REF-11 | New region kinds | Parked |
 | REF-12 | Send a region to a page | P16 |
-| REF-13 | Multi-image blocks, rotated images | Later |
+| REF-13 | Multi-image blocks, rotated images | 0.29.0 |
 | REF-14 | Gallery layout for regions container | 0.17.0 |
 | REF-15 | Auto-caption quality | P7 (QW) |
 | REF-16 | Image occlusion study cards | 0.24.0 |
@@ -1082,7 +1082,7 @@ One home per item. "QW" marks items also shortlisted in section 4. Totals: P7 9,
 | AUTH-3 | New note card | P9 |
 | AUTH-4 | Shift+Enter embeds from picker | P9 |
 | AUTH-5 | Place many at once | P9 |
-| AUTH-6 | Sticky notes and stamps | Later |
+| AUTH-6 | Sticky notes and stamps | 0.29.0 |
 | AUTH-7 | Spawn next connected element | Later |
 | AUTH-8 | Frame presets and slide frames | P11 |
 | AUTH-9 | Arrange and tidy | P13 |

@@ -49,6 +49,7 @@ Standing constraints:
 | B11 | Someday batch 11: turn into page, insert image, and drawing name (GRAPH-6, AUTH-14, UX-6) | Live gate (Readwisenotes) | done 2026-10-01, 0.26.0 (`381cab6`); live: one Name child, props stayed, selected text became a page embed and the arrow followed, an existing title became a link with no body, an image left the canvas with no upload, Enter fitted the image and Shift+Enter used the drawing bounds; typing -0.201 ms/key |
 | B12 | Someday batch 12: task cards, live queries, page cards, and hover lines (EMB-5, EMB-3, EMB-2, GRAPH-3) | Live gate (Readwisenotes) | done 2026-10-01, 0.27.0 (`ccc2996`); live: a checkbox swapped the macro and left the attribute child, a page card wrote one attribute and reused the page, a query repainted after a matching to-do, a query with no page stayed a snapshot, a hover line appeared and left with the pointer; typing -0.038 ms/key |
 | B13 | Someday batch 13: mind map styles, paste, chrome, and region text (MM-5, MM-6, MM-9, MM-3, MM-4, MM-10, AUTH-13, GRAPH-11) | Live gate (Readwisenotes) | done 2026-10-01, 0.28.0 (`9012476`); live: first look left the caption, then the text wrote it; both sides, Alt+L to right, org chart widened the sibling gap by 18, Alt+L to right; ellipse, arrow, ink, contrast; a link opened that outline beside the map; a drawing paste was refused and an indented paste added children; plus added a child; AUTH-7 stayed a native key with no command; typing +0.129 ms/key |
+| B14 | Someday batch 14: image cycle, caption chooser, and stamps (REF-13, REF-9, AUTH-6) | Live gate (Readwisenotes) | done 2026-10-01, 0.29.0 (`50508cc`); live: S picked the second image, a rotated pin stayed in the image box, two caption links opened a chooser and one link opened the region, a yellow sticky, number stamps, and one stacked copy; typing +0.086 ms/key |
 
 Resolved defaults (spec §12):
 - Text-element links do not get automatic region blocks; Roam's tail already makes them refs.
@@ -61,5 +62,5 @@ Open items carried forward:
 - 1x cold crops may be revisited (user, 2026-09-28).
 - Opening a drawing in the sidebar restores Roam's stored sidebar windows.
 - Embed of a not-yet-existing `[[Title]]` page does not watch for the page to appear (needs a title-keyed watch; unmeasured).
-- `createPlainImageRegion` targets image index 0 only (TODO in `src/actions.js`).
+- `createPlainImageRegion` cycles the image with S when the block has several images (0.29.0). An upright image still uses the viewport path.
 - Frame kinds: the hot SVG includes the frame label, and the cold crop now matches it (label top = frame.y - 20.5).

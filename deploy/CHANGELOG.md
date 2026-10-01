@@ -10,6 +10,7 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 - Two or more links in a region caption open a chooser. One link still opens the region. Links of those links stay out.
 - A sticky note is yellow, with bound text. A number stamp writes the next number. Stack places one copy underneath.
 - The palette stays two entries. The command list is 78.
+- Typing, editor closed, five rounds: +0.086 ms/key. Loaded mean 11.871. Unloaded mean 11.785.
 
 ## [0.28.0]
 - A mind map node is a rectangle or an ellipse, its edge a line or an arrow, and its palette default, ink, or leaf.
