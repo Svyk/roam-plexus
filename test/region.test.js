@@ -51,8 +51,8 @@ const NEW_KINDS = [
   "{{[[plexus-region]]: k=imgpoly d=blk1 i=2 p=0,0,1,0,1,1,0,1}}",
 ];
 
-test("all 8 kinds are supported and none are reserved", () => {
-  assert.equal(RESERVED_KINDS.length, 0);
+test("all 8 kinds are supported and img and view are reserved", () => {
+  assert.deepEqual([...RESERVED_KINDS], ["img", "view"]);
   assert.deepEqual([...SUPPORTED_KINDS].sort(), ["area", "cframe", "frame", "group", "imgpoly", "imgrect", "poly", "rect"]);
 });
 
@@ -222,4 +222,19 @@ test("a duplicate d= token keeps the first value and preserves the second as ext
   const r = parseRegion("{{[[plexus-region]]: k=area d=u1 ids=a d=u2}}");
   assert.equal(r.drawingUid, "u1");
   assert.deepEqual(r.extra, [["d", "u2"]]);
+});
+
+test("img and view parse with no error and keep f, v, and ids in extra", () => {
+  const img = parseRegion("{{[[plexus-region]]: k=img d=drw000001 f=0.1,0.2,0.3,0.4}} test");
+  assert.equal(img.supported, false);
+  assert.equal(img.error, undefined);
+  assert.equal(img.kind, "img");
+  assert.deepEqual(img.extra.find((pair) => pair[0] === "f"), ["f", "0.1,0.2,0.3,0.4"]);
+  const view = parseRegion("{{[[plexus-region]]: k=view d=boardUid1 v=-12.5,40,800,600 ids=a,b}}");
+  assert.equal(view.supported, false);
+  assert.equal(view.error, undefined);
+  assert.deepEqual(view.extra.find((pair) => pair[0] === "v"), ["v", "-12.5,40,800,600"]);
+  assert.deepEqual(view.extra.find((pair) => pair[0] === "ids"), ["ids", "a,b"]);
+  assert.equal(parseRegion("{{[[plexus-region]]: k=view d=bad!}}").error, "bad d");
+  assert.equal(parseRegion("{{[[plexus-region]]: k=img}}").error, undefined);
 });

@@ -23,9 +23,9 @@ function fixture({ open = true } = {}) {
   return { app, reg, api, bulk };
 }
 
-test("API_VERSION is 6", () => {
-  assert.equal(API_VERSION, 6);
-  assert.equal(fixture().api.apiVersion, 6);
+test("API_VERSION is 7", () => {
+  assert.equal(API_VERSION, 7);
+  assert.equal(fixture().api.apiVersion, 7);
 });
 
 test("build().commit writes once through the guard with IMMEDIATELY and never through paste", () => {

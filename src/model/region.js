@@ -3,7 +3,7 @@ export const CONTAINER_STRING = "{{[[plexus-regions]]}}";
 export const REGION_BUTTON_CLASS = "rm-xparser-default-plexus-region";
 export const DEFAULT_PAD = 10;
 export const SUPPORTED_KINDS = Object.freeze(["area", "rect", "group", "frame", "cframe", "poly", "imgrect", "imgpoly"]);
-export const RESERVED_KINDS = Object.freeze([]);
+export const RESERVED_KINDS = Object.freeze(["img", "view"]);
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 export const isId = (value) => typeof value === "string" && ID_RE.test(value);

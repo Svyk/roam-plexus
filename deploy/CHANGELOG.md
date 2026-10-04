@@ -4,6 +4,11 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.33.0]
+- img and view region blocks are reserved. The button stays as Roam wrote it. regionsOf labels those two kinds Plexus Diagram · region.
+- apiVersion is 7. A caller that checks a minimum version still works.
+- The palette stays two entries.
+
 ## [0.32.0]
 - Nest drawing creates a child drawing under the open one and opens it. A breadcrumb lists the page and each ancestor drawing. A crumb opens that drawing. The name is the Name child, or Drawing.
 - Inbox tray lists at most twenty-four children of the drawing that are not already on the canvas. Name, mermaid, and region containers stay out. Choosing a row embeds that block.

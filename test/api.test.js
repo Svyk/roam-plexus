@@ -22,10 +22,27 @@ function build() {
   return { api: createPublicApi({ host, actions, emitter, version: "0.2.0" }), emitter, calls };
 }
 
+test("regionsOf labels img and view as Plexus Diagram · region", () => {
+  const emitter = makeEmitter();
+  const host = {
+    graphName: () => "g",
+    regionsOf: () => [
+      { uid: "i1", region: { kind: "img", caption: "test" } },
+      { uid: "v1", region: { kind: "view", caption: "" } },
+    ],
+    labelSource: () => ({ string: "", pageTitle: null }),
+  };
+  const api = createPublicApi({ host, actions: {}, emitter, version: "0.33.0" });
+  assert.deepEqual(api.regionsOf("d").map((row) => [row.uid, row.caption, row.label]), [
+    ["i1", "test", "Plexus Diagram · region"],
+    ["v1", "", "Plexus Diagram · region"],
+  ]);
+});
+
 test("public api is frozen and delegates", async () => {
   const { api, calls } = build();
   assert.ok(Object.isFrozen(api));
-  assert.equal(api.apiVersion, 6);
+  assert.equal(api.apiVersion, 7);
   assert.equal(api.version, "0.2.0");
   assert.equal(api.isAvailable(), true);
   assert.deepEqual(await api.create({ title: "T" }), { uid: "u", pageUid: "p" });
@@ -75,7 +92,7 @@ test("install dispatches ready; uninstall dispatches unload and deletes only whe
   assert.equal(uninstallPublicApi(api, { win, CustomEventCtor: CE }), false);
   assert.equal(win.RoamPlexus, foreign);
   assert.deepEqual(events.map((e) => e[0]), ["roam-plexus:ready", "roam-plexus:unload", "roam-plexus:unload"]);
-  assert.deepEqual(events[0][1], { apiVersion: 6 });
+  assert.deepEqual(events[0][1], { apiVersion: 7 });
 });
 
 import { createSceneRegistry } from "../src/api.js";
@@ -185,7 +202,7 @@ test("whenOpen validates, shares in-flight promise, and rejects on dispose", asy
   const host = { pullBlock: (u) => ({ string: u === "bad" ? "hello" : "{{[[excalidraw]]}}" }) };
   const opened = [];
   const api = createPublicApi({ host, actions: {}, emitter: null, version: "x", scenes: reg, openDrawing: async (u) => { opened.push(u); return { app, drawingUid: u }; } });
-  assert.equal(api.apiVersion, 6);
+  assert.equal(api.apiVersion, 7);
   assert.equal(api.scene("d1"), null);
   await assert.rejects(api.whenOpen("bad"), /Not a drawing/);
   await assert.rejects(api.whenOpen("d1"), /Another drawing is open/);

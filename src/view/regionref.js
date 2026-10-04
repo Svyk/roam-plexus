@@ -1,4 +1,4 @@
-import { parseRegion, geometryKey } from "../model/region.js";
+import { parseRegion, geometryKey, RESERVED_KINDS } from "../model/region.js";
 import { coverBoxes, occluderIds } from "../model/slides.js";
 import { exportBounds, naturalToScene, regionSceneBBox, sceneToNatural, viewPngCropRect } from "../model/scene.js";
 import { clipPolyToUnit, imageCropRect, parseImageRefs, polyBBox, polyToLocal } from "../model/image.js";
@@ -342,6 +342,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
     for (const el of info.extras.splice(0)) el.remove?.();
     info.btn.classList.remove("plexus-hidden");
     info.btn.removeAttribute(CLAIMED);
+    if (info.btn.getAttribute?.("data-plexus-owner") === "roam-plexus") info.btn.removeAttribute("data-plexus-owner");
     root.remove();
     roots.delete(root);
   };
@@ -659,6 +660,9 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       const block = host.pullBlock(uid);
       const region = block ? parseRegion(block.string) : null;
       if (!region) return;
+      const marked = btn.getAttribute("data-plexus-owner");
+      if (marked && marked !== "roam-plexus") return;
+      if (RESERVED_KINDS.includes(region.kind)) return;
 
       const s = settings();
       const ctx = contextOf(btn, uid);
@@ -668,6 +672,7 @@ export function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen
       const label = labelOf(region);
 
       btn.setAttribute(CLAIMED, "1");
+      btn.setAttribute("data-plexus-owner", "roam-plexus");
       btn.classList.add("plexus-hidden");
       const root = doc.createElement("span");
       root.className = `plexus-root plexus-regionref plexus-regionref--${mode}`;

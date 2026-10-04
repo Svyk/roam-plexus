@@ -102,7 +102,7 @@ test("expand places a new card to the right with a labelled arrow", () => {
   assert.equal(next[0].version, 2);
 });
 
-test("spec, help, and validate describe apiVersion 6 and ignore an unknown listener", () => {
+test("spec, help, and validate describe apiVersion 7 and ignore an unknown listener", () => {
   const bags = new Map();
   const emitter = {
     on(type, cb) {
@@ -117,16 +117,16 @@ test("spec, help, and validate describe apiVersion 6 and ignore an unknown liste
     },
   };
   const api = createPublicApi({ host: { graphName: () => "g" }, actions: {}, emitter, version: "0.31.0" });
-  assert.equal(api.apiVersion, 6);
+  assert.equal(api.apiVersion, 7);
   const spec = api.spec();
-  assert.equal(spec.apiVersion, 6);
+  assert.equal(spec.apiVersion, 7);
   assert.deepEqual(spec.events, ["change", "editor-open", "editor-close", "scene", "paste", "drop", "link-click"]);
   assert.ok(spec.methods.includes("create"));
   assert.ok(spec.methods.includes("validate"));
   assert.equal(spec.methods.includes("apiVersion"), false);
-  assert.match(api.help(), /apiVersion 6/);
-  assert.deepEqual(api.validate("apiVersion", 6), { ok: true, data: 6 });
-  assert.deepEqual(api.validate("apiVersion", 3), { ok: false, error: "apiVersion must be 6" });
+  assert.match(api.help(), /apiVersion 7/);
+  assert.deepEqual(api.validate("apiVersion", 7), { ok: true, data: 7 });
+  assert.deepEqual(api.validate("apiVersion", 3), { ok: false, error: "apiVersion must be 7" });
   assert.deepEqual(api.validate("event", "scene"), { ok: true, data: "scene" });
   assert.equal(api.validate("event", "other").ok, false);
   assert.equal(api.validate("nope", 1).ok, false);

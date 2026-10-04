@@ -194,7 +194,7 @@ test("a closed drawing throws /Drawing is not open/ and writes nothing", () => {
   assert.equal(closed.bulk.length, 0);
 });
 
-test("api.apiVersion stays 6", () => {
-  assert.equal(API_VERSION, 6);
-  assert.equal(fixture().api.apiVersion, 6);
+test("api.apiVersion stays 7", () => {
+  assert.equal(API_VERSION, 7);
+  assert.equal(fixture().api.apiVersion, 7);
 });

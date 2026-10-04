@@ -8,7 +8,7 @@ import { parseRegion } from "./model/region.js";
 import { commonBounds, liveElements, normalizeSvgSize, sceneToViewport, viewportToScene } from "./model/scene.js";
 import { snapshotElements } from "./model/snapshot.js";
 
-export const API_VERSION = 6;
+export const API_VERSION = 7;
 export const API_EVENTS = Object.freeze(["change", "editor-open", "editor-close", "scene", "paste", "drop", "link-click"]);
 const EVENT_TYPES = new Set(API_EVENTS);
 
@@ -354,6 +354,7 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
           });
         } catch (error) { console.warn("[plexus] region label failed", error); }
         if (label == null || String(label).trim() === "Region") label = "Drawing · region";
+        if (region.kind === "img" || region.kind === "view") label = "Plexus Diagram · region";
         return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
       });
     },
@@ -436,10 +437,10 @@ export function createPublicApi({ host, actions, emitter, version, scenes, openD
       };
     },
     help() {
-      return "RoamPlexus apiVersion 6. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
+      return "RoamPlexus apiVersion 7. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
     },
     validate(name, value) {
-      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 6" };
+      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 7" };
       if (name === "event") return EVENT_TYPES.has(value) ? { ok: true, data: value } : { ok: false, error: "Unknown event" };
       if (name === "method") return typeof api[value] === "function" ? { ok: true, data: value } : { ok: false, error: "Unknown method" };
       return { ok: false, error: "Unknown name" };

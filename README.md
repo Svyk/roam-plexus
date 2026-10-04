@@ -29,7 +29,7 @@ Regions live as children of one collapsed `{{[[plexus-regions]]}}` block, the la
 {{[[plexus-region]]: k=rect d=<drawingUid> el=<imageElementId> f=<rx>,<ry>,<rw>,<rh>}} caption
 ```
 
-`area` crops to the bounds of the listed elements plus padding. `rect` crops an image element to a fractional rectangle.
+`area` crops to the bounds of the listed elements plus padding. `rect` crops an image element to a fractional rectangle. `img` and `view` are reserved for Plexus Diagram. The button is left alone.
 
 ## Commands
 

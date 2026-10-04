@@ -1,4 +1,4 @@
-/* Plexus v0.32.0 | MIT | generated; edit src/ */
+/* Plexus v0.33.0 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -540,7 +540,7 @@ var CONTAINER_STRING = "{{[[plexus-regions]]}}";
 var REGION_BUTTON_CLASS = "rm-xparser-default-plexus-region";
 var DEFAULT_PAD = 10;
 var SUPPORTED_KINDS = Object.freeze(["area", "rect", "group", "frame", "cframe", "poly", "imgrect", "imgpoly"]);
-var RESERVED_KINDS = Object.freeze([]);
+var RESERVED_KINDS = Object.freeze(["img", "view"]);
 var ID_RE = /^[A-Za-z0-9_-]+$/;
 var isId = (value) => typeof value === "string" && ID_RE.test(value);
 var HEAD_RE = /^\s*\{\{\[\[plexus-region\]\]:\s*([^}]*)\}\}(?: ([\s\S]*))?$/;
@@ -7949,6 +7949,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
     for (const el of info.extras.splice(0)) el.remove?.();
     info.btn.classList.remove("plexus-hidden");
     info.btn.removeAttribute(CLAIMED);
+    if (info.btn.getAttribute?.("data-plexus-owner") === "roam-plexus") info.btn.removeAttribute("data-plexus-owner");
     root.remove();
     roots.delete(root);
   };
@@ -8248,6 +8249,9 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
       const block = host.pullBlock(uid);
       const region = block ? parseRegion(block.string) : null;
       if (!region) return;
+      const marked = btn.getAttribute("data-plexus-owner");
+      if (marked && marked !== "roam-plexus") return;
+      if (RESERVED_KINDS.includes(region.kind)) return;
       const s = settings();
       const ctx = contextOf(btn, uid);
       const override = overrideOf(ctx, uid, s);
@@ -8255,6 +8259,7 @@ function createRegionRefRenderer({ host, cache, cold, getSettings, onOpen, onRev
       const capState = captionOf(ctx, override, s);
       const label = labelOf(region);
       btn.setAttribute(CLAIMED, "1");
+      btn.setAttribute("data-plexus-owner", "roam-plexus");
       btn.classList.add("plexus-hidden");
       const root = doc.createElement("span");
       root.className = `plexus-root plexus-regionref plexus-regionref--${mode}`;
@@ -10417,7 +10422,7 @@ function snapshotElements({ nodes = [], edges = [], mode = "plain" } = {}) {
 }
 
 // src/api.js
-var API_VERSION = 6;
+var API_VERSION = 7;
 var API_EVENTS = Object.freeze(["change", "editor-open", "editor-close", "scene", "paste", "drop", "link-click"]);
 var EVENT_TYPES = new Set(API_EVENTS);
 function sceneSignature(elements) {
@@ -10799,6 +10804,7 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
           console.warn("[plexus] region label failed", error);
         }
         if (label == null || String(label).trim() === "Region") label = "Drawing · region";
+        if (region.kind === "img" || region.kind === "view") label = "Plexus Diagram · region";
         return { uid: regionUid, kind: region.kind, caption: region.caption ?? "", label };
       });
     },
@@ -10889,10 +10895,10 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
       };
     },
     help() {
-      return "RoamPlexus apiVersion 6. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
+      return "RoamPlexus apiVersion 7. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
     },
     validate(name, value) {
-      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 6" };
+      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 7" };
       if (name === "event") return EVENT_TYPES.has(value) ? { ok: true, data: value } : { ok: false, error: "Unknown event" };
       if (name === "method") return typeof api[value] === "function" ? { ok: true, data: value } : { ok: false, error: "Unknown method" };
       return { ok: false, error: "Unknown name" };

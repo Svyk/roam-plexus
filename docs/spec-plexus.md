@@ -126,7 +126,7 @@ Lifecycle: `onload` registers settings, commands, context-menu entries, observer
 
 ## 8. Compass integration contract
 
-`window.RoamPlexus` (frozen, `apiVersion: 6`; v2 to v5 callers are unaffected, since every change is additive):
+`window.RoamPlexus` (frozen, `apiVersion: 7`; v2 to v6 callers are unaffected, since every change is additive). `regionsOf` labels `img` and `view` exactly `Plexus Diagram · region`:
 
 | Member | Returns | Notes |
 |---|---|---|

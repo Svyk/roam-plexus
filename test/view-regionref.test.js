@@ -589,3 +589,37 @@ test("an occluded region reveals on click and still opens on shift-click", async
   assert.deepEqual(missed, [regionUid]);
   assert.ok(!cold.parent.children[1].classes.has("plexus-revealed"));
 });
+
+test("reserved img and view buttons stay unclaimed", () => {
+  for (const regionString of [
+    "{{[[plexus-region]]: k=img d=drw000001 f=0.1,0.2,0.3,0.4}} test",
+    "{{[[plexus-region]]: k=view d=drw000001 v=10,20,100,80}}",
+  ]) {
+    const { r, btn, parent } = setup({ regionString });
+    r.claim(btn);
+    assert.equal(btn.attrs["data-plexus-claimed"], undefined);
+    assert.equal(btn.attrs["data-plexus-owner"], undefined);
+    assert.ok(!btn.classes.has("plexus-hidden"));
+    assert.equal(parent.children.length, 1);
+  }
+});
+
+test("a foreign owner on an area button is left alone", () => {
+  const { r, btn, parent } = setup({ regionString: areaString, hit: { url: "blob:x", w: 10, h: 10, type: "image/svg+xml" } });
+  btn.setAttribute("data-plexus-owner", "plexus-diagram");
+  r.claim(btn);
+  assert.equal(btn.attrs["data-plexus-claimed"], undefined);
+  assert.equal(btn.attrs["data-plexus-owner"], "plexus-diagram");
+  assert.ok(!btn.classes.has("plexus-hidden"));
+  assert.equal(parent.children.length, 1);
+});
+
+test("a claimed area records roam-plexus and release clears it", () => {
+  const { r, btn } = setup({ regionString: areaString, hit: { url: "blob:x", w: 1, h: 1, type: "x" } });
+  r.claim(btn);
+  assert.equal(btn.attrs["data-plexus-owner"], "roam-plexus");
+  assert.equal(btn.attrs["data-plexus-claimed"], "1");
+  r.releaseAll();
+  assert.equal(btn.attrs["data-plexus-owner"], undefined);
+  assert.equal(btn.attrs["data-plexus-claimed"], undefined);
+});

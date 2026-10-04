@@ -21,7 +21,7 @@ function fixture(n = 50) {
 
 const ids = (from, to) => Array.from({ length: to - from }, (_, i) => `e${from + i}`);
 
-test("API version is 6", () => assert.equal(API_VERSION, 6));
+test("API version is 7", () => assert.equal(API_VERSION, 7));
 
 test("remove of 40 of 50 throws after the toast, writes nothing, and Apply anyway then Restore round-trips", () => {
   const { app, toasts, guard, scene } = fixture(50);
