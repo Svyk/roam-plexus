@@ -1,4 +1,4 @@
-/* Plexus v0.33.0 | MIT | generated; edit src/ */
+/* Plexus v0.33.1 | MIT | generated; edit src/ */
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -10898,7 +10898,7 @@ function createPublicApi({ host, actions, emitter, version, scenes, openDrawing,
       return "RoamPlexus apiVersion 7. Listeners: change, editor-open, editor-close, scene, paste, drop, link-click. spec() lists methods. validate(name, value) checks apiVersion, event, or method.";
     },
     validate(name, value) {
-      if (name === "apiVersion") return value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 7" };
+      if (name === "apiVersion") return value === 6 || value === API_VERSION ? { ok: true, data: value } : { ok: false, error: "apiVersion must be 7" };
       if (name === "event") return EVENT_TYPES.has(value) ? { ok: true, data: value } : { ok: false, error: "Unknown event" };
       if (name === "method") return typeof api[value] === "function" ? { ok: true, data: value } : { ok: false, error: "Unknown method" };
       return { ok: false, error: "Unknown name" };

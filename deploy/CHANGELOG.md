@@ -4,6 +4,10 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.33.1]
+
+- validate accepts apiVersion 6 and 7. The frozen apiVersion stays 7. Anything else still fails with apiVersion must be 7.
+
 ## [0.33.0]
 - img and view region blocks are reserved. The button stays as Roam wrote it. regionsOf labels those two kinds Plexus Diagram · region.
 - apiVersion is 7. A caller that checks a minimum version still works.

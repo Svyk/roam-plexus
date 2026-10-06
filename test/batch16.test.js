@@ -125,6 +125,7 @@ test("spec, help, and validate describe apiVersion 7 and ignore an unknown liste
   assert.ok(spec.methods.includes("validate"));
   assert.equal(spec.methods.includes("apiVersion"), false);
   assert.match(api.help(), /apiVersion 7/);
+  assert.deepEqual(api.validate("apiVersion", 6), { ok: true, data: 6 });
   assert.deepEqual(api.validate("apiVersion", 7), { ok: true, data: 7 });
   assert.deepEqual(api.validate("apiVersion", 3), { ok: false, error: "apiVersion must be 7" });
   assert.deepEqual(api.validate("event", "scene"), { ok: true, data: "scene" });
