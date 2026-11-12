@@ -365,7 +365,7 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.previewModifier, name: "Preview links only while holding Ctrl/Cmd", description: "Show a link preview only while Ctrl or Cmd is held. Off keeps the preview after a short hover.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.minimap, name: "Minimap", description: "Show a corner map on a large drawing. Click or drag it to pan.", action: wrap({ type: "switch" }) },
-      { id: SETTING_IDS.compass, name: "Compass", description: "Open in Compass from the command list, and with Alt held on a canvas link. Off hides the command, the chooser buttons, and the Alt click.", action: wrap({ type: "switch" }) }
+      { id: SETTING_IDS.compass, name: "Compass", description: "Show in Compass from the command list, and with Alt held on a canvas link. Off hides the command, the chooser buttons, and the Alt click.", action: wrap({ type: "switch" }) }
     ]
   };
 }
@@ -27494,7 +27494,7 @@ var cond = (fn) => (e) => {
 var overrideMode = (o) => typeof o === "string" ? o : o?.mode ?? null;
 function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride: setRefOverride2, setRegionGallery: setRegionGallery2 = async () => {
 }, applyGalleries = () => {
-}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {
+}, openSettings, openUidInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {
 } } = {}) {
   const added = [];
   const pullString = (uid) => {
@@ -27751,7 +27751,7 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     const { ref, block } = refOf(e);
     return refInfo(`${ref}|${block}`, ref, block);
   }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
-  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => showInCompass(e["ref-uid"]));
+  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => openUidInCompass(e["ref-uid"]));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
   const blockShow = (key) => (e) => !!blockInfo(e?.["block-uid"], e?.["block-uid"])[key];
@@ -27777,7 +27777,7 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
   });
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
-  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
+  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => openUidInCompass(e["block-uid"]));
   const drawingOrRegion = (e) => {
     const info = blockInfo(e?.["block-uid"], e?.["block-uid"]);
     return !!(info.drawing || info.region);
@@ -30989,7 +30989,6 @@ function installRoamDrop({ doc, containerEl, app, zIndex = 1e3, resolve, exclude
 }
 
 // src/model/compass.js
-var OPEN_IN_COMPASS_ID = "openInCompass";
 function uidOf(value) {
   if (typeof value !== "string") return null;
   const uid = value.trim();
@@ -31020,7 +31019,7 @@ function chooserRows(tokens2, { compass = false } = {}) {
 function commandsWithCompass(commands, compass) {
   const list = Array.isArray(commands) ? commands : [];
   if (compass) return list;
-  return list.filter((command) => command?.id !== OPEN_IN_COMPASS_ID);
+  return list.filter((command) => command?.id !== "showInCompass");
 }
 
 // src/view/text-links.js
@@ -31884,7 +31883,6 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let galleryHandle = null;
     let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
-    let openInCompass = () => console.warn("[plexus] unavailable outside Roam: openInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
     let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
@@ -32031,17 +32029,6 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
       lifecycle.add(() => cold.dispose());
       const toaster2 = createToaster({ doc });
       lifecycle.add(() => toaster2.dispose());
-      showInCompass = (uid) => {
-        const compass = globalThis.window?.RoamCompass;
-        let available = false;
-        try {
-          available = compass?.isAvailable?.() === true;
-        } catch (error) {
-          console.warn("[plexus] compass unavailable", error);
-        }
-        if (!available) return void toaster2.show("Compass is not loaded");
-        compass.focus(uid);
-      };
       const CLOSE_WAIT_MS2 = 3e3;
       async function closeFullScreenEditor() {
         const editor = activeEditor(doc);
@@ -32052,24 +32039,34 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           console.warn("[plexus] minimize failed", error);
         }
         const end = Date.now() + CLOSE_WAIT_MS2;
-        while (activeEditor(doc)) {
+        while (!lifecycle.disposed && activeEditor(doc)) {
           if (Date.now() >= end) return false;
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        return true;
+        return !lifecycle.disposed && !activeEditor(doc);
       }
       async function openUidInCompass(uid) {
+        if (lifecycle.disposed) return false;
+        if (getSettings().compass === false) {
+          toaster2.show("Compass is off in Plexus settings.");
+          return false;
+        }
         if (!uid) return false;
+        if (!compassReady()) {
+          toaster2.show("Compass is not loaded");
+          return false;
+        }
         if (activeEditor(doc)) {
           const closed2 = await closeFullScreenEditor();
           if (!closed2) {
-            toaster2.show("Could not close the drawing");
+            if (!lifecycle.disposed) toaster2.show("Could not close the drawing");
             return false;
           }
         }
+        if (lifecycle.disposed) return false;
         const compass = compassReady();
         if (!compass) {
-          if (getSettings().compass !== false) toaster2.show("Compass is not loaded");
+          toaster2.show("Compass is not loaded");
           return false;
         }
         try {
@@ -32080,13 +32077,13 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           return false;
         }
       }
-      openInCompass = async (ctx) => {
+      showInCompass = async (ctx) => {
         if (!compassReady()) return;
         const editor = activeEditor(doc);
         const drawingUid = editor?.drawingUid || null;
-        const focusedUid2 = drawingUid ? null : ctx?.focusedUid || null;
+        const focusedUid2 = ctx?.focusedUid || null;
         let pageUid = null;
-        if (!drawingUid && !focusedUid2) {
+        if (!compassTarget({ drawingUid, focusedUid: focusedUid2 })) {
           try {
             pageUid = await host.openPageUid();
           } catch (error) {
@@ -32667,7 +32664,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         setRegionGallery: (uid, on) => setRegionGallery(extensionAPI, uid, on),
         applyGalleries: paintGalleries,
         openSettings,
-        showInCompass,
+        openUidInCompass,
         openPrompt: openCaptionPrompt,
         isEncrypted: () => host.isEncrypted(),
         native: native_exports,
@@ -33768,8 +33765,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         if (citeBacklinks?.cite?.(ids)) return;
         toaster.show("Select a page link, region, or mind-map node");
       } },
-      { id: OPEN_IN_COMPASS_ID, label: "Open in Compass", run: (ctx) => openInCompass(ctx) },
-      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
+      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx) },
       { id: "turnIntoPage", label: "Turn into page", run: () => {
         if (!actions) return unavailable("turnIntoPage");
         return Promise.resolve(actions.turnInto("page-embed")).catch((error) => console.warn("[plexus] turn into page failed", error));

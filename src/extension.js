@@ -68,7 +68,7 @@ import { elementBounds, viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
 import { LOCK_ACTION_NAMES, applyCanvasPrefs, captureView, copyText, diagnosticsText, restoreAutomaticView, runNamedAction, shouldReapplyTheme, syncGeneration } from "./host/canvas-prefs.js";
 import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
-import { OPEN_IN_COMPASS_ID, commandsWithCompass, compassApi, compassTarget } from "./model/compass.js";
+import { commandsWithCompass, compassApi, compassTarget } from "./model/compass.js";
 
 let activeLifecycle = null;
 
@@ -272,7 +272,6 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let galleryHandle = null;
     let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
-    let openInCompass = () => console.warn("[plexus] unavailable outside Roam: openInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
     let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
@@ -299,13 +298,6 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
       lifecycle.add(() => cold.dispose());
       const toaster = createToaster({ doc });
       lifecycle.add(() => toaster.dispose());
-      showInCompass = (uid) => {
-        const compass = globalThis.window?.RoamCompass;
-        let available = false;
-        try { available = compass?.isAvailable?.() === true; } catch (error) { console.warn("[plexus] compass unavailable", error); }
-        if (!available) return void toaster.show("Compass is not loaded");
-        compass.focus(uid);
-      };
       // Compass draws under the full-screen editor, so the same minimize click that link navigation uses has to finish first.
       const CLOSE_WAIT_MS = 3000;
       async function closeFullScreenEditor() {
@@ -314,36 +306,46 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         try { editor.outer?.querySelector?.(".bp3-icon-minimize")?.click?.(); }
         catch (error) { console.warn("[plexus] minimize failed", error); }
         const end = Date.now() + CLOSE_WAIT_MS;
-        while (native.activeEditor(doc)) {
+        while (!lifecycle.disposed && native.activeEditor(doc)) {
           if (Date.now() >= end) return false;
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        return true;
+        return !lifecycle.disposed && !native.activeEditor(doc);
       }
       async function openUidInCompass(uid) {
+        if (lifecycle.disposed) return false;
+        if (getSettings().compass === false) {
+          toaster.show("Compass is off in Plexus settings.");
+          return false;
+        }
         if (!uid) return false;
+        if (!compassReady()) {
+          toaster.show("Compass is not loaded");
+          return false;
+        }
         if (native.activeEditor(doc)) {
           const closed = await closeFullScreenEditor();
           if (!closed) {
-            toaster.show("Could not close the drawing");
+            if (!lifecycle.disposed) toaster.show("Could not close the drawing");
             return false;
           }
         }
+        if (lifecycle.disposed) return false;
         const compass = compassReady();
         if (!compass) {
-          if (getSettings().compass !== false) toaster.show("Compass is not loaded");
+          toaster.show("Compass is not loaded");
           return false;
         }
         try { compass.open(uid); return true; }
         catch (error) { console.warn("[plexus] compass open failed", error); return false; }
       }
-      openInCompass = async (ctx) => {
+      showInCompass = async (ctx) => {
         if (!compassReady()) return;
         const editor = native.activeEditor(doc);
         const drawingUid = editor?.drawingUid || null;
-        const focusedUid = drawingUid ? null : (ctx?.focusedUid || null);
+        const focusedUid = ctx?.focusedUid || null;
         let pageUid = null;
-        if (!drawingUid && !focusedUid) {
+        if (!compassTarget({ drawingUid, focusedUid })) {
           try { pageUid = await host.openPageUid(); }
           catch (error) { console.warn("[plexus] compass page failed", error); pageUid = null; }
         }
@@ -811,7 +813,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         setRegionGallery: (uid, on) => setRegionGallery(extensionAPI, uid, on),
         applyGalleries: paintGalleries,
         openSettings,
-        showInCompass,
+        openUidInCompass,
         openPrompt: openCaptionPrompt,
         isEncrypted: () => host.isEncrypted(),
         native,
@@ -1826,8 +1828,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         if (citeBacklinks?.cite?.(ids)) return;
         toaster.show("Select a page link, region, or mind-map node");
       } },
-      { id: OPEN_IN_COMPASS_ID, label: "Open in Compass", run: (ctx) => openInCompass(ctx) },
-      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
+      { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx) },
       { id: "turnIntoPage", label: "Turn into page", run: () => {
         if (!actions) return unavailable("turnIntoPage");
         return Promise.resolve(actions.turnInto("page-embed")).catch((error) => console.warn("[plexus] turn into page failed", error));

@@ -80,7 +80,7 @@ test("Show in Compass uses ref-uid on a block ref and block-uid on a drawing", (
   const api = fakeApi({ dra000001: "{{[[excalidraw]]}}", txt000001: "hi" });
   installRoamMenus({
     api, actions: {}, regionref: {}, setRefOverride() {}, openSettings() {},
-    showInCompass: (uid) => seen.push(uid),
+    openUidInCompass: (uid) => seen.push(uid),
   });
   const ref = { "ref-uid": "ref000001", "block-uid": "blk000001" };
   assert.equal(show(api, "blockRefContextMenu", "Plexus: Show in Compass", ref), true);

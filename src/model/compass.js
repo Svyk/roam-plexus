@@ -1,7 +1,5 @@
 // Compass (window.RoamCompass) can load after Plexus. Read it on each use; do not cache the object.
 
-export const OPEN_IN_COMPASS_ID = "openInCompass";
-
 function uidOf(value) {
   if (typeof value !== "string") return null;
   const uid = value.trim();
@@ -38,9 +36,9 @@ export function chooserRows(tokens, { compass = false } = {}) {
   return tokens.map((token) => ({ token, compass: show }));
 }
 
-// The command list includes Open in Compass only while Compass is on.
+// The command list includes Show in Compass only while Compass is on.
 export function commandsWithCompass(commands, compass) {
   const list = Array.isArray(commands) ? commands : [];
   if (compass) return list;
-  return list.filter((command) => command?.id !== OPEN_IN_COMPASS_ID);
+  return list.filter((command) => command?.id !== "showInCompass");
 }

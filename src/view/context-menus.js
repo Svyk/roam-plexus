@@ -31,7 +31,7 @@ const cond = (fn) => (e) => {
 
 const overrideMode = (o) => (typeof o === "string" ? o : o?.mode ?? null);
 
-export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, setRegionGallery = async () => {}, applyGalleries = () => {}, openSettings, showInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {} } = {}) {
+export function installRoamMenus({ api, host, actions, regionref, getSettings = () => ({}), setRefOverride, setRegionGallery = async () => {}, applyGalleries = () => {}, openSettings, openUidInCompass, openPrompt, isEncrypted, native, hasEditor, doc = globalThis.document, now = () => Date.now(), toast = () => {} } = {}) {
   const added = [];
   const pullString = (uid) => {
     if (!uid) return null;
@@ -272,7 +272,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
     register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf(e)));
   };
   cropItems("blockRefContextMenu", (e) => { const { ref, block } = refOf(e); return refInfo(`${ref}|${block}`, ref, block); }, (e) => refOf(e).ref, (e) => refOf(e).block, { insert: true });
-  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => showInCompass(e["ref-uid"]));
+  register("blockRefContextMenu", "Plexus: Show in Compass", (e) => !!e?.["ref-uid"], (e) => openUidInCompass(e["ref-uid"]));
   register("blockRefContextMenu", "Plexus: Region settings…", refShow(), () => openSettings());
   register("blockRefContextMenu", "Plexus: Copy region link", refShow(), (e) => actions.copyRegionLink(refOf(e).ref));
 
@@ -299,7 +299,7 @@ export function installRoamMenus({ api, host, actions, regionref, getSettings = 
   });
   register("blockContextMenu", "Plexus: Region on image", blockShow("images"), (e) => actions.createPlainImageRegion(e?.["block-uid"]));
   register("blockContextMenu", "Plexus: Present frames", blockShow("drawing"), (e) => actions.presentDrawing({ drawingUid: e?.["block-uid"] }));
-  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => showInCompass(e["block-uid"]));
+  register("blockContextMenu", "Plexus: Show in Compass", blockShow("drawing"), (e) => openUidInCompass(e["block-uid"]));
   const drawingOrRegion = (e) => {
     const info = blockInfo(e?.["block-uid"], e?.["block-uid"]);
     return !!(info.drawing || info.region);

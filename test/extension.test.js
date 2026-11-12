@@ -347,7 +347,7 @@ test("Sketch here returns an empty string so Roam removes the typed slash text",
   await cleanup();
 });
 
-test("the command list carries all 86 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
+test("the command list carries all 85 labels and hotkeys, and captures the focused block when Commands\u2026 runs", async () => {
   const g = globalThis;
   const saved = g.roamAlphaAPI;
   let focused = "first0001";
@@ -377,7 +377,7 @@ test("the command list carries all 86 labels and hotkeys, and captures the focus
       "Clear placeholder captions (dry run)", "Undo caption cleanup", "Legacy drawings (dry run)",
       "Focus mode", "Todo mode", "Embed query results", "Embed page children", "Link selected", "Filter regions by tag",
       "Lock or unlock selection", "Unlock all", "Copy diagnostics", "Where is this cited?",
-      "Show in Compass", "Turn into page", "Insert image or drawing\u2026", "Drawing name\u2026", "Task card\u2026", "Page card\u2026", "Live query\u2026",
+      "Turn into page", "Insert image or drawing\u2026", "Drawing name\u2026", "Task card\u2026", "Page card\u2026", "Live query\u2026",
       "Sticky note", "Number stamp", "Stack", "Drawing gallery", "Frame list", "Export mermaid", "Import mermaid",
       "Nest drawing", "Inbox tray", "Transclude block", "Comment pin", "Region settings",
     ]);
@@ -396,12 +396,16 @@ test("the command list carries all 86 labels and hotkeys, and captures the focus
   }
 });
 
-test("Open in Compass is listed only while Compass is on, and it opens the drawing, the block, or the page", async () => {
+test("Show in Compass is listed only while Compass is on, and it opens the drawing, the block, or the page", async () => {
   const g = globalThis;
   const saved = { api: g.roamAlphaAPI, doc: g.document, win: g.window, mo: g.MutationObserver, idb: g.indexedDB };
   const opened = [];
+  const notes = [];
+  const refMenus = new Map();
+  const blockMenus = new Map();
   let editorOpen = false;
   let minimizeClicks = 0;
+  let compassOn = true;
   const excal = {
     closest: (sel) => (String(sel).includes("outer-container") ? outer : null),
     __reactFiber$t: { stateNode: { updateScene() {}, getSceneElementsIncludingDeleted: () => [], actionManager: {} } },
@@ -410,11 +414,15 @@ test("Open in Compass is listed only while Compass is on, and it opens the drawi
     querySelector: (sel) => (sel === ".bp3-icon-minimize" ? { click() { minimizeClicks += 1; editorOpen = false; } } : null),
     closest: (sel) => (sel === '[id^="block-input-"]' ? { id: "block-input-draw00001" } : null),
   };
-  const body = { append() {}, appendChild() {}, querySelectorAll: () => [] };
+  const body = {
+    append(...nodes) { notes.push(...nodes); },
+    appendChild(node) { notes.push(node); return node; },
+    querySelectorAll: () => [],
+  };
   g.MutationObserver = class { observe() {} disconnect() {} };
   g.indexedDB = { open: () => { const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
   g.window = {
-    RoamCompass: { isAvailable: () => true, open: (uid) => { opened.push(uid); }, isOpen: () => false },
+    RoamCompass: { isAvailable: () => compassOn, open: (uid) => { opened.push(uid); }, isOpen: () => false },
     addEventListener() {},
     removeEventListener() {},
     dispatchEvent() {},
@@ -448,19 +456,31 @@ test("Open in Compass is listed only while Compass is on, and it opens the drawi
     removeEventListener() {},
     createElement: fakeNode,
   };
+  const menuApi = (map) => ({
+    addCommand: (c) => { map.set(c.label, c); },
+    removeCommand: ({ label }) => { map.delete(label); },
+  });
   const roam = {
     graph: { name: "g", isEncrypted: false },
     util: { generateUID: () => "x" },
     data: {
       q: () => [],
-      pull: (_pat, ident) => (ident?.[1] === "page00001" ? { ":node/title": "Today" } : null),
+      pull: (_pat, ident) => (ident?.[1] === "page00001" ? { ":node/title": "Today" } : ident?.[1] === "dra000001" ? { ":block/string": "{{[[excalidraw]]}}" } : null),
     },
-    ui: { components: {}, getFocusedBlock: () => ({ "block-uid": "focus0001" }), mainWindow: { getOpenPageOrBlockUid: async () => "page00001" } },
+    ui: {
+      components: {},
+      getFocusedBlock: () => ({ "block-uid": "focus0001" }),
+      mainWindow: { getOpenPageOrBlockUid: async () => "page00001" },
+      blockRefContextMenu: menuApi(refMenus),
+      blockContextMenu: menuApi(blockMenus),
+    },
   };
   g.roamAlphaAPI = roam;
-  const api = fakeExtensionApi();
   const callbacks = new Map();
-  api.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+  const wire = (extensionApi) => {
+    extensionApi.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+    return extensionApi;
+  };
   const restore = () => {
     if (saved.api === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved.api;
     if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
@@ -468,36 +488,65 @@ test("Open in Compass is listed only while Compass is on, and it opens the drawi
     if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
     if (saved.idb === undefined) delete g.indexedDB; else g.indexedDB = saved.idb;
   };
+  const lastToast = () => [...notes].reverse().find((node) => String(node.className || "").includes("plexus-toast"));
   try {
-    const loaded = await loadWithCommands(api, callbacks);
+    const loaded = await loadWithCommands(wire(fakeExtensionApi()), callbacks);
     loaded.openList();
     const labels = loaded.captured().commands.map((c) => c.label);
-    const at = labels.indexOf("Open in Compass");
+    assert.equal(labels.includes("Open in Compass"), false);
+    const at = labels.indexOf("Show in Compass");
     assert.ok(at >= 0);
-    assert.equal(labels[at + 1], "Show in Compass");
+    assert.equal(labels[at - 1], "Where is this cited?");
+    assert.equal(labels[at + 1], "Turn into page");
     editorOpen = true;
-    await loaded.openList().get("Open in Compass")();
+    await loaded.openList().get("Show in Compass")();
     assert.equal(minimizeClicks, 1);
     assert.deepEqual(opened, ["draw00001"]);
     await loaded.cleanup();
 
     opened.length = 0;
+    minimizeClicks = 0;
     editorOpen = false;
+    const blockLoad = await loadWithCommands(wire(fakeExtensionApi()), callbacks);
+    await blockLoad.openList().get("Show in Compass")();
+    assert.equal(minimizeClicks, 0);
+    assert.deepEqual(opened, ["focus0001"]);
+    await blockLoad.cleanup();
+
+    opened.length = 0;
     roam.ui.getFocusedBlock = () => null;
-    const pageApi = fakeExtensionApi();
-    pageApi.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
-    const pageLoad = await loadWithCommands(pageApi, callbacks);
-    await pageLoad.openList().get("Open in Compass")();
+    const pageLoad = await loadWithCommands(wire(fakeExtensionApi()), callbacks);
+    await pageLoad.openList().get("Show in Compass")();
     assert.deepEqual(opened, ["page00001"]);
     await pageLoad.cleanup();
 
     opened.length = 0;
-    const off = fakeExtensionApi();
+    minimizeClicks = 0;
+    editorOpen = true;
+    compassOn = false;
+    const missing = await loadWithCommands(wire(fakeExtensionApi()), callbacks);
+    missing.openList();
+    assert.equal(missing.captured().commands.some((c) => c.label === "Show in Compass"), false);
+    refMenus.get("Plexus: Show in Compass").callback({ "ref-uid": "ref000001" });
+    assert.equal(lastToast()?.textContent, "Compass is not loaded");
+    assert.equal(minimizeClicks, 0);
+    assert.deepEqual(opened, []);
+    await missing.cleanup();
+
+    compassOn = true;
+    editorOpen = true;
+    const off = wire(fakeExtensionApi());
     await off.settings.set("compass", false);
-    off.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
     const offLoad = await loadWithCommands(off, callbacks);
     offLoad.openList();
-    assert.equal(offLoad.captured().commands.some((c) => c.label === "Open in Compass"), false);
+    assert.equal(offLoad.captured().commands.some((c) => c.label === "Show in Compass"), false);
+    refMenus.get("Plexus: Show in Compass").callback({ "ref-uid": "ref000001" });
+    assert.equal(lastToast()?.textContent, "Compass is off in Plexus settings.");
+    lastToast().textContent = "";
+    blockMenus.get("Plexus: Show in Compass").callback({ "block-uid": "dra000001" });
+    assert.equal(lastToast()?.textContent, "Compass is off in Plexus settings.");
+    assert.equal(minimizeClicks, 0);
+    assert.deepEqual(opened, []);
     await offLoad.cleanup();
   } finally {
     restore();

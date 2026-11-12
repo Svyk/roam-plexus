@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OPEN_IN_COMPASS_ID, chooserRows, commandsWithCompass, compassApi, compassTarget, textLinkAction } from "../src/model/compass.js";
+import { chooserRows, commandsWithCompass, compassApi, compassTarget, textLinkAction } from "../src/model/compass.js";
 import { SETTING_IDS, createSettingsPanel, readSettings } from "../src/settings.js";
 
 const api = () => ({ open() {}, isAvailable: () => true, isOpen: () => false });
@@ -48,13 +48,13 @@ test("chooserRows marks every row, or none, with a Compass button", () => {
   assert.deepEqual(chooserRows(null, { compass: true }), []);
 });
 
-test("commandsWithCompass drops Open in Compass unless Compass is on", () => {
+test("commandsWithCompass drops Show in Compass unless Compass is on", () => {
   const commands = [
+    { id: "whereCited", label: "Where is this cited?" },
     { id: "showInCompass", label: "Show in Compass" },
-    { id: OPEN_IN_COMPASS_ID, label: "Open in Compass" },
     { id: "settings", label: "Region settings" },
   ];
-  assert.deepEqual(commandsWithCompass(commands, false).map((c) => c.id), ["showInCompass", "settings"]);
+  assert.deepEqual(commandsWithCompass(commands, false).map((c) => c.id), ["whereCited", "settings"]);
   assert.equal(commandsWithCompass(commands, true), commands);
   assert.deepEqual(commandsWithCompass(null, true), []);
 });
