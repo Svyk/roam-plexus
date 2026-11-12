@@ -4,6 +4,8 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.34.0]
+
 - Show in Compass is in the command list when Compass is loaded and the switch is on. It opens the open drawing, or the focused block, or the page. The drawing closes first. Block menus use the same open; with the switch off they toast that Compass is off.
 - Alt+Cmd-click (Alt+Ctrl off macOS) on a `[[page]]`, `#tag` or `((block))` in canvas text opens that link in Compass. A chooser row has a Compass button. Without Compass, Alt changes nothing.
 - A Compass switch in settings, on by default, hides the command, the buttons, and the Alt click. The palette stays two entries.
