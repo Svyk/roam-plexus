@@ -177,9 +177,9 @@ test("minimap defaults on, turns off for false, and is the field after preview",
   assert.equal(readSettings({ settings: { get: (id) => (id === "minimap" ? false : null) } }).minimap, false);
   assert.equal(readSettings({ settings: { get: (id) => (id === "minimap" ? "false" : null) } }).minimap, false);
   const panel = createSettingsPanel().settings;
-  assert.equal(panel.at(-1).id, "minimap");
-  assert.equal(panel.at(-2).id, "preview-modifier");
-  assert.equal(panel.at(-1).action.type, "switch");
+  assert.equal(panel.at(-2).id, "minimap");
+  assert.equal(panel.at(-3).id, "preview-modifier");
+  assert.equal(panel.at(-2).action.type, "switch");
 
   const body = { children: [], append(n) { this.children.push(n); } };
   const doc = {

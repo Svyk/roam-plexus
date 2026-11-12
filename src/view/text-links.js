@@ -1,5 +1,6 @@
 import { findTokens, alignWrapped } from "../model/tokens.js";
 import { viewportToScene } from "../model/scene.js";
+import { chooserRows, textLinkAction } from "../model/compass.js";
 import { isCanvasEvent, linksActive } from "../host/links.js";
 
 // Same still-click limits as installLinkInterception (host/links.js).
@@ -185,6 +186,7 @@ export function installTextLinks({
   measure, now = () => Date.now(),
   raf = (fn) => (doc?.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame)(fn),
   caf = (id) => (doc?.defaultView?.cancelAnimationFrame ?? globalThis.cancelAnimationFrame)?.(id),
+  compassOn = () => false, openCompass,
 } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {};
   const win = doc?.defaultView ?? null;
@@ -231,27 +233,45 @@ export function installTextLinks({
     return all.length ? { tokens: all } : null;
   }
 
-  function exists(token) {
-    const t = tokenTarget(token);
+  function foundUid(token) {
+    const target = tokenTarget(token);
     try {
-      const found = t.type === "block"
-        ? api.data.pull("[:block/uid]", [":block/uid", t.uid])
-        : api.data.pull("[:block/uid]", [":node/title", t.title]);
-      return !!found;
+      const found = target.type === "block"
+        ? api.data.pull("[:block/uid]", [":block/uid", target.uid])
+        : api.data.pull("[:block/uid]", [":node/title", target.title]);
+      return found?.[":block/uid"] || null;
     } catch (error) {
       warn("token lookup failed", error);
-      return false;
+      return null;
     }
   }
 
-  function go(token, sidebar) {
+  function compassWanted() {
+    try { return compassOn?.() === true; }
+    catch (error) { warn("compass check failed", error); return false; }
+  }
+
+  function go(token, eventLike) {
     if (disposed) return;
     const target = tokenTarget(token);
-    if (!exists(token)) {
+    const uid = foundUid(token);
+    if (!uid) {
       toast?.(target.type === "block" ? "Block not found" : `No page named ${target.title}`);
       return;
     }
-    try { navigate?.({ target, sidebar: !!sidebar }); } catch (error) { warn("token navigation failed", error); }
+    const action = textLinkAction({
+      alt: !!eventLike?.altKey,
+      shift: !!eventLike?.shiftKey,
+      compass: compassWanted(),
+    });
+    if (action === "compass") {
+      try {
+        const out = openCompass?.({ target, uid });
+        if (out && typeof out.catch === "function") out.catch((error) => warn("compass open failed", error));
+      } catch (error) { warn("compass open failed", error); }
+      return;
+    }
+    try { navigate?.({ target, sidebar: action === "sidebar" }); } catch (error) { warn("token navigation failed", error); }
   }
 
   function blockLabel(uid) {
@@ -272,7 +292,7 @@ export function installTextLinks({
     if (refocus) { try { containerEl.focus?.({ preventScroll: true }); } catch { /* focus is best effort */ } }
   }
 
-  function openChooser(tokens, at) {
+  function openChooser(tokens, at, { preferCompass = false } = {}) {
     closeChooser(false);
     const root = doc.createElement("div");
     root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-token-chooser";
@@ -287,13 +307,14 @@ export function installTextLinks({
       active = i;
       rows.forEach((r, k) => { r.style.backgroundColor = k === i ? "rgb(213, 218, 223)" : ""; });
     };
-    const choose = (token, sidebar) => {
+    const choose = (token, { shift = false, compass = false } = {}) => {
       closeChooser(false);
-      go(token, sidebar);
+      go(token, { altKey: !!compass, shiftKey: !!shift });
     };
-    tokens.forEach((token, k) => {
+    chooserRows(tokens, { compass: compassWanted() }).forEach((rowModel, k) => {
+      const token = rowModel.token;
       const row = doc.createElement("div");
-      row.className = "dont-unfocus-block";
+      row.className = "dont-unfocus-block plexus-token-row";
       row.style.padding = "6px";
       row.style.cursor = "pointer";
       row.style.borderRadius = "2px";
@@ -301,8 +322,26 @@ export function installTextLinks({
       inner.className = "rm-autocomplete-result";
       inner.textContent = labelOf(token);
       row.append(inner);
+      if (rowModel.compass) {
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.className = "plexus-token-compass";
+        button.textContent = "Compass";
+        button.setAttribute("tabindex", "-1");
+        button.addEventListener("click", (ev) => {
+          ev.preventDefault?.();
+          ev.stopPropagation();
+          choose(token, { compass: true });
+        });
+        row.append(button);
+      }
       row.addEventListener("mousemove", () => setActive(k));
-      row.addEventListener("click", (ev) => { ev.stopPropagation(); choose(token, ev.shiftKey); });
+      row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const name = typeof ev.target?.className === "string" ? ev.target.className : "";
+        if (name.split(/\s+/).includes("plexus-token-compass")) return;
+        choose(token, { shift: ev.shiftKey, compass: preferCompass });
+      });
       scroll.append(row);
       rows.push(row);
     });
@@ -317,7 +356,7 @@ export function installTextLinks({
       if (ev.key === "Escape") { ev.preventDefault(); closeChooser(true); }
       else if (ev.key === "ArrowDown") { ev.preventDefault(); setActive((active + 1) % rows.length); }
       else if (ev.key === "ArrowUp") { ev.preventDefault(); setActive((active - 1 + rows.length) % rows.length); }
-      else if (ev.key === "Enter") { ev.preventDefault(); choose(tokens[active], ev.shiftKey); }
+      else if (ev.key === "Enter") { ev.preventDefault(); choose(tokens[active], { shift: ev.shiftKey, compass: preferCompass }); }
     });
     const onOutside = (ev) => { if (!(ev.target && root.contains?.(ev.target))) closeChooser(true); };
     const onWheel = (ev) => { if (!(ev.target && root.contains?.(ev.target))) closeChooser(true); };
@@ -364,8 +403,9 @@ export function installTextLinks({
     e.stopImmediatePropagation?.();
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX || now() - start.t > MAX_HOLD_MS) return;
     try {
-      if (start.tokens.length === 1) go(start.tokens[0], e.shiftKey);
-      else openChooser(start.tokens, { x: e.clientX, y: e.clientY });
+      const preferCompass = textLinkAction({ alt: !!e.altKey, shift: !!e.shiftKey, compass: compassWanted() }) === "compass";
+      if (start.tokens.length === 1) go(start.tokens[0], e);
+      else openChooser(start.tokens, { x: e.clientX, y: e.clientY }, { preferCompass });
     } catch (error) {
       warn("text link navigation failed", error);
     }

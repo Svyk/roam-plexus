@@ -111,7 +111,7 @@ class FakeEl {
   fire(t, ev) { for (const f of [...(this.handlers[t] || [])]) f(ev); }
 }
 
-function setup({ elements, mac = true, pages = { Alpha: true, Beta: true }, blocks = {}, state = {}, link = null } = {}) {
+function setup({ elements, mac = true, pages = { Alpha: true, Beta: true }, blocks = {}, state = {}, link = null, compass = false } = {}) {
   const listeners = (o) => ({
     handlers: {}, addEventListener(t, f) { (this.handlers[t] ||= []).push(f); },
     removeEventListener(t, f) { this.handlers[t] = (this.handlers[t] || []).filter((x) => x !== f); }, ...o,
@@ -137,19 +137,22 @@ function setup({ elements, mac = true, pages = { Alpha: true, Beta: true }, bloc
   } } };
   const navs = [];
   const toasts = [];
+  const compasses = [];
   let t = 0;
   const frames = [];
   const dispose = installTextLinks({
     doc, api, app, containerEl, mac, measure, zIndex: 100,
     navigate: (n) => navs.push(n), toast: (m) => toasts.push(m), now: () => t,
     raf: (fn) => { frames.push(fn); return frames.length; }, caf: () => {},
+    compassOn: () => compass === true,
+    openCompass: (payload) => compasses.push(payload),
   });
   const ev = (o = {}) => ({
     isTrusted: true, button: 0, clientX: 200, clientY: 110, metaKey: true, target: { tagName: "CANVAS" },
     prevented: 0, stopped: 0, preventDefault() { this.prevented++; }, stopImmediatePropagation() { this.stopped++; }, ...o,
   });
   const fire = (o, type, e) => (o.handlers[type] || []).forEach((f) => f(e));
-  return { containerEl, doc, win, body, navs, toasts, dispose, ev, fire, classes, frames, setT: (v) => { t = v; }, app };
+  return { containerEl, doc, win, body, navs, toasts, compasses, dispose, ev, fire, classes, frames, setT: (v) => { t = v; }, app };
 }
 
 test("cmd-click on a token: claimed on pointerdown, navigates on pointerup", () => {
@@ -392,6 +395,50 @@ test("hover is off away from tokens", () => {
   s.fire(s.containerEl, "pointermove", s.ev({ clientX: 120 }));
   s.frames.shift()();
   assert.equal(s.classes.has("plexus-token-hover"), false);
+});
+
+test("alt+cmd opens the link in Compass and does not navigate", () => {
+  const s = setup({ elements: [textEl()], compass: true });
+  s.fire(s.containerEl, "pointerdown", s.ev({ altKey: true }));
+  s.fire(s.containerEl, "pointerup", s.ev({ altKey: true }));
+  assert.deepEqual(s.navs, []);
+  assert.deepEqual(s.compasses, [{ target: { type: "page", title: "Alpha" }, uid: "pg" }]);
+});
+
+test("alt without Compass still navigates, and shift still opens the sidebar", () => {
+  const s = setup({ elements: [textEl()] });
+  s.fire(s.containerEl, "pointerdown", s.ev({ altKey: true }));
+  s.fire(s.containerEl, "pointerup", s.ev({ altKey: true, shiftKey: true }));
+  assert.equal(s.compasses.length, 0);
+  assert.equal(s.navs[0].sidebar, true);
+});
+
+test("a chooser row has a Compass button only when Compass is on", () => {
+  const el = textEl({ text: "[[Alpha]] and [[Beta]] x", originalText: "[[Alpha]] and [[Beta]] x", width: 260 });
+  const off = setup({ elements: [el] });
+  off.fire(off.containerEl, "pointerdown", off.ev({ clientX: 330 }));
+  off.fire(off.containerEl, "pointerup", off.ev({ clientX: 330 }));
+  const offRow = off.body.children[0].children[0].children[0];
+  assert.equal(offRow.children.some((c) => c.className === "plexus-token-compass"), false);
+
+  const on = setup({ elements: [el], compass: true });
+  on.fire(on.containerEl, "pointerdown", on.ev({ clientX: 330 }));
+  on.fire(on.containerEl, "pointerup", on.ev({ clientX: 330 }));
+  const row = on.body.children[0].children[0].children[0];
+  assert.equal(row.children[0].textContent, "Alpha");
+  const button = row.children.find((c) => c.className === "plexus-token-compass");
+  assert.equal(button.textContent, "Compass");
+  button.fire("click", { preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(on.compasses, [{ target: { type: "page", title: "Alpha" }, uid: "pg" }]);
+  assert.equal(on.navs.length, 0);
+
+  const alt = setup({ elements: [el], compass: true });
+  alt.fire(alt.containerEl, "pointerdown", alt.ev({ clientX: 330, altKey: true }));
+  alt.fire(alt.containerEl, "pointerup", alt.ev({ clientX: 330, altKey: true }));
+  const chooser = alt.body.children[0];
+  chooser.fire("keydown", { key: "Enter", preventDefault() {}, stopPropagation() {} });
+  assert.equal(alt.compasses[0].target.title, "Alpha");
+  assert.equal(alt.navs.length, 0);
 });
 
 test("dispose removes every listener, the chooser and the class", () => {

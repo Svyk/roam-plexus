@@ -237,7 +237,8 @@ var SETTING_IDS = Object.freeze({
   cardSidebar: "card-sidebar",
   cardQuickLook: "card-quick-look",
   previewModifier: "preview-modifier",
-  minimap: "minimap"
+  minimap: "minimap",
+  compass: "compass"
 });
 var DEFAULTS = Object.freeze({
   [SETTING_IDS.openInSidebar]: false,
@@ -275,7 +276,8 @@ var DEFAULTS = Object.freeze({
   [SETTING_IDS.cardSidebar]: true,
   [SETTING_IDS.cardQuickLook]: true,
   [SETTING_IDS.previewModifier]: false,
-  [SETTING_IDS.minimap]: true
+  [SETTING_IDS.minimap]: true,
+  [SETTING_IDS.compass]: true
 });
 var CAPTION_MODES = Object.freeze(["auto", "ask", "none"]);
 var PIN_SIZES = Object.freeze([4, 8, 12]);
@@ -362,7 +364,8 @@ function createSettingsPanel({ onChange } = {}) {
       { id: SETTING_IDS.cardSidebar, name: "Card open in sidebar", description: "Opens the card block in the sidebar. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.cardQuickLook, name: "Card quick look", description: "Opens a quick look of the card. Does nothing while editing text, and does nothing when the selection is not one card anchor.", action: wrap({ type: "switch" }) },
       { id: SETTING_IDS.previewModifier, name: "Preview links only while holding Ctrl/Cmd", description: "Show a link preview only while Ctrl or Cmd is held. Off keeps the preview after a short hover.", action: wrap({ type: "switch" }) },
-      { id: SETTING_IDS.minimap, name: "Minimap", description: "Show a corner map on a large drawing. Click or drag it to pan.", action: wrap({ type: "switch" }) }
+      { id: SETTING_IDS.minimap, name: "Minimap", description: "Show a corner map on a large drawing. Click or drag it to pan.", action: wrap({ type: "switch" }) },
+      { id: SETTING_IDS.compass, name: "Compass", description: "Open in Compass from the command list, and with Alt held on a canvas link. Off hides the command, the chooser buttons, and the Alt click.", action: wrap({ type: "switch" }) }
     ]
   };
 }
@@ -434,7 +437,8 @@ function readSettings(extensionAPI) {
     cardSidebar: get(SETTING_IDS.cardSidebar) !== false && get(SETTING_IDS.cardSidebar) !== "false",
     cardQuickLook: get(SETTING_IDS.cardQuickLook) !== false && get(SETTING_IDS.cardQuickLook) !== "false",
     previewModifier: get(SETTING_IDS.previewModifier) === true || get(SETTING_IDS.previewModifier) === "true",
-    minimap: get(SETTING_IDS.minimap) !== false && get(SETTING_IDS.minimap) !== "false"
+    minimap: get(SETTING_IDS.minimap) !== false && get(SETTING_IDS.minimap) !== "false",
+    compass: get(SETTING_IDS.compass) !== false && get(SETTING_IDS.compass) !== "false"
   };
 }
 async function writeSetting(extensionAPI, id, value) {
@@ -25664,14 +25668,14 @@ function createActions({
       return null;
     }
     const block = safe2(() => host.pullBlock(blockUid));
-    const uidOf = (text) => {
+    const uidOf2 = (text) => {
       for (const re of OUTLINE_REF_RES) {
         const m = re.exec(String(text ?? "").trim());
         if (m) return m[1];
       }
       return null;
     };
-    const kids2 = (block?.children ?? []).map((c) => ({ childUid: c.uid, regionUid: uidOf(c.string) }));
+    const kids2 = (block?.children ?? []).map((c) => ({ childUid: c.uid, regionUid: uidOf2(c.string) }));
     const refs = kids2.filter((k) => k.regionUid).slice(0, PRESENT_CAP);
     const slides = [];
     let skipped2 = kids2.length - kids2.filter((k) => k.regionUid).length;
@@ -27734,14 +27738,14 @@ function installRoamMenus({ api, host, actions, regionref, getSettings = () => (
     clearMemo();
     regionref.refreshRegion?.(uid, { purge: false });
   };
-  const cropItems = (menuName, show, uidOf, blockOf2, { insert }) => {
+  const cropItems = (menuName, show, uidOf2, blockOf2, { insert }) => {
     const drawingShow2 = (e) => !!show(e).drawingKind;
-    register(menuName, "Plexus: Name region", (e) => show(e).supported, (e) => nameRegion(uidOf(e), blockOf2(e)));
-    register(menuName, "Plexus: Copy crop as PNG", (e) => show(e).supported, (e) => actions.copyCropPng(uidOf(e)));
-    register(menuName, "Plexus: Copy crop as SVG", drawingShow2, (e) => actions.copyCropSvg(uidOf(e)));
-    register(menuName, "Plexus: Download crop", (e) => show(e).supported, (e) => actions.downloadCrop(uidOf(e)));
-    if (insert) register(menuName, "Plexus: Insert crop as image block", (e) => show(e).supported && !encrypted(), (e) => actions.insertCropImage(uidOf(e), blockOf2(e)));
-    register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf(e)));
+    register(menuName, "Plexus: Name region", (e) => show(e).supported, (e) => nameRegion(uidOf2(e), blockOf2(e)));
+    register(menuName, "Plexus: Copy crop as PNG", (e) => show(e).supported, (e) => actions.copyCropPng(uidOf2(e)));
+    register(menuName, "Plexus: Copy crop as SVG", drawingShow2, (e) => actions.copyCropSvg(uidOf2(e)));
+    register(menuName, "Plexus: Download crop", (e) => show(e).supported, (e) => actions.downloadCrop(uidOf2(e)));
+    if (insert) register(menuName, "Plexus: Insert crop as image block", (e) => show(e).supported && !encrypted(), (e) => actions.insertCropImage(uidOf2(e), blockOf2(e)));
+    register(menuName, "Plexus: Copy alias", (e) => show(e).supported, (e) => actions.copyAlias(uidOf2(e)));
   };
   cropItems("blockRefContextMenu", (e) => {
     const { ref, block } = refOf(e);
@@ -28384,7 +28388,8 @@ var FIELDS = [
   { id: SETTING_IDS.cardSidebar, label: "Card open in sidebar", type: "checkbox", fallback: true },
   { id: SETTING_IDS.cardQuickLook, label: "Card quick look", type: "checkbox", fallback: true },
   { id: SETTING_IDS.previewModifier, label: "Preview links only while holding Ctrl/Cmd", type: "checkbox", fallback: false },
-  { id: SETTING_IDS.minimap, label: "Minimap", type: "checkbox", fallback: true }
+  { id: SETTING_IDS.minimap, label: "Minimap", type: "checkbox", fallback: true },
+  { id: SETTING_IDS.compass, label: "Compass", type: "checkbox", fallback: true }
 ];
 var NATIVE_SHORTCUTS = [["Back", "Alt+←"], ["Edit embed", "F2"]];
 function openSettingsDialog({ doc, get = () => void 0, set = () => {
@@ -30983,6 +30988,41 @@ function installRoamDrop({ doc, containerEl, app, zIndex = 1e3, resolve, exclude
   };
 }
 
+// src/model/compass.js
+var OPEN_IN_COMPASS_ID = "openInCompass";
+function uidOf(value) {
+  if (typeof value !== "string") return null;
+  const uid = value.trim();
+  return uid || null;
+}
+function compassApi(win) {
+  const api = win?.RoamCompass;
+  if (!api || typeof api.open !== "function") return null;
+  try {
+    if (api.isAvailable?.() !== true) return null;
+  } catch {
+    return null;
+  }
+  return api;
+}
+function compassTarget({ drawingUid = null, focusedUid = null, pageUid = null } = {}) {
+  return uidOf(drawingUid) || uidOf(focusedUid) || uidOf(pageUid);
+}
+function textLinkAction({ alt = false, shift = false, compass = false } = {}) {
+  if (alt && compass) return "compass";
+  return shift ? "sidebar" : "open";
+}
+function chooserRows(tokens2, { compass = false } = {}) {
+  if (!Array.isArray(tokens2)) return [];
+  const show = compass === true;
+  return tokens2.map((token2) => ({ token: token2, compass: show }));
+}
+function commandsWithCompass(commands, compass) {
+  const list = Array.isArray(commands) ? commands : [];
+  if (compass) return list;
+  return list.filter((command) => command?.id !== OPEN_IN_COMPASS_ID);
+}
+
 // src/view/text-links.js
 var MAX_MOVE_PX2 = 6;
 var MAX_HOLD_MS2 = 400;
@@ -31166,7 +31206,9 @@ function installTextLinks({
   measure: measure3,
   now = () => Date.now(),
   raf = (fn) => (doc?.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame)(fn),
-  caf = (id) => (doc?.defaultView?.cancelAnimationFrame ?? globalThis.cancelAnimationFrame)?.(id)
+  caf = (id) => (doc?.defaultView?.cancelAnimationFrame ?? globalThis.cancelAnimationFrame)?.(id),
+  compassOn = () => false,
+  openCompass
 } = {}) {
   if (!app || !containerEl?.addEventListener) return () => {
   };
@@ -31207,25 +31249,48 @@ function installTextLinks({
     const all = elementTokens({ element: hit.text, measure: measurer });
     return all.length ? { tokens: all } : null;
   }
-  function exists(token2) {
-    const t = tokenTarget(token2);
+  function foundUid(token2) {
+    const target = tokenTarget(token2);
     try {
-      const found = t.type === "block" ? api.data.pull("[:block/uid]", [":block/uid", t.uid]) : api.data.pull("[:block/uid]", [":node/title", t.title]);
-      return !!found;
+      const found = target.type === "block" ? api.data.pull("[:block/uid]", [":block/uid", target.uid]) : api.data.pull("[:block/uid]", [":node/title", target.title]);
+      return found?.[":block/uid"] || null;
     } catch (error) {
       warn8("token lookup failed", error);
+      return null;
+    }
+  }
+  function compassWanted() {
+    try {
+      return compassOn?.() === true;
+    } catch (error) {
+      warn8("compass check failed", error);
       return false;
     }
   }
-  function go(token2, sidebar) {
+  function go(token2, eventLike) {
     if (disposed) return;
     const target = tokenTarget(token2);
-    if (!exists(token2)) {
+    const uid = foundUid(token2);
+    if (!uid) {
       toast?.(target.type === "block" ? "Block not found" : `No page named ${target.title}`);
       return;
     }
+    const action = textLinkAction({
+      alt: !!eventLike?.altKey,
+      shift: !!eventLike?.shiftKey,
+      compass: compassWanted()
+    });
+    if (action === "compass") {
+      try {
+        const out = openCompass?.({ target, uid });
+        if (out && typeof out.catch === "function") out.catch((error) => warn8("compass open failed", error));
+      } catch (error) {
+        warn8("compass open failed", error);
+      }
+      return;
+    }
     try {
-      navigate2?.({ target, sidebar: !!sidebar });
+      navigate2?.({ target, sidebar: action === "sidebar" });
     } catch (error) {
       warn8("token navigation failed", error);
     }
@@ -31252,7 +31317,7 @@ function installTextLinks({
       }
     }
   }
-  function openChooser(tokens2, at) {
+  function openChooser(tokens2, at, { preferCompass = false } = {}) {
     closeChooser(false);
     const root = doc.createElement("div");
     root.className = "rm-autocomplete__results bp3-elevation-3 plexus-portal plexus-token-chooser";
@@ -31269,13 +31334,14 @@ function installTextLinks({
         r.style.backgroundColor = k === i ? "rgb(213, 218, 223)" : "";
       });
     };
-    const choose = (token2, sidebar) => {
+    const choose = (token2, { shift = false, compass = false } = {}) => {
       closeChooser(false);
-      go(token2, sidebar);
+      go(token2, { altKey: !!compass, shiftKey: !!shift });
     };
-    tokens2.forEach((token2, k) => {
+    chooserRows(tokens2, { compass: compassWanted() }).forEach((rowModel, k) => {
+      const token2 = rowModel.token;
       const row = doc.createElement("div");
-      row.className = "dont-unfocus-block";
+      row.className = "dont-unfocus-block plexus-token-row";
       row.style.padding = "6px";
       row.style.cursor = "pointer";
       row.style.borderRadius = "2px";
@@ -31283,10 +31349,25 @@ function installTextLinks({
       inner2.className = "rm-autocomplete-result";
       inner2.textContent = labelOf(token2);
       row.append(inner2);
+      if (rowModel.compass) {
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.className = "plexus-token-compass";
+        button.textContent = "Compass";
+        button.setAttribute("tabindex", "-1");
+        button.addEventListener("click", (ev) => {
+          ev.preventDefault?.();
+          ev.stopPropagation();
+          choose(token2, { compass: true });
+        });
+        row.append(button);
+      }
       row.addEventListener("mousemove", () => setActive(k));
       row.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        choose(token2, ev.shiftKey);
+        const name = typeof ev.target?.className === "string" ? ev.target.className : "";
+        if (name.split(/\s+/).includes("plexus-token-compass")) return;
+        choose(token2, { shift: ev.shiftKey, compass: preferCompass });
       });
       scroll.append(row);
       rows.push(row);
@@ -31313,7 +31394,7 @@ function installTextLinks({
         setActive((active - 1 + rows.length) % rows.length);
       } else if (ev.key === "Enter") {
         ev.preventDefault();
-        choose(tokens2[active], ev.shiftKey);
+        choose(tokens2[active], { shift: ev.shiftKey, compass: preferCompass });
       }
     });
     const onOutside = (ev) => {
@@ -31366,8 +31447,9 @@ function installTextLinks({
     e.stopImmediatePropagation?.();
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MAX_MOVE_PX2 || now() - start.t > MAX_HOLD_MS2) return;
     try {
-      if (start.tokens.length === 1) go(start.tokens[0], e.shiftKey);
-      else openChooser(start.tokens, { x: e.clientX, y: e.clientY });
+      const preferCompass = textLinkAction({ alt: !!e.altKey, shift: !!e.shiftKey, compass: compassWanted() }) === "compass";
+      if (start.tokens.length === 1) go(start.tokens[0], e);
+      else openChooser(start.tokens, { x: e.clientX, y: e.clientY }, { preferCompass });
     } catch (error) {
       warn8("text link navigation failed", error);
     }
@@ -31781,6 +31863,10 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     });
     await lifecycle.settingsPanel(extensionAPI, createSettingsPanel({ onChange: scheduleRefresh }));
     const getSettings = () => readSettings(extensionAPI);
+    const compassReady = () => {
+      if (getSettings().compass === false) return null;
+      return compassApi(globalThis.window) || compassApi(globalThis.document?.defaultView) || null;
+    };
     let actions = null;
     let citeBacklinks = null;
     let audit = null;
@@ -31798,6 +31884,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
     let galleryHandle = null;
     let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
+    let openInCompass = () => console.warn("[plexus] unavailable outside Roam: openInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
     let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
@@ -31954,6 +32041,65 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         }
         if (!available) return void toaster2.show("Compass is not loaded");
         compass.focus(uid);
+      };
+      const CLOSE_WAIT_MS2 = 3e3;
+      async function closeFullScreenEditor() {
+        const editor = activeEditor(doc);
+        if (!editor) return true;
+        try {
+          editor.outer?.querySelector?.(".bp3-icon-minimize")?.click?.();
+        } catch (error) {
+          console.warn("[plexus] minimize failed", error);
+        }
+        const end = Date.now() + CLOSE_WAIT_MS2;
+        while (activeEditor(doc)) {
+          if (Date.now() >= end) return false;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return true;
+      }
+      async function openUidInCompass(uid) {
+        if (!uid) return false;
+        if (activeEditor(doc)) {
+          const closed2 = await closeFullScreenEditor();
+          if (!closed2) {
+            toaster2.show("Could not close the drawing");
+            return false;
+          }
+        }
+        const compass = compassReady();
+        if (!compass) {
+          if (getSettings().compass !== false) toaster2.show("Compass is not loaded");
+          return false;
+        }
+        try {
+          compass.open(uid);
+          return true;
+        } catch (error) {
+          console.warn("[plexus] compass open failed", error);
+          return false;
+        }
+      }
+      openInCompass = async (ctx) => {
+        if (!compassReady()) return;
+        const editor = activeEditor(doc);
+        const drawingUid = editor?.drawingUid || null;
+        const focusedUid2 = drawingUid ? null : ctx?.focusedUid || null;
+        let pageUid = null;
+        if (!drawingUid && !focusedUid2) {
+          try {
+            pageUid = await host.openPageUid();
+          } catch (error) {
+            console.warn("[plexus] compass page failed", error);
+            pageUid = null;
+          }
+        }
+        const uid = compassTarget({ drawingUid, focusedUid: focusedUid2, pageUid });
+        if (!uid) {
+          toaster2.show("Nothing to open in Compass");
+          return;
+        }
+        await openUidInCompass(uid);
       };
       const emitter = createEmitter();
       lifecycle.add(() => emitter.clear());
@@ -33343,7 +33489,9 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
               if (!sidebar) navigatedAt = Date.now();
               hover.hide();
               if (sidebar) toaster2.show("Opened in sidebar");
-            }
+            },
+            compassOn: () => !!compassReady(),
+            openCompass: ({ uid } = {}) => openUidInCompass(uid)
           }));
           const own = mounted;
           mounted.disposers.push(() => {
@@ -33620,6 +33768,7 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
         if (citeBacklinks?.cite?.(ids)) return;
         toaster.show("Select a page link, region, or mind-map node");
       } },
+      { id: OPEN_IN_COMPASS_ID, label: "Open in Compass", run: (ctx) => openInCompass(ctx) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "turnIntoPage", label: "Turn into page", run: () => {
         if (!actions) return unavailable("turnIntoPage");
@@ -33693,7 +33842,8 @@ async function onload({ extensionAPI, extension, openCommandList: openList = ope
           callback: () => {
             try {
               const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
-              commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
+              const commands = commandsWithCompass(commandList, !!compassReady());
+              commandListHandle = openList({ doc, commands, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
             } catch (error) {
               console.warn("[plexus] command list failed", error);
             }

@@ -1105,10 +1105,31 @@ body.plexus-dock-open > .bp3-portal {
   overflow-y: auto;
 }
 
+.plexus-token-chooser .plexus-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .plexus-token-chooser .rm-autocomplete-result {
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.plexus-token-chooser .plexus-token-compass {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
 }
 
 .excalidraw.plexus-token-hover canvas.excalidraw__canvas.interactive {

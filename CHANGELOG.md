@@ -4,6 +4,10 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+- Open in Compass is in the command list when Compass is loaded. It opens the open drawing, or the focused block, or the page. The drawing closes first.
+- Alt+Cmd-click (Alt+Ctrl off macOS) on a `[[page]]`, `#tag` or `((block))` in canvas text opens that link in Compass. A chooser row has a Compass button. Without Compass, Alt changes nothing.
+- A Compass switch in settings, on by default, hides the command, the buttons, and the Alt click. The palette stays two entries.
+
 ## [0.33.1]
 
 - validate accepts apiVersion 6 and 7. The frozen apiVersion stays 7. Anything else still fails with apiVersion must be 7.

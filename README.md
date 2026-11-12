@@ -47,6 +47,7 @@ Hotkeys are Alt+Shift+R (region), I (image region), P (present), M (mind map), E
 - Outline dock: the toolbar "Outline" button, Alt+Shift+O, or "Toggle outline dock" in the command list docks the drawing block's children beside the full-screen canvas, so you can type bullets while drawing. "Outline dock: show parent" (command list) shows the parent block's children instead. The dock width is dragged from its left edge and remembered.
 - Drag a bullet from the dock onto the canvas to place it: no modifier embeds it, Alt links it, Shift places a plain label. Dragging the dock header places the page or block itself.
 - Cmd-click (Ctrl-click off macOS) a `[[page]]`, `#tag` or `((block))` written in canvas text to open it; add Shift for the sidebar. Text with several links offers a chooser.
+- Compass, when that extension is loaded: hold Alt with the link click to open the link in Compass, or use the Compass button on a chooser row. "Open in Compass" in the command list opens the open drawing, the focused block, or the page. The Compass switch in settings turns this off.
 
 ## Frames, slides and printing
 

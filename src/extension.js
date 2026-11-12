@@ -68,6 +68,7 @@ import { elementBounds, viewportToScene } from "./model/scene.js";
 import { isHostDark, motionOk, resetThemeMemo } from "./host/theme.js";
 import { LOCK_ACTION_NAMES, applyCanvasPrefs, captureView, copyText, diagnosticsText, restoreAutomaticView, runNamedAction, shouldReapplyTheme, syncGeneration } from "./host/canvas-prefs.js";
 import { regionLabel, drawingTitleOf, imageAltAt, isImageKind } from "./model/label.js";
+import { OPEN_IN_COMPASS_ID, commandsWithCompass, compassApi, compassTarget } from "./model/compass.js";
 
 let activeLifecycle = null;
 
@@ -248,6 +249,11 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     lifecycle.add(() => { if (refreshTimer != null) clearTimeout(refreshTimer); refreshTimer = null; refreshAll = () => {}; });
     await lifecycle.settingsPanel(extensionAPI, createSettingsPanel({ onChange: scheduleRefresh }));
     const getSettings = () => readSettings(extensionAPI);
+    // Re-read on each use. Compass can load or unload while Plexus is already running.
+    const compassReady = () => {
+      if (getSettings().compass === false) return null;
+      return compassApi(globalThis.window) || compassApi(globalThis.document?.defaultView) || null;
+    };
 
     let actions = null;
     let citeBacklinks = null;
@@ -266,6 +272,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
     let galleryHandle = null;
     let frameListHandle = null;
     let showInCompass = () => console.warn("[plexus] unavailable outside Roam: showInCompass");
+    let openInCompass = () => console.warn("[plexus] unavailable outside Roam: openInCompass");
     let runFocusMode = () => console.warn("[plexus] unavailable outside Roam: focusMode");
     let runShowTag = () => console.warn("[plexus] unavailable outside Roam: showTag");
     let runTodoMode = () => console.warn("[plexus] unavailable outside Roam: todoMode");
@@ -298,6 +305,54 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         try { available = compass?.isAvailable?.() === true; } catch (error) { console.warn("[plexus] compass unavailable", error); }
         if (!available) return void toaster.show("Compass is not loaded");
         compass.focus(uid);
+      };
+      // Compass draws under the full-screen editor, so the same minimize click that link navigation uses has to finish first.
+      const CLOSE_WAIT_MS = 3000;
+      async function closeFullScreenEditor() {
+        const editor = native.activeEditor(doc);
+        if (!editor) return true;
+        try { editor.outer?.querySelector?.(".bp3-icon-minimize")?.click?.(); }
+        catch (error) { console.warn("[plexus] minimize failed", error); }
+        const end = Date.now() + CLOSE_WAIT_MS;
+        while (native.activeEditor(doc)) {
+          if (Date.now() >= end) return false;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return true;
+      }
+      async function openUidInCompass(uid) {
+        if (!uid) return false;
+        if (native.activeEditor(doc)) {
+          const closed = await closeFullScreenEditor();
+          if (!closed) {
+            toaster.show("Could not close the drawing");
+            return false;
+          }
+        }
+        const compass = compassReady();
+        if (!compass) {
+          if (getSettings().compass !== false) toaster.show("Compass is not loaded");
+          return false;
+        }
+        try { compass.open(uid); return true; }
+        catch (error) { console.warn("[plexus] compass open failed", error); return false; }
+      }
+      openInCompass = async (ctx) => {
+        if (!compassReady()) return;
+        const editor = native.activeEditor(doc);
+        const drawingUid = editor?.drawingUid || null;
+        const focusedUid = drawingUid ? null : (ctx?.focusedUid || null);
+        let pageUid = null;
+        if (!drawingUid && !focusedUid) {
+          try { pageUid = await host.openPageUid(); }
+          catch (error) { console.warn("[plexus] compass page failed", error); pageUid = null; }
+        }
+        const uid = compassTarget({ drawingUid, focusedUid, pageUid });
+        if (!uid) {
+          toaster.show("Nothing to open in Compass");
+          return;
+        }
+        await openUidInCompass(uid);
       };
       const emitter = createEmitter();
       lifecycle.add(() => emitter.clear());
@@ -1539,6 +1594,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
               hover.hide();
               if (sidebar) toaster.show("Opened in sidebar");
             },
+            compassOn: () => !!compassReady(),
+            openCompass: ({ uid } = {}) => openUidInCompass(uid),
           }));
           // unmountEditor nulls `mounted` before it runs the disposers, so close over this mount's own record.
           const own = mounted;
@@ -1769,6 +1826,7 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
         if (citeBacklinks?.cite?.(ids)) return;
         toaster.show("Select a page link, region, or mind-map node");
       } },
+      { id: OPEN_IN_COMPASS_ID, label: "Open in Compass", run: (ctx) => openInCompass(ctx) },
       { id: "showInCompass", label: "Show in Compass", run: (ctx) => showInCompass(ctx?.focusedUid) },
       { id: "turnIntoPage", label: "Turn into page", run: () => {
         if (!actions) return unavailable("turnIntoPage");
@@ -1831,7 +1889,8 @@ export async function onload({ extensionAPI, extension, openCommandList: openLis
           callback: () => {
             try {
               const focusedUid = globalThis.roamAlphaAPI?.ui?.getFocusedBlock?.()?.["block-uid"];
-              commandListHandle = openList({ doc, commands: commandList, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
+              const commands = commandsWithCompass(commandList, !!compassReady());
+              commandListHandle = openList({ doc, commands, ctx: { focusedUid }, zIndex: commandZ(), mac: isMac });
             } catch (error) { console.warn("[plexus] command list failed", error); }
           },
         },

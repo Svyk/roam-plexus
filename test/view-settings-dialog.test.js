@@ -151,7 +151,7 @@ test("an out-of-range number is rewritten on screen to the stored clamped value"
 test("show backlinks checkbox defaults on and saves a boolean", async () => {
   const { dlg, writes } = setup();
   const all = inputs(dlg);
-  assert.equal(all.length, 28);
+  assert.equal(all.length, 29);
   const box = all[5];
   assert.equal(box.checked, true);
   box.checked = false; box.fire("change");
@@ -196,7 +196,7 @@ test("P8 fields: zoom limit, animation, region landing read defaults and save ch
 
 test("P11 fields: print size select, margin number, laser color and decay read defaults, clamp and save", async () => {
   const { dlg, writes } = setup();
-  const [size, margin, color, decay] = inputs(dlg).slice(-11, -7);
+  const [size, margin, color, decay] = inputs(dlg).slice(-12, -8);
   assert.deepEqual([size.value, margin.value, color.value, decay.value], ["letter", "10", "#e03131", "1000"]);
   assert.equal(color.type, "color");
   assert.deepEqual(size.children.map((o) => [o.value, o.textContent]), [["letter", "Letter"], ["a4", "A4"], ["16:9", "16:9 slide"]]);
@@ -214,7 +214,7 @@ test("P11 fields: print size select, margin number, laser color and decay read d
 
 test("P11 color field: an invalid stored color shows the default and is not rewritten; empty input falls back, no drawing-name path", async () => {
   const { dlg, writes } = setup({ "laser-color": "not-a-color", "print-size": "tabloid" });
-  const [size, , color] = inputs(dlg).slice(-11, -7);
+  const [size, , color] = inputs(dlg).slice(-12, -8);
   assert.equal(color.value, "#e03131");
   assert.equal(size.value, "letter");
   color.value = ""; color.fire("change");
@@ -222,7 +222,7 @@ test("P11 color field: an invalid stored color shows the default and is not rewr
   assert.deepEqual(writes, []);
   assert.doesNotMatch(color.value, /Drawing/);
   const upper = setup({ "laser-color": "#ABCDEF" });
-  assert.equal(inputs(upper.dlg).slice(-11, -7)[2].value, "#abcdef");
+  assert.equal(inputs(upper.dlg).slice(-12, -8)[2].value, "#abcdef");
   upper.handle.close();
   await tick();
   assert.deepEqual(upper.writes, []);
@@ -230,13 +230,13 @@ test("P11 color field: an invalid stored color shows the default and is not rewr
 
 test("card key boxes default checked, and unchecking the first writes card-alt-arrows false", async () => {
   const { dlg, writes } = setup();
-  const boxes = inputs(dlg).slice(-7, -2);
+  const boxes = inputs(dlg).slice(-8, -3);
   assert.equal(boxes.length, 5);
   assert.ok(boxes.every((b) => b.type === "checkbox" && b.checked));
-  const preview = inputs(dlg).at(-2);
+  const preview = inputs(dlg).at(-3);
   assert.equal(preview.type, "checkbox");
   assert.equal(preview.checked, false);
-  const minimap = inputs(dlg).at(-1);
+  const minimap = inputs(dlg).at(-2);
   assert.equal(minimap.type, "checkbox");
   assert.equal(minimap.checked, true);
   const labels = flat(dlg).filter((n) => n.tag === "span").map((n) => n.textContent);
@@ -245,4 +245,18 @@ test("card key boxes default checked, and unchecking the first writes card-alt-a
   boxes[0].fire("change");
   await tick();
   assert.deepEqual(writes, [["card-alt-arrows", false]]);
+});
+
+test("Compass checkbox defaults on and saves false", async () => {
+  const { dlg, writes } = setup();
+  const box = inputs(dlg).at(-1);
+  assert.equal(box.type, "checkbox");
+  assert.equal(box.checked, true);
+  const labels = flat(dlg).filter((n) => n.tag === "span").map((n) => n.textContent);
+  assert.ok(labels.includes("Compass"));
+  box.checked = false;
+  box.fire("change");
+  await tick();
+  assert.deepEqual(writes, [["compass", false]]);
+  assert.equal(inputs(setup({ compass: false }).dlg).at(-1).checked, false);
 });

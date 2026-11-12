@@ -396,6 +396,114 @@ test("the command list carries all 86 labels and hotkeys, and captures the focus
   }
 });
 
+test("Open in Compass is listed only while Compass is on, and it opens the drawing, the block, or the page", async () => {
+  const g = globalThis;
+  const saved = { api: g.roamAlphaAPI, doc: g.document, win: g.window, mo: g.MutationObserver, idb: g.indexedDB };
+  const opened = [];
+  let editorOpen = false;
+  let minimizeClicks = 0;
+  const excal = {
+    closest: (sel) => (String(sel).includes("outer-container") ? outer : null),
+    __reactFiber$t: { stateNode: { updateScene() {}, getSceneElementsIncludingDeleted: () => [], actionManager: {} } },
+  };
+  const outer = {
+    querySelector: (sel) => (sel === ".bp3-icon-minimize" ? { click() { minimizeClicks += 1; editorOpen = false; } } : null),
+    closest: (sel) => (sel === '[id^="block-input-"]' ? { id: "block-input-draw00001" } : null),
+  };
+  const body = { append() {}, appendChild() {}, querySelectorAll: () => [] };
+  g.MutationObserver = class { observe() {} disconnect() {} };
+  g.indexedDB = { open: () => { const r = {}; queueMicrotask(() => r.onerror?.()); return r; } };
+  g.window = {
+    RoamCompass: { isAvailable: () => true, open: (uid) => { opened.push(uid); }, isOpen: () => false },
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+    getComputedStyle: () => ({ zIndex: "1000", getPropertyValue: () => "" }),
+    requestAnimationFrame: (fn) => setTimeout(fn, 0),
+    cancelAnimationFrame: clearTimeout,
+    innerWidth: 1000,
+    innerHeight: 800,
+  };
+  const fakeNode = () => ({
+    style: {},
+    classList: { add() {}, remove() {}, contains: () => false },
+    append() {},
+    appendChild() {},
+    remove() {},
+    addEventListener() {},
+    removeEventListener() {},
+    setAttribute() {},
+    focus() {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    contains: () => false,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 30 }),
+  });
+  g.document = {
+    body,
+    defaultView: g.window,
+    querySelector: (sel) => (editorOpen && sel === ".excalidraw-outer-container.full-screen .excalidraw" ? excal : null),
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+    createElement: fakeNode,
+  };
+  const roam = {
+    graph: { name: "g", isEncrypted: false },
+    util: { generateUID: () => "x" },
+    data: {
+      q: () => [],
+      pull: (_pat, ident) => (ident?.[1] === "page00001" ? { ":node/title": "Today" } : null),
+    },
+    ui: { components: {}, getFocusedBlock: () => ({ "block-uid": "focus0001" }), mainWindow: { getOpenPageOrBlockUid: async () => "page00001" } },
+  };
+  g.roamAlphaAPI = roam;
+  const api = fakeExtensionApi();
+  const callbacks = new Map();
+  api.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+  const restore = () => {
+    if (saved.api === undefined) delete g.roamAlphaAPI; else g.roamAlphaAPI = saved.api;
+    if (saved.doc === undefined) delete g.document; else g.document = saved.doc;
+    if (saved.win === undefined) delete g.window; else g.window = saved.win;
+    if (saved.mo === undefined) delete g.MutationObserver; else g.MutationObserver = saved.mo;
+    if (saved.idb === undefined) delete g.indexedDB; else g.indexedDB = saved.idb;
+  };
+  try {
+    const loaded = await loadWithCommands(api, callbacks);
+    loaded.openList();
+    const labels = loaded.captured().commands.map((c) => c.label);
+    const at = labels.indexOf("Open in Compass");
+    assert.ok(at >= 0);
+    assert.equal(labels[at + 1], "Show in Compass");
+    editorOpen = true;
+    await loaded.openList().get("Open in Compass")();
+    assert.equal(minimizeClicks, 1);
+    assert.deepEqual(opened, ["draw00001"]);
+    await loaded.cleanup();
+
+    opened.length = 0;
+    editorOpen = false;
+    roam.ui.getFocusedBlock = () => null;
+    const pageApi = fakeExtensionApi();
+    pageApi.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+    const pageLoad = await loadWithCommands(pageApi, callbacks);
+    await pageLoad.openList().get("Open in Compass")();
+    assert.deepEqual(opened, ["page00001"]);
+    await pageLoad.cleanup();
+
+    opened.length = 0;
+    const off = fakeExtensionApi();
+    await off.settings.set("compass", false);
+    off.ui.commandPalette.addCommand = async ({ label, callback }) => { callbacks.set(label, callback); };
+    const offLoad = await loadWithCommands(off, callbacks);
+    offLoad.openList();
+    assert.equal(offLoad.captured().commands.some((c) => c.label === "Open in Compass"), false);
+    await offLoad.cleanup();
+  } finally {
+    restore();
+  }
+});
+
 async function mountFakeEditor({ isEncrypted }) {
   const subs = { count: 0 };
   const warns = [];
